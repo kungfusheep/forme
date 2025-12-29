@@ -11,31 +11,26 @@ type SerialTemplate struct {
 	ops      []SerialOp
 	byLevel  [][]int16 // byLevel[depth] = op indices at that depth
 	maxLevel int
-	nodes    []SerialNode // pre-allocated node storage
+	nodes    []SerialNode    // pre-allocated node storage
+	ctxStack []layoutContext // pre-allocated layout context stack (reused each frame)
 }
 
 // SerialNode is minimal runtime node data
 type SerialNode struct {
-	// Identity
-	Parent int16
-	Level  int8
-	Kind   uint8 // for render dispatch
+	Kind uint8 // for render dispatch
 
-	// Geometry (set during measure, refined during layout)
+	// Geometry
 	W, H int16
 	X, Y int16
 
-	// Container info
-	IsRow    bool
-	Gap      int8
-	First    int16 // first child index
-	Last     int16 // last child index (for sibling chain)
-	NumChild int16
-
 	// Values (populated during measure)
 	Text  string
+	Spans []Span  // for RichText
 	Ratio float32
-	Width int16 // fixed width for progress bars etc
+	Width int16 // fixed width for progress bars
+
+	// Layer reference (for blit during render)
+	Layer *Layer
 
 	// Styling
 	Bold bool
@@ -73,6 +68,19 @@ type SerialOp struct {
 	// Conditional branches
 	ThenTmpl *SerialTemplate
 	ElseTmpl *SerialTemplate
+
+	// RichText
+	Spans    []Span
+	SpansPtr *[]Span
+
+	// Layer
+	LayerPtr    *Layer
+	LayerHeight int16
+
+	// Generic condition (If[T])
+	CondNode ConditionNode
+	CondThen *SerialTemplate
+	CondElse *SerialTemplate
 }
 
 // Op kinds - each encodes both WHAT and HOW to access values
@@ -92,6 +100,13 @@ const (
 
 	SerialOpIf
 	SerialOpElse
+
+	SerialOpRichTextStatic
+	SerialOpRichTextPtr
+
+	SerialOpLayer
+
+	SerialOpCondition
 )
 
 // BuildSerial compiles a declarative UI into a SerialTemplate
@@ -161,6 +176,15 @@ func (t *SerialTemplate) compile(node any, parentIdx int16, level int, elemBase 
 		return t.compileElse(v, parentIdx, level, elemBase, elemSize)
 	case ForEachNode:
 		return t.compileForEach(v, parentIdx, level)
+	case RichText:
+		return t.compileRichText(v, parentIdx, level)
+	case LayerView:
+		return t.compileLayer(v, parentIdx, level)
+	default:
+		// Check for ConditionNode (generic If conditions)
+		if cond, ok := node.(ConditionNode); ok {
+			return t.compileCondition(cond, parentIdx, level, elemBase, elemSize)
+		}
 	}
 
 	return -1
@@ -329,6 +353,77 @@ func (t *SerialTemplate) compileElse(v ElseNode, parentIdx int16, level int, ele
 	return t.addOp(op, level)
 }
 
+func (t *SerialTemplate) compileRichText(v RichText, parentIdx int16, level int) int16 {
+	op := SerialOp{
+		Parent: parentIdx,
+	}
+
+	switch spans := v.Spans.(type) {
+	case []Span:
+		op.Kind = SerialOpRichTextStatic
+		op.Spans = spans
+	case *[]Span:
+		op.Kind = SerialOpRichTextPtr
+		op.SpansPtr = spans
+	default:
+		// Empty RichText
+		op.Kind = SerialOpRichTextStatic
+		op.Spans = nil
+	}
+
+	return t.addOp(op, level)
+}
+
+func (t *SerialTemplate) compileLayer(v LayerView, parentIdx int16, level int) int16 {
+	op := SerialOp{
+		Kind:        SerialOpLayer,
+		Parent:      parentIdx,
+		LayerPtr:    v.Layer,
+		LayerHeight: v.Height,
+	}
+	return t.addOp(op, level)
+}
+
+func (t *SerialTemplate) compileCondition(cond ConditionNode, parentIdx int16, level int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := SerialOp{
+		Kind:     SerialOpCondition,
+		Parent:   parentIdx,
+		CondNode: cond,
+	}
+
+	// Compile then branch
+	if thenNode := cond.getThen(); thenNode != nil {
+		thenTmpl := &SerialTemplate{
+			ops:     make([]SerialOp, 0, 16),
+			byLevel: make([][]int16, 8),
+		}
+		for i := range thenTmpl.byLevel {
+			thenTmpl.byLevel[i] = make([]int16, 0, 4)
+		}
+		thenTmpl.compile(thenNode, -1, 0, elemBase, elemSize)
+		thenTmpl.byLevel = thenTmpl.byLevel[:thenTmpl.maxLevel+1]
+		thenTmpl.nodes = make([]SerialNode, 0, len(thenTmpl.ops))
+		op.CondThen = thenTmpl
+	}
+
+	// Compile else branch
+	if elseNode := cond.getElse(); elseNode != nil {
+		elseTmpl := &SerialTemplate{
+			ops:     make([]SerialOp, 0, 16),
+			byLevel: make([][]int16, 8),
+		}
+		for i := range elseTmpl.byLevel {
+			elseTmpl.byLevel[i] = make([]int16, 0, 4)
+		}
+		elseTmpl.compile(elseNode, -1, 0, elemBase, elemSize)
+		elseTmpl.byLevel = elseTmpl.byLevel[:elseTmpl.maxLevel+1]
+		elseTmpl.nodes = make([]SerialNode, 0, len(elseTmpl.ops))
+		op.CondElse = elseTmpl
+	}
+
+	return t.addOp(op, level)
+}
+
 func (t *SerialTemplate) compileForEach(v ForEachNode, parentIdx int16, level int) int16 {
 	// Analyze slice
 	sliceRV := reflect.ValueOf(v.Items)
@@ -383,38 +478,10 @@ func (t *SerialTemplate) compileForEach(v ForEachNode, parentIdx int16, level in
 	return t.addOp(op, level)
 }
 
-// Execute runs all three phases and renders to buffer
-func (t *SerialTemplate) Execute(buf *Buffer, w, h int16, statePtr unsafe.Pointer) {
-	// Reset nodes
-	t.nodes = t.nodes[:0]
 
-	// Track if state for conditionals
-	ifSatisfied := false
-
-	// Phase 1: Measure (shallow → deep)
-	for level := 0; level <= t.maxLevel; level++ {
-		for _, idx := range t.byLevel[level] {
-			t.measureOp(idx, statePtr, &ifSatisfied)
-		}
-	}
-
-	// Phase 2: Layout (deep → shallow)
-	for level := t.maxLevel; level >= 0; level-- {
-		for _, idx := range t.byLevel[level] {
-			t.layoutOp(idx, w, h)
-		}
-	}
-
-	// Phase 3: Render (shallow → deep)
-	for level := 0; level <= t.maxLevel; level++ {
-		for _, idx := range t.byLevel[level] {
-			t.renderOp(idx, buf)
-		}
-	}
-}
-
-// Measure phase - creates nodes with natural sizes
-func (t *SerialTemplate) measureOp(opIdx int16, statePtr unsafe.Pointer, ifSatisfied *bool) {
+// measureOp creates nodes with natural sizes.
+// elemBase is only used for ForEach iterations (element base pointer for offset access).
+func (t *SerialTemplate) measureOp(opIdx int16, elemBase unsafe.Pointer, ifSatisfied *bool) {
 	op := &t.ops[opIdx]
 
 	switch op.Kind {
@@ -423,13 +490,13 @@ func (t *SerialTemplate) measureOp(opIdx int16, statePtr unsafe.Pointer, ifSatis
 	case SerialOpTextPtr:
 		t.measureTextPtr(op)
 	case SerialOpTextOffset:
-		t.measureTextOffset(op, statePtr)
+		t.measureTextOffset(op, elemBase)
 	case SerialOpProgressStatic:
 		t.measureProgressStatic(op)
 	case SerialOpProgressPtr:
 		t.measureProgressPtr(op)
 	case SerialOpProgressOffset:
-		t.measureProgressOffset(op, statePtr)
+		t.measureProgressOffset(op, elemBase)
 	case SerialOpContainerStart:
 		t.measureContainerStart(op)
 	case SerialOpContainerEnd:
@@ -440,94 +507,82 @@ func (t *SerialTemplate) measureOp(opIdx int16, statePtr unsafe.Pointer, ifSatis
 		t.measureIf(op, ifSatisfied)
 	case SerialOpElse:
 		t.measureElse(op, ifSatisfied)
+	case SerialOpRichTextStatic:
+		t.measureRichTextStatic(op)
+	case SerialOpRichTextPtr:
+		t.measureRichTextPtr(op)
+	case SerialOpLayer:
+		t.measureLayer(op)
+	case SerialOpCondition:
+		t.measureCondition(op)
 	}
 }
 
 func (t *SerialTemplate) measureTextStatic(op *SerialOp) {
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Text:   op.StaticStr,
-		W:      int16(len(op.StaticStr)),
-		H:      1,
-		Bold:   op.Bold,
+		Kind: op.Kind,
+		Text: op.StaticStr,
+		W:    int16(len(op.StaticStr)),
+		H:    1,
+		Bold: op.Bold,
 	})
 }
 
 func (t *SerialTemplate) measureTextPtr(op *SerialOp) {
 	text := *op.StrPtr
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Text:   text,
-		W:      int16(len(text)),
-		H:      1,
-		Bold:   op.Bold,
+		Kind: op.Kind,
+		Text: text,
+		W:    int16(len(text)),
+		H:    1,
+		Bold: op.Bold,
 	})
 }
 
-func (t *SerialTemplate) measureTextOffset(op *SerialOp, basePtr unsafe.Pointer) {
-	text := *(*string)(unsafe.Add(basePtr, op.StrOff))
+func (t *SerialTemplate) measureTextOffset(op *SerialOp, elemBase unsafe.Pointer) {
+	text := *(*string)(unsafe.Add(elemBase, op.StrOff))
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Text:   text,
-		W:      int16(len(text)),
-		H:      1,
-		Bold:   op.Bold,
+		Kind: op.Kind,
+		Text: text,
+		W:    int16(len(text)),
+		H:    1,
+		Bold: op.Bold,
 	})
 }
 
 func (t *SerialTemplate) measureProgressStatic(op *SerialOp) {
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Ratio:  float32(op.StaticInt) / 100.0,
-		W:      op.Width,
-		H:      1,
-		Width:  op.Width,
+		Kind:  op.Kind,
+		Ratio: float32(op.StaticInt) / 100.0,
+		W:     op.Width,
+		H:     1,
+		Width: op.Width,
 	})
 }
 
 func (t *SerialTemplate) measureProgressPtr(op *SerialOp) {
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Ratio:  float32(*op.IntPtr) / 100.0,
-		W:      op.Width,
-		H:      1,
-		Width:  op.Width,
+		Kind:  op.Kind,
+		Ratio: float32(*op.IntPtr) / 100.0,
+		W:     op.Width,
+		H:     1,
+		Width: op.Width,
 	})
 }
 
-func (t *SerialTemplate) measureProgressOffset(op *SerialOp, basePtr unsafe.Pointer) {
-	val := *(*int)(unsafe.Add(basePtr, op.IntOff))
+func (t *SerialTemplate) measureProgressOffset(op *SerialOp, elemBase unsafe.Pointer) {
+	val := *(*int)(unsafe.Add(elemBase, op.IntOff))
 	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		Ratio:  float32(val) / 100.0,
-		W:      op.Width,
-		H:      1,
-		Width:  op.Width,
+		Kind:  op.Kind,
+		Ratio: float32(val) / 100.0,
+		W:     op.Width,
+		H:     1,
+		Width: op.Width,
 	})
 }
 
 func (t *SerialTemplate) measureContainerStart(op *SerialOp) {
-	t.nodes = append(t.nodes, SerialNode{
-		Kind:   op.Kind,
-		Parent: op.Parent,
-		Level:  op.Level,
-		IsRow:  op.IsRow,
-		Gap:    op.Gap,
-		First:  -1,
-		Last:   -1,
-	})
+	// Container nodes are not rendered in simple vertical layout
 }
 
 func (t *SerialTemplate) measureContainerEnd(op *SerialOp) {
@@ -599,50 +654,225 @@ func (t *SerialTemplate) measureElse(op *SerialOp, ifSatisfied *bool) {
 	}
 }
 
-// Layout phase - computes positions
-func (t *SerialTemplate) layoutOp(opIdx int16, w, h int16) {
-	// For now, simple vertical stacking
-	// TODO: implement proper flexbox layout
+func (t *SerialTemplate) measureRichTextStatic(op *SerialOp) {
+	w := int16(0)
+	for _, span := range op.Spans {
+		w += int16(len(span.Text))
+	}
+	t.nodes = append(t.nodes, SerialNode{
+		Kind:  SerialOpRichTextStatic,
+		Spans: op.Spans,
+		W:     w,
+		H:     1,
+	})
 }
 
-// Render phase - draws to buffer
-func (t *SerialTemplate) renderOp(opIdx int16, buf *Buffer) {
-	// For now, render is handled after all phases
+func (t *SerialTemplate) measureRichTextPtr(op *SerialOp) {
+	spans := *op.SpansPtr
+	w := int16(0)
+	for _, span := range spans {
+		w += int16(len(span.Text))
+	}
+	t.nodes = append(t.nodes, SerialNode{
+		Kind:  SerialOpRichTextPtr,
+		Spans: spans,
+		W:     w,
+		H:     1,
+	})
 }
 
-// ExecuteSimple is a simpler version that just measures and renders vertically
-func (t *SerialTemplate) ExecuteSimple(buf *Buffer, w, h int16, statePtr unsafe.Pointer) {
-	t.executeInternal(buf, w, h, statePtr, false)
+func (t *SerialTemplate) measureLayer(op *SerialOp) {
+	layer := op.LayerPtr
+	h := op.LayerHeight
+	// Height 0 means we'll use whatever height is available
+	// For now, use the layer's content height or the specified height
+	if h == 0 && layer != nil && layer.buffer != nil {
+		h = int16(layer.viewHeight) // use viewport height set during layout
+		if h == 0 {
+			h = int16(layer.buffer.Height()) // fallback to content height
+		}
+	}
+	t.nodes = append(t.nodes, SerialNode{
+		Kind:  SerialOpLayer,
+		Layer: layer,
+		H:     h,
+		W:     0, // will be set to full width during render
+	})
 }
 
-// ExecuteNoClear renders with padded writes, allowing caller to skip Clear().
+func (t *SerialTemplate) measureCondition(op *SerialOp) {
+	// Evaluate the condition at measure time
+	if op.CondNode.evaluate() {
+		// Render then branch
+		if op.CondThen != nil {
+			op.CondThen.nodes = op.CondThen.nodes[:0]
+			ifSat := false
+			for level := 0; level <= op.CondThen.maxLevel; level++ {
+				for _, idx := range op.CondThen.byLevel[level] {
+					op.CondThen.measureOp(idx, nil, &ifSat)
+				}
+			}
+			for _, node := range op.CondThen.nodes {
+				t.nodes = append(t.nodes, node)
+			}
+		}
+	} else {
+		// Render else branch
+		if op.CondElse != nil {
+			op.CondElse.nodes = op.CondElse.nodes[:0]
+			ifSat := false
+			for level := 0; level <= op.CondElse.maxLevel; level++ {
+				for _, idx := range op.CondElse.byLevel[level] {
+					op.CondElse.measureOp(idx, nil, &ifSat)
+				}
+			}
+			for _, node := range op.CondElse.nodes {
+				t.nodes = append(t.nodes, node)
+			}
+		}
+	}
+}
+
+// layoutContext tracks position during layout
+type layoutContext struct {
+	x, y       int16 // current position for next child
+	startX     int16 // position when container started
+	startY     int16
+	isRow      bool
+	gap        int8
+	maxH       int16 // max child height (for calculating row height)
+	maxW       int16 // max child width (for calculating col width)
+	firstChild bool  // true if no children added yet (for gap handling)
+}
+
+// Execute measures and renders the template to the buffer.
+func (t *SerialTemplate) Execute(buf *Buffer, w, h int16) {
+	t.execute(buf, w, h, false)
+}
+
+// ExecutePadded renders with padded writes, allowing caller to skip Clear().
 // Only safe when UI structure is stable (no shrinking content).
-func (t *SerialTemplate) ExecuteNoClear(buf *Buffer, w, h int16, statePtr unsafe.Pointer) {
-	t.executeInternal(buf, w, h, statePtr, true)
+func (t *SerialTemplate) ExecutePadded(buf *Buffer, w, h int16) {
+	t.execute(buf, w, h, true)
 }
 
-func (t *SerialTemplate) executeInternal(buf *Buffer, w, h int16, statePtr unsafe.Pointer, padded bool) {
-	// Reset nodes
+func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 	t.nodes = t.nodes[:0]
+
+	// Reuse pre-allocated layout context stack
+	if cap(t.ctxStack) < 16 {
+		t.ctxStack = make([]layoutContext, 0, 16)
+	}
+	t.ctxStack = t.ctxStack[:1]
+	t.ctxStack[0] = layoutContext{x: 0, y: 0, isRow: false, firstChild: true}
 
 	ifSatisfied := false
 
-	// Phase 1: Measure (creates nodes with sizes)
-	for level := 0; level <= t.maxLevel; level++ {
-		for _, idx := range t.byLevel[level] {
-			t.measureOp(idx, statePtr, &ifSatisfied)
+	// Process ops in document order for correct layout
+	for i := range t.ops {
+		op := &t.ops[i]
+
+		switch op.Kind {
+		case SerialOpContainerStart:
+			// Get current context
+			ctx := t.ctxStack[len(t.ctxStack)-1]
+			// Push new context for this container
+			t.ctxStack = append(t.ctxStack, layoutContext{
+				x:          ctx.x,
+				y:          ctx.y,
+				startX:     ctx.x,
+				startY:     ctx.y,
+				isRow:      op.IsRow,
+				gap:        op.Gap,
+				firstChild: true,
+			})
+
+		case SerialOpContainerEnd:
+			// Pop completed container
+			childCtx := t.ctxStack[len(t.ctxStack)-1]
+			t.ctxStack = t.ctxStack[:len(t.ctxStack)-1]
+
+			// Calculate container dimensions
+			var containerW, containerH int16
+			if childCtx.isRow {
+				containerW = childCtx.x - childCtx.startX
+				containerH = childCtx.maxH
+				if containerH == 0 {
+					containerH = 1 // minimum height
+				}
+			} else {
+				containerW = childCtx.maxW
+				containerH = childCtx.y - childCtx.startY
+			}
+
+			// Update parent context
+			if len(t.ctxStack) > 0 {
+				parentIdx := len(t.ctxStack) - 1
+				if t.ctxStack[parentIdx].isRow {
+					// Add gap before this container if not first child
+					if !t.ctxStack[parentIdx].firstChild && t.ctxStack[parentIdx].gap > 0 {
+						t.ctxStack[parentIdx].x += int16(t.ctxStack[parentIdx].gap)
+					}
+					t.ctxStack[parentIdx].x += containerW
+					if containerH > t.ctxStack[parentIdx].maxH {
+						t.ctxStack[parentIdx].maxH = containerH
+					}
+				} else {
+					// Add gap before this container if not first child
+					if !t.ctxStack[parentIdx].firstChild && t.ctxStack[parentIdx].gap > 0 {
+						t.ctxStack[parentIdx].y += int16(t.ctxStack[parentIdx].gap)
+					}
+					t.ctxStack[parentIdx].y += containerH
+					if containerW > t.ctxStack[parentIdx].maxW {
+						t.ctxStack[parentIdx].maxW = containerW
+					}
+				}
+				t.ctxStack[parentIdx].firstChild = false
+			}
+
+		default:
+			// Measure the op and position any new nodes
+			nodeStart := len(t.nodes)
+			t.measureOp(int16(i), nil, &ifSatisfied)
+
+			// Position new nodes within current container
+			if len(t.ctxStack) > 0 {
+				ctxIdx := len(t.ctxStack) - 1
+				for j := nodeStart; j < len(t.nodes); j++ {
+					node := &t.nodes[j]
+
+					// Add gap before this node if not first child
+					if !t.ctxStack[ctxIdx].firstChild && t.ctxStack[ctxIdx].gap > 0 {
+						if t.ctxStack[ctxIdx].isRow {
+							t.ctxStack[ctxIdx].x += int16(t.ctxStack[ctxIdx].gap)
+						} else {
+							t.ctxStack[ctxIdx].y += int16(t.ctxStack[ctxIdx].gap)
+						}
+					}
+
+					// Position node
+					node.X = t.ctxStack[ctxIdx].x
+					node.Y = t.ctxStack[ctxIdx].y
+
+					// Advance position
+					if t.ctxStack[ctxIdx].isRow {
+						t.ctxStack[ctxIdx].x += node.W
+						if node.H > t.ctxStack[ctxIdx].maxH {
+							t.ctxStack[ctxIdx].maxH = node.H
+						}
+					} else {
+						t.ctxStack[ctxIdx].y += node.H
+						if node.W > t.ctxStack[ctxIdx].maxW {
+							t.ctxStack[ctxIdx].maxW = node.W
+						}
+					}
+					t.ctxStack[ctxIdx].firstChild = false
+				}
+			}
 		}
 	}
 
-	// Simple layout: stack vertically
-	y := int16(0)
-	for i := range t.nodes {
-		t.nodes[i].X = 0
-		t.nodes[i].Y = y
-		y += t.nodes[i].H
-	}
-
-	// Render - use fast paths that skip border merging
+	// Render
 	for i := range t.nodes {
 		node := &t.nodes[i]
 		switch {
@@ -658,6 +888,13 @@ func (t *SerialTemplate) executeInternal(buf *Buffer, w, h int16, statePtr unsaf
 			}
 		case node.Kind == SerialOpProgressStatic || node.Kind == SerialOpProgressPtr || node.Kind == SerialOpProgressOffset:
 			buf.WriteProgressBar(int(node.X), int(node.Y), int(node.Width), node.Ratio, Style{})
+		case node.Kind == SerialOpRichTextStatic || node.Kind == SerialOpRichTextPtr:
+			buf.WriteSpans(int(node.X), int(node.Y), node.Spans, int(w))
+		case node.Kind == SerialOpLayer:
+			if node.Layer != nil {
+				node.Layer.setViewport(int(w), int(node.H))
+				node.Layer.blit(buf, int(node.X), int(node.Y), int(w), int(node.H))
+			}
 		}
 	}
 }

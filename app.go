@@ -237,7 +237,7 @@ func (a *App) render() {
 
 	size := a.screen.Size()
 	buf := a.pool.Current()
-	tmpl.ExecuteSimple(buf, int16(size.Width), int16(size.Height), nil)
+	tmpl.Execute(buf, int16(size.Width), int16(size.Height))
 
 	if DebugTiming {
 		t1 = time.Now()
@@ -259,12 +259,7 @@ func (a *App) render() {
 // copyToScreen copies pool buffer to screen's back buffer.
 func (a *App) copyToScreen(src *Buffer) {
 	dst := a.screen.Buffer()
-	size := a.screen.Size()
-	for y := 0; y < size.Height; y++ {
-		for x := 0; x < size.Width; x++ {
-			dst.Set(x, y, src.Get(x, y))
-		}
-	}
+	dst.CopyFrom(src) // Fast bulk copy
 }
 
 // TimingString returns a formatted timing string.

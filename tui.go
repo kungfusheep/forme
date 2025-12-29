@@ -261,6 +261,13 @@ type Progress struct {
 	Width int16 // width in characters
 }
 
+// LayerView displays a scrollable layer.
+// The Layer is pre-rendered content that gets blitted to screen.
+type LayerView struct {
+	Layer  *Layer // the pre-rendered layer
+	Height int16  // viewport height (0 = fill available)
+}
+
 // Row arranges children horizontally.
 type Row struct {
 	Children []any
@@ -284,11 +291,6 @@ type ElseNode struct {
 	Then any
 }
 
-// If creates a conditional node.
-func If(cond any, then any) IfNode {
-	return IfNode{Cond: cond, Then: then}
-}
-
 // Else creates an else branch.
 func Else(then any) ElseNode {
 	return ElseNode{Then: then}
@@ -303,6 +305,77 @@ type ForEachNode struct {
 // ForEach creates an iteration over a slice.
 func ForEach(items any, render any) ForEachNode {
 	return ForEachNode{Items: items, Render: render}
+}
+
+// Span represents a styled segment of text within RichText.
+type Span struct {
+	Text  string
+	Style Style
+}
+
+// RichText displays text with mixed inline styles.
+// Spans can be []Span (static) or *[]Span (dynamic binding).
+type RichText struct {
+	Spans any // []Span or *[]Span
+}
+
+// Rich creates a RichText from a mix of strings and Spans.
+// Plain strings get default styling, Spans keep their styling.
+//
+// Example:
+//
+//	Rich("Hello ", Bold("world"), "!")
+func Rich(parts ...any) RichText {
+	spans := make([]Span, 0, len(parts))
+	for _, p := range parts {
+		switch v := p.(type) {
+		case string:
+			spans = append(spans, Span{Text: v})
+		case Span:
+			spans = append(spans, v)
+		}
+	}
+	return RichText{Spans: spans}
+}
+
+// Styled creates a span with the given style.
+func Styled(text string, style Style) Span {
+	return Span{Text: text, Style: style}
+}
+
+// Bold creates a bold text span.
+func Bold(text string) Span {
+	return Span{Text: text, Style: Style{Attr: AttrBold}}
+}
+
+// Dim creates a dim text span.
+func Dim(text string) Span {
+	return Span{Text: text, Style: Style{Attr: AttrDim}}
+}
+
+// Italic creates an italic text span.
+func Italic(text string) Span {
+	return Span{Text: text, Style: Style{Attr: AttrItalic}}
+}
+
+// Underline creates an underlined text span.
+func Underline(text string) Span {
+	return Span{Text: text, Style: Style{Attr: AttrUnderline}}
+}
+
+// Inverse creates an inverse text span.
+func Inverse(text string) Span {
+	return Span{Text: text, Style: Style{Attr: AttrInverse}}
+}
+
+// FG creates a span with foreground color.
+func FG(text string, color Color) Span {
+	return Span{Text: text, Style: Style{FG: color}}
+}
+
+// BG creates a span with background color.
+func BG(text string, color Color) Span {
+	return Span{Text: text, Style: Style{BG: color}}
 }
 
 // sliceHeader is the runtime representation of a slice.
