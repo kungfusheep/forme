@@ -1,0 +1,145 @@
+package tui
+
+// Layer is a pre-rendered buffer with scroll management.
+// Content is rendered once (expensive), then blitted to screen each frame (cheap).
+type Layer struct {
+	buffer   *Buffer
+	scrollY  int
+	maxScroll int
+
+	// Viewport dimensions (set during layout)
+	viewWidth  int
+	viewHeight int
+}
+
+// NewLayer creates a new empty layer.
+func NewLayer() *Layer {
+	return &Layer{}
+}
+
+// SetContent renders a template to the layer's internal buffer.
+// Call this when content changes (e.g., page navigation).
+func (l *Layer) SetContent(tmpl *SerialTemplate, width, height int) {
+	l.buffer = NewBuffer(width, height)
+	tmpl.Execute(l.buffer, int16(width), int16(height))
+	l.scrollY = 0
+	l.updateMaxScroll()
+}
+
+// SetBuffer directly sets the layer's buffer.
+// Use this if you're managing the buffer yourself.
+func (l *Layer) SetBuffer(buf *Buffer) {
+	l.buffer = buf
+	l.scrollY = 0
+	l.updateMaxScroll()
+}
+
+// Buffer returns the underlying buffer (for direct manipulation if needed).
+func (l *Layer) Buffer() *Buffer {
+	return l.buffer
+}
+
+// updateMaxScroll recalculates the maximum scroll position.
+func (l *Layer) updateMaxScroll() {
+	if l.buffer == nil || l.viewHeight <= 0 {
+		l.maxScroll = 0
+		return
+	}
+	l.maxScroll = l.buffer.Height() - l.viewHeight
+	if l.maxScroll < 0 {
+		l.maxScroll = 0
+	}
+	// Clamp current scroll to new bounds
+	if l.scrollY > l.maxScroll {
+		l.scrollY = l.maxScroll
+	}
+}
+
+// setViewport is called by the framework during layout.
+func (l *Layer) setViewport(width, height int) {
+	l.viewWidth = width
+	l.viewHeight = height
+	l.updateMaxScroll()
+}
+
+// ScrollY returns the current scroll position.
+func (l *Layer) ScrollY() int {
+	return l.scrollY
+}
+
+// MaxScroll returns the maximum scroll position.
+func (l *Layer) MaxScroll() int {
+	return l.maxScroll
+}
+
+// ContentHeight returns the total content height.
+func (l *Layer) ContentHeight() int {
+	if l.buffer == nil {
+		return 0
+	}
+	return l.buffer.Height()
+}
+
+// ViewportHeight returns the visible viewport height.
+func (l *Layer) ViewportHeight() int {
+	return l.viewHeight
+}
+
+// ScrollTo sets the scroll position, clamping to valid range.
+func (l *Layer) ScrollTo(y int) {
+	if y < 0 {
+		y = 0
+	}
+	if y > l.maxScroll {
+		y = l.maxScroll
+	}
+	l.scrollY = y
+}
+
+// ScrollDown scrolls down by n lines.
+func (l *Layer) ScrollDown(n int) {
+	l.ScrollTo(l.scrollY + n)
+}
+
+// ScrollUp scrolls up by n lines.
+func (l *Layer) ScrollUp(n int) {
+	l.ScrollTo(l.scrollY - n)
+}
+
+// ScrollToTop scrolls to the top.
+func (l *Layer) ScrollToTop() {
+	l.scrollY = 0
+}
+
+// ScrollToEnd scrolls to the bottom.
+func (l *Layer) ScrollToEnd() {
+	l.scrollY = l.maxScroll
+}
+
+// PageDown scrolls down by one viewport height.
+func (l *Layer) PageDown() {
+	l.ScrollDown(l.viewHeight)
+}
+
+// PageUp scrolls up by one viewport height.
+func (l *Layer) PageUp() {
+	l.ScrollUp(l.viewHeight)
+}
+
+// HalfPageDown scrolls down by half a viewport.
+func (l *Layer) HalfPageDown() {
+	l.ScrollDown(l.viewHeight / 2)
+}
+
+// HalfPageUp scrolls up by half a viewport.
+func (l *Layer) HalfPageUp() {
+	l.ScrollUp(l.viewHeight / 2)
+}
+
+// blit copies the visible portion of the layer to the destination buffer.
+func (l *Layer) blit(dst *Buffer, dstX, dstY, width, height int) {
+	if l.buffer == nil {
+		return
+	}
+	dst.Blit(l.buffer, 0, l.scrollY, dstX, dstY, width, height)
+}

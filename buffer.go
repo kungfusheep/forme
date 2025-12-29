@@ -155,6 +155,32 @@ func (b *Buffer) WriteStringFast(x, y int, s string, style Style, maxWidth int) 
 	}
 }
 
+// WriteSpans writes multiple styled text spans sequentially.
+// Each span has its own style. Spans are written left to right.
+func (b *Buffer) WriteSpans(x, y int, spans []Span, maxWidth int) {
+	if y < 0 || y >= b.height {
+		return
+	}
+	if y > b.dirtyMaxY {
+		b.dirtyMaxY = y
+	}
+
+	base := y * b.width
+	written := 0
+	for _, span := range spans {
+		for _, r := range span.Text {
+			if written >= maxWidth || x >= b.width {
+				return
+			}
+			if x >= 0 {
+				b.cells[base+x] = Cell{Rune: r, Style: span.Style}
+			}
+			x++
+			written++
+		}
+	}
+}
+
 // SetRune sets just the rune at the given coordinates, preserving style.
 func (b *Buffer) SetRune(x, y int, r rune) {
 	if !b.InBounds(x, y) {
@@ -648,6 +674,76 @@ func (b *Buffer) StringTrimmed() string {
 		}
 	}
 	return result
+}
+
+// Blit copies a rectangular region from src buffer to this buffer.
+// srcX, srcY: top-left corner in source buffer (for scrolling)
+// dstX, dstY: top-left corner in destination buffer
+// width, height: size of region to copy
+// Uses optimized row-by-row copy() for speed.
+func (b *Buffer) Blit(src *Buffer, srcX, srcY, dstX, dstY, width, height int) {
+	// Clip to source bounds
+	if srcX < 0 {
+		width += srcX
+		dstX -= srcX
+		srcX = 0
+	}
+	if srcY < 0 {
+		height += srcY
+		dstY -= srcY
+		srcY = 0
+	}
+	if srcX+width > src.width {
+		width = src.width - srcX
+	}
+	if srcY+height > src.height {
+		height = src.height - srcY
+	}
+
+	// Clip to destination bounds
+	if dstX < 0 {
+		width += dstX
+		srcX -= dstX
+		dstX = 0
+	}
+	if dstY < 0 {
+		height += dstY
+		srcY -= dstY
+		dstY = 0
+	}
+	if dstX+width > b.width {
+		width = b.width - dstX
+	}
+	if dstY+height > b.height {
+		height = b.height - dstY
+	}
+
+	// Nothing to copy
+	if width <= 0 || height <= 0 {
+		return
+	}
+
+	// Row-by-row copy using copy() for speed
+	for y := 0; y < height; y++ {
+		srcStart := (srcY+y)*src.width + srcX
+		dstStart := (dstY+y)*b.width + dstX
+		copy(b.cells[dstStart:dstStart+width], src.cells[srcStart:srcStart+width])
+	}
+
+	// Update dirty tracking
+	if dstY+height-1 > b.dirtyMaxY {
+		b.dirtyMaxY = dstY + height - 1
+	}
+}
+
+// CopyFrom copies all cells from src to b using a single bulk copy.
+// Requires both buffers to have identical dimensions.
+// This is much faster than cell-by-cell copy for full-buffer transfers.
+func (b *Buffer) CopyFrom(src *Buffer) {
+	if b.width == src.width && b.height == src.height {
+		copy(b.cells, src.cells)
+		b.dirtyMaxY = src.dirtyMaxY
+	}
 }
 
 // Resize resizes the buffer to new dimensions.
