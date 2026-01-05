@@ -58,8 +58,8 @@ type Editor struct {
 	cmdLinePrompt string // ":" or "/" or "?"
 	cmdLineInput  string // current input
 
-	// Display state - formatted lines for rendering (only visible lines!)
-	DisplayLines []DisplayLine
+	// Layer-based rendering (imperative, efficient partial updates)
+	contentLayer *tui.Layer // pre-rendered content buffer
 	lineNumWidth int        // cached width of line number column
 	StatusBar    []tui.Span // vim-style status bar (inverse, full width)
 }
@@ -71,11 +71,6 @@ type EditorState struct {
 	Col    int
 }
 
-type DisplayLine struct {
-	// Spans contains the full line: line number + content, all styled appropriately
-	// Line number is dim for content lines, blue for tilde (~) lines
-	Spans []tui.Span
-}
 
 func main() {
 	// Load own source file for demo
@@ -99,6 +94,11 @@ func main() {
 	}
 	ed.app = app
 
+	// Initialize viewport and layer
+	size := app.Size()
+	ed.viewportHeight = max(1, size.Height-headerRows-footerRows)
+	ed.initLayer(size.Width)
+
 	ed.updateDisplay()
 
 	app.SetView(buildView(ed))
@@ -118,24 +118,33 @@ func main() {
 	app.Handle("$", func(_ riffkey.Match) { ed.moveToCol(len(ed.Lines[ed.Cursor])) })
 
 	app.Handle("w", func(m riffkey.Match) {
+		oldLine := ed.Cursor
 		for range m.Count {
 			ed.wordForward()
 		}
-		ed.refresh()
+		ed.ensureCursorVisible()
+		ed.updateCursorHighlight(oldLine)
+		ed.updateCursor()
 	})
 
 	app.Handle("b", func(m riffkey.Match) {
+		oldLine := ed.Cursor
 		for range m.Count {
 			ed.wordBackward()
 		}
-		ed.refresh()
+		ed.ensureCursorVisible()
+		ed.updateCursorHighlight(oldLine)
+		ed.updateCursor()
 	})
 
 	app.Handle("e", func(m riffkey.Match) {
+		oldLine := ed.Cursor
 		for range m.Count {
 			ed.wordEnd()
 		}
-		ed.refresh()
+		ed.ensureCursorVisible()
+		ed.updateCursorHighlight(oldLine)
+		ed.updateCursor()
 	})
 
 	app.Handle("i", func(_ riffkey.Match) {
@@ -495,7 +504,8 @@ func (ed *Editor) updateCursor() {
 	ed.app.SetCursor(screenX, screenY)
 }
 
-// refresh updates display and cursor - call after any state change
+// refresh does a full re-render - use for content changes or visual mode.
+// For simple cursor movement, use updateCursorHighlight() instead.
 func (ed *Editor) refresh() {
 	ed.updateDisplay()
 	ed.updateCursor()
@@ -503,9 +513,12 @@ func (ed *Editor) refresh() {
 
 // moveTo sets cursor to absolute position, clamping to valid range
 func (ed *Editor) moveTo(line, col int) {
+	oldLine := ed.Cursor
 	ed.Cursor = max(0, min(line, len(ed.Lines)-1))
 	ed.Col = max(0, min(col, len(ed.Lines[ed.Cursor])-1))
-	ed.refresh()
+	ed.ensureCursorVisible()
+	ed.updateCursorHighlight(oldLine)
+	ed.updateCursor()
 }
 
 // moveToCol sets column only, clamping to valid range
@@ -516,16 +529,22 @@ func (ed *Editor) moveToCol(col int) {
 
 // moveDown moves cursor down by count lines
 func (ed *Editor) moveDown(count int) {
+	oldLine := ed.Cursor
 	ed.Cursor = min(ed.Cursor+count, len(ed.Lines)-1)
 	ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
-	ed.refresh()
+	ed.ensureCursorVisible()
+	ed.updateCursorHighlight(oldLine)
+	ed.updateCursor()
 }
 
 // moveUp moves cursor up by count lines
 func (ed *Editor) moveUp(count int) {
+	oldLine := ed.Cursor
 	ed.Cursor = max(ed.Cursor-count, 0)
 	ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
-	ed.refresh()
+	ed.ensureCursorVisible()
+	ed.updateCursorHighlight(oldLine)
+	ed.updateCursor()
 }
 
 // moveLeft moves cursor left by count columns
@@ -644,48 +663,93 @@ func (ed *Editor) updateDisplay() {
 	// Build vim-style status bar
 	ed.updateStatusBar()
 
+	// Render all lines to the layer
+	ed.renderAllLines()
+}
+
+// initLayer creates and sizes the content layer
+func (ed *Editor) initLayer(width int) {
+	ed.contentLayer = tui.NewLayer()
+	// Layer holds ALL lines plus some buffer for scrolling
+	ed.contentLayer.EnsureSize(width, len(ed.Lines)+ed.viewportHeight)
+	ed.renderAllLines()
+}
+
+// renderAllLines renders every line to the layer (used on init or major changes)
+func (ed *Editor) renderAllLines() {
+	if ed.contentLayer == nil || ed.contentLayer.Buffer() == nil {
+		return
+	}
+
 	// Calculate line number width based on total lines
 	maxLineNum := len(ed.Lines)
-	ed.lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1 // +1 for trailing space
+	ed.lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+
+	// Render each line
+	for i := 0; i < len(ed.Lines)+ed.viewportHeight; i++ {
+		ed.renderLineToLayer(i)
+	}
+
+	// Set scroll position
+	ed.contentLayer.ScrollTo(ed.topLine)
+}
+
+// renderLineToLayer renders a single line to the layer buffer
+func (ed *Editor) renderLineToLayer(lineIdx int) {
+	if ed.contentLayer == nil || ed.contentLayer.Buffer() == nil {
+		return
+	}
+
 	lineNumFmt := fmt.Sprintf("%%%dd ", ed.lineNumWidth-1)
-	// Tilde format: same width, right-aligned ~
 	tildeFmt := fmt.Sprintf("%%%ds ", ed.lineNumWidth-1)
 
-	// Fill entire viewport - content lines + tilde lines for beyond EOF
-	ed.DisplayLines = make([]DisplayLine, ed.viewportHeight)
-	for i := 0; i < ed.viewportHeight; i++ {
-		lineIdx := ed.topLine + i
+	var spans []tui.Span
 
-		if lineIdx < len(ed.Lines) {
-			// Content line: [line number] [content]
-			line := ed.Lines[lineIdx]
-			lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
-			isCursorLine := lineIdx == ed.Cursor
+	if lineIdx < len(ed.Lines) {
+		// Content line
+		line := ed.Lines[lineIdx]
+		lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
+		isCursorLine := lineIdx == ed.Cursor
 
-			// Choose line number style: yellow for cursor line, dim for others
-			numStyle := lineNumStyle
-			if isCursorLine {
-				numStyle = cursorLineNumStyle
-			}
-
-			if ed.Mode == "VISUAL" {
-				ed.DisplayLines[i] = DisplayLine{
-					Spans: append([]tui.Span{{Text: lineNum, Style: numStyle}}, ed.getVisualSpans(lineIdx, line)...),
-				}
-			} else {
-				// Use search highlighting if there's an active pattern
-				contentSpans := ed.highlightSearchMatches(line)
-				ed.DisplayLines[i] = DisplayLine{
-					Spans: append([]tui.Span{{Text: lineNum, Style: numStyle}}, contentSpans...),
-				}
-			}
-		} else {
-			// Tilde line (beyond EOF) - vim's classic blue ~
-			ed.DisplayLines[i] = DisplayLine{
-				Spans: []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}},
-			}
+		numStyle := lineNumStyle
+		if isCursorLine {
+			numStyle = cursorLineNumStyle
 		}
+
+		if ed.Mode == "VISUAL" {
+			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, ed.getVisualSpans(lineIdx, line)...)
+		} else {
+			contentSpans := ed.highlightSearchMatches(line)
+			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, contentSpans...)
+		}
+	} else {
+		// Tilde line (beyond EOF)
+		spans = []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
 	}
+
+	ed.contentLayer.SetLine(lineIdx, spans)
+}
+
+// updateLine efficiently updates just the changed lines (for cursor movement)
+func (ed *Editor) updateLine(lineIdx int) {
+	ed.renderLineToLayer(lineIdx)
+}
+
+// updateCursorHighlight efficiently updates highlight when cursor moves between lines
+// Returns the old cursor line index for callers that need it
+func (ed *Editor) updateCursorHighlight(oldLine int) {
+	if ed.contentLayer == nil {
+		return
+	}
+
+	// Only update if cursor actually moved to a different line
+	if oldLine != ed.Cursor && oldLine >= 0 && oldLine < len(ed.Lines) {
+		ed.renderLineToLayer(oldLine) // Remove yellow from old line
+	}
+	ed.renderLineToLayer(ed.Cursor) // Add yellow to new line
+
+	// Sync layer scroll position
+	ed.contentLayer.ScrollTo(ed.topLine)
 }
 
 // getVisualSpans splits a line into styled spans for visual mode highlighting
@@ -775,11 +839,8 @@ func (ed *Editor) isLineSelected(lineIdx int) bool {
 
 func buildView(ed *Editor) any {
 	return tui.Col{Children: []any{
-		// Content lines - each line is a RichText with [line number span] + [content spans]
-		// Line numbers are dim, tilde lines (~) are blue
-		tui.ForEach(&ed.DisplayLines, func(dl *DisplayLine) any {
-			return tui.RichText{Spans: &dl.Spans}
-		}),
+		// Content area - imperative layer, efficiently updated
+		tui.LayerView{Layer: ed.contentLayer, Height: int16(ed.viewportHeight)},
 
 		// Vim-style status bar (inverse video, shows filename and position)
 		tui.RichText{Spans: &ed.StatusBar},
@@ -1743,15 +1804,48 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	// Create visual mode router
 	visualRouter := riffkey.NewRouter().Name("visual")
 
-	// Movement keys update selection (reuse motion helpers)
-	visualRouter.Handle("j", func(m riffkey.Match) { ed.moveDown(m.Count) })
-	visualRouter.Handle("k", func(m riffkey.Match) { ed.moveUp(m.Count) })
-	visualRouter.Handle("h", func(m riffkey.Match) { ed.moveLeft(m.Count) })
-	visualRouter.Handle("l", func(m riffkey.Match) { ed.moveRight(m.Count) })
-	visualRouter.Handle("gg", func(_ riffkey.Match) { ed.moveTo(0, 0) })
-	visualRouter.Handle("G", func(_ riffkey.Match) { ed.moveTo(len(ed.Lines)-1, len(ed.Lines[len(ed.Lines)-1])) })
-	visualRouter.Handle("0", func(_ riffkey.Match) { ed.moveToCol(0) })
-	visualRouter.Handle("$", func(_ riffkey.Match) { ed.moveToCol(len(ed.Lines[ed.Cursor])) })
+	// Movement keys update selection
+	// Visual mode needs full refresh for multi-line selection highlighting
+	visualRouter.Handle("j", func(m riffkey.Match) {
+		ed.Cursor = min(ed.Cursor+m.Count, len(ed.Lines)-1)
+		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		ed.ensureCursorVisible()
+		ed.refresh()
+	})
+	visualRouter.Handle("k", func(m riffkey.Match) {
+		ed.Cursor = max(ed.Cursor-m.Count, 0)
+		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		ed.ensureCursorVisible()
+		ed.refresh()
+	})
+	visualRouter.Handle("h", func(m riffkey.Match) {
+		ed.Col = max(0, ed.Col-m.Count)
+		ed.refresh()
+	})
+	visualRouter.Handle("l", func(m riffkey.Match) {
+		ed.Col = min(ed.Col+m.Count, max(0, len(ed.Lines[ed.Cursor])-1))
+		ed.refresh()
+	})
+	visualRouter.Handle("gg", func(_ riffkey.Match) {
+		ed.Cursor = 0
+		ed.Col = 0
+		ed.ensureCursorVisible()
+		ed.refresh()
+	})
+	visualRouter.Handle("G", func(_ riffkey.Match) {
+		ed.Cursor = len(ed.Lines) - 1
+		ed.Col = len(ed.Lines[ed.Cursor])
+		ed.ensureCursorVisible()
+		ed.refresh()
+	})
+	visualRouter.Handle("0", func(_ riffkey.Match) {
+		ed.Col = 0
+		ed.refresh()
+	})
+	visualRouter.Handle("$", func(_ riffkey.Match) {
+		ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+		ed.refresh()
+	})
 
 	visualRouter.Handle("w", func(m riffkey.Match) {
 		for range m.Count {
