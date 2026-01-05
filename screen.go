@@ -360,3 +360,21 @@ func (s *Screen) HideCursor() {
 func (s *Screen) MoveCursor(x, y int) {
 	s.writeString(fmt.Sprintf("\x1b[%d;%dH", y+1, x+1))
 }
+
+// CursorShape represents the terminal cursor shape.
+type CursorShape int
+
+const (
+	CursorDefault        CursorShape = 0 // Terminal default
+	CursorBlockBlink     CursorShape = 1 // Blinking block
+	CursorBlock          CursorShape = 2 // Steady block
+	CursorUnderlineBlink CursorShape = 3 // Blinking underline
+	CursorUnderline      CursorShape = 4 // Steady underline
+	CursorBarBlink       CursorShape = 5 // Blinking bar (line)
+	CursorBar            CursorShape = 6 // Steady bar (line)
+)
+
+// SetCursorShape changes the cursor shape.
+func (s *Screen) SetCursorShape(shape CursorShape) {
+	s.writeString(fmt.Sprintf("\x1b[%d q", shape))
+}

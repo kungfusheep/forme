@@ -40,6 +40,11 @@ type App struct {
 	running    bool
 	renderMu   sync.Mutex
 	renderChan chan struct{}
+
+	// Cursor state
+	cursorX, cursorY int
+	cursorVisible    bool
+	cursorShape      CursorShape
 }
 
 // NewApp creates a new TUI application.
@@ -202,6 +207,24 @@ func (a *App) Pop() {
 	a.input.Pop()
 }
 
+// SetCursor sets the cursor position (0-indexed screen coordinates).
+// The cursor will be positioned here after each render.
+func (a *App) SetCursor(x, y int) {
+	a.cursorX = x
+	a.cursorY = y
+}
+
+// ShowCursor makes the cursor visible with the given shape.
+func (a *App) ShowCursor(shape CursorShape) {
+	a.cursorVisible = true
+	a.cursorShape = shape
+}
+
+// HideCursor hides the cursor.
+func (a *App) HideCursor() {
+	a.cursorVisible = false
+}
+
 // RequestRender marks that a render is needed.
 // Safe to call from any goroutine.
 func (a *App) RequestRender() {
@@ -250,6 +273,15 @@ func (a *App) render() {
 	a.copyToScreen(buf)
 	a.screen.Flush()
 	a.pool.Swap() // Queue async clear
+
+	// Position and show/hide cursor after render
+	if a.cursorVisible {
+		a.screen.SetCursorShape(a.cursorShape)
+		a.screen.MoveCursor(a.cursorX, a.cursorY)
+		a.screen.ShowCursor()
+	} else {
+		a.screen.HideCursor()
+	}
 
 	if DebugTiming {
 		lastFlushTime = time.Since(t1)

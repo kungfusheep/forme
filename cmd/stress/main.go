@@ -153,7 +153,7 @@ func main() {
 
 		// Render
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, int16(width), int16(height), nil)
+		serial.Execute(buf, int16(width), int16(height))
 
 		// Output to terminal
 		fmt.Print("\033[H") // Move to top-left
