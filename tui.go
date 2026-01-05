@@ -307,6 +307,99 @@ func ForEach(items any, render any) ForEachNode {
 	return ForEachNode{Items: items, Render: render}
 }
 
+// SelectionList displays a list of items with selection marker.
+// Items must be a pointer to a slice (*[]T).
+// Selected must be a pointer to an int (*int) tracking the selected index.
+// Render is optional - if nil, items are rendered using fmt.Sprintf("%v", item).
+// Marker defaults to "> " if not specified.
+type SelectionList struct {
+	Items      any    // *[]T - pointer to slice of items
+	Selected   *int   // pointer to selected index
+	Marker     string // selection marker (default "> ")
+	Render     any    // func(*T) any - optional, renders each item
+	MaxVisible int    // max items to show (0 = all)
+	len        int    // cached length for bounds checking
+	offset     int    // scroll offset for windowing
+}
+
+// ensureVisible adjusts scroll offset so selected item is visible.
+func (s *SelectionList) ensureVisible() {
+	if s.Selected == nil || s.MaxVisible <= 0 {
+		return
+	}
+	sel := *s.Selected
+	// Scroll up if selection is above visible window
+	if sel < s.offset {
+		s.offset = sel
+	}
+	// Scroll down if selection is below visible window
+	if sel >= s.offset+s.MaxVisible {
+		s.offset = sel - s.MaxVisible + 1
+	}
+}
+
+// Up moves selection up by one. Safe to use directly with app.Handle.
+func (s *SelectionList) Up(m any) {
+	if s.Selected != nil && *s.Selected > 0 {
+		*s.Selected--
+		s.ensureVisible()
+	}
+}
+
+// Down moves selection down by one. Safe to use directly with app.Handle.
+func (s *SelectionList) Down(m any) {
+	if s.Selected != nil && s.len > 0 && *s.Selected < s.len-1 {
+		*s.Selected++
+		s.ensureVisible()
+	}
+}
+
+// PageUp moves selection up by page size (MaxVisible or 10).
+func (s *SelectionList) PageUp(m any) {
+	if s.Selected != nil {
+		pageSize := 10
+		if s.MaxVisible > 0 {
+			pageSize = s.MaxVisible
+		}
+		*s.Selected -= pageSize
+		if *s.Selected < 0 {
+			*s.Selected = 0
+		}
+		s.ensureVisible()
+	}
+}
+
+// PageDown moves selection down by page size (MaxVisible or 10).
+func (s *SelectionList) PageDown(m any) {
+	if s.Selected != nil && s.len > 0 {
+		pageSize := 10
+		if s.MaxVisible > 0 {
+			pageSize = s.MaxVisible
+		}
+		*s.Selected += pageSize
+		if *s.Selected >= s.len {
+			*s.Selected = s.len - 1
+		}
+		s.ensureVisible()
+	}
+}
+
+// First moves selection to the first item.
+func (s *SelectionList) First(m any) {
+	if s.Selected != nil {
+		*s.Selected = 0
+		s.ensureVisible()
+	}
+}
+
+// Last moves selection to the last item.
+func (s *SelectionList) Last(m any) {
+	if s.Selected != nil && s.len > 0 {
+		*s.Selected = s.len - 1
+		s.ensureVisible()
+	}
+}
+
 // Span represents a styled segment of text within RichText.
 type Span struct {
 	Text  string

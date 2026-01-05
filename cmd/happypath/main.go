@@ -45,14 +45,14 @@ func main() {
 			tui.Text{Content: "Press j/k to change values, q to quit"},
 			tui.Text{},
 			tui.Progress{Value: &state.Progress, Width: 40},
-			tui.If(&boolFlag, tui.Text{Content: "Counter would be herre"}),
+			tui.If(&boolFlag).Eq(true).Then(tui.Text{Content: "Counter would be here"}),
 			tui.Text{},
-			tui.ForEach(&state.Items, func(item *Item) any {
-				return tui.Row{Gap: 2, Children: []any{
-					tui.Text{Content: &item.Name},
-					tui.Progress{Value: &item.Progress, Width: 20},
-				}}
-			}),
+			tui.Row{Gap: 2, Children: []any{
+				tui.Text{Content: "Counter:"},
+				tui.ForEach(&state.Items, func(item *Item) any {
+					return tui.Text{Content: &item.Name}
+				}),
+			}},
 		}},
 	).
 		Handle("q", func(m riffkey.Match) {

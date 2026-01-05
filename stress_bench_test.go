@@ -59,14 +59,14 @@ func BenchmarkStress100Items(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	buf.Clear()
-	serial.ExecuteSimple(buf, 80, 120, nil)
+	serial.Execute(buf, 80, 120)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 80, 120, nil)
+		serial.Execute(buf, 80, 120)
 	}
 }
 
@@ -97,14 +97,14 @@ func BenchmarkStressWideProgress(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	buf.Clear()
-	serial.ExecuteSimple(buf, 120, 30, nil)
+	serial.Execute(buf, 120, 30)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 120, 30, nil)
+		serial.Execute(buf, 120, 30)
 	}
 }
 
@@ -139,14 +139,14 @@ func BenchmarkStressDenseGrid(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	buf.Clear()
-	serial.ExecuteSimple(buf, 100, 50, nil)
+	serial.Execute(buf, 100, 50)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 100, 50, nil)
+		serial.Execute(buf, 100, 50)
 	}
 }
 
@@ -192,14 +192,14 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	buf.Clear()
-	serial.ExecuteSimple(buf, 120, 80, nil)
+	serial.Execute(buf, 120, 80)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 120, 80, nil)
+		serial.Execute(buf, 120, 80)
 	}
 }
 
@@ -224,14 +224,14 @@ func BenchmarkStressTextHeavy(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	buf.Clear()
-	serial.ExecuteSimple(buf, 100, 60, nil)
+	serial.Execute(buf, 100, 60)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 100, 60, nil)
+		serial.Execute(buf, 100, 60)
 	}
 }
 
@@ -280,14 +280,14 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 
 	// Warm up
 	buf := pool.Current()
-	serial.ExecuteSimple(buf, 120, 80, nil)
+	serial.Execute(buf, 120, 80)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf := pool.Swap()  // async clear of old buffer
-		serial.ExecuteSimple(buf, 120, 80, nil)
+		serial.Execute(buf, 120, 80)
 	}
 }
 
@@ -332,14 +332,14 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	// Warm up
-	serial.ExecuteSimple(buf, 120, 80, nil)
+	serial.Execute(buf, 120, 80)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()  // sync clear
-		serial.ExecuteSimple(buf, 120, 80, nil)
+		serial.Execute(buf, 120, 80)
 	}
 }
 
@@ -364,14 +364,14 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 
 	// Warm up
 	buf := pool.Current()
-	serial.ExecuteSimple(buf, 80, 120, nil)
+	serial.Execute(buf, 80, 120)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf := pool.Swap()
-		serial.ExecuteSimple(buf, 80, 120, nil)
+		serial.Execute(buf, 80, 120)
 	}
 }
 
@@ -394,13 +394,13 @@ func BenchmarkSyncClear100Items(b *testing.B) {
 	serial := BuildSerial(ui)
 
 	// Warm up
-	serial.ExecuteSimple(buf, 80, 120, nil)
+	serial.Execute(buf, 80, 120)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
-		serial.ExecuteSimple(buf, 80, 120, nil)
+		serial.Execute(buf, 80, 120)
 	}
 }

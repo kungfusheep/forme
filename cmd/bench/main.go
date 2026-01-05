@@ -116,7 +116,7 @@ func main() {
 		}
 
 		// Render
-		serial.ExecuteSimple(buf, int16(width), int16(height), nil)
+		serial.Execute(buf, int16(width), int16(height))
 
 		frameTime := time.Since(frameStart)
 		frameTimes = append(frameTimes, frameTime)
