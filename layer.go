@@ -143,3 +143,50 @@ func (l *Layer) blit(dst *Buffer, dstX, dstY, width, height int) {
 	}
 	dst.Blit(l.buffer, 0, l.scrollY, dstX, dstY, width, height)
 }
+
+// SetLine updates a single line in the layer buffer with styled spans.
+// This is the efficient path for partial updates (e.g., cursor moved).
+// Clears the line first to prevent ghost content from shorter lines.
+func (l *Layer) SetLine(y int, spans []Span) {
+	if l.buffer == nil || y < 0 || y >= l.buffer.Height() {
+		return
+	}
+	l.buffer.ClearLine(y)
+	l.buffer.WriteSpans(0, y, spans, l.buffer.Width())
+}
+
+// SetLineString updates a single line with a plain string and style.
+// Clears the line first to prevent ghost content from shorter lines.
+func (l *Layer) SetLineString(y int, s string, style Style) {
+	if l.buffer == nil || y < 0 || y >= l.buffer.Height() {
+		return
+	}
+	l.buffer.ClearLine(y)
+	l.buffer.WriteStringFast(0, y, s, style, l.buffer.Width())
+}
+
+// EnsureSize ensures the buffer is at least the given size.
+// If the buffer needs to grow, existing content is preserved.
+func (l *Layer) EnsureSize(width, height int) {
+	if l.buffer == nil {
+		l.buffer = NewBuffer(width, height)
+		return
+	}
+	if l.buffer.Width() >= width && l.buffer.Height() >= height {
+		return
+	}
+	// Need to grow - create new buffer and copy
+	newWidth := max(l.buffer.Width(), width)
+	newHeight := max(l.buffer.Height(), height)
+	newBuf := NewBuffer(newWidth, newHeight)
+	newBuf.Blit(l.buffer, 0, 0, 0, 0, l.buffer.Width(), l.buffer.Height())
+	l.buffer = newBuf
+	l.updateMaxScroll()
+}
+
+// Clear clears the entire layer buffer.
+func (l *Layer) Clear() {
+	if l.buffer != nil {
+		l.buffer.Clear()
+	}
+}

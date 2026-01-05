@@ -251,6 +251,18 @@ func (b *Buffer) ClearDirty() {
 	b.dirtyMaxY = 0
 }
 
+// ClearLine clears a single line to empty cells.
+func (b *Buffer) ClearLine(y int) {
+	if y < 0 || y >= b.height {
+		return
+	}
+	base := y * b.width
+	empty := EmptyCell()
+	for x := 0; x < b.width; x++ {
+		b.cells[base+x] = empty
+	}
+}
+
 // FillRect fills a rectangular region with the given cell.
 func (b *Buffer) FillRect(x, y, width, height int, c Cell) {
 	for dy := 0; dy < height; dy++ {
