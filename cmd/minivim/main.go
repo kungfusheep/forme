@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"riffkey"
 	"tui"
@@ -16,53 +17,149 @@ import (
 
 // Layout constants
 const (
-	headerRows = 0 // Content starts at row 0 now
-	footerRows = 2 // Status bar + message line
+	headerRows     = 0  // Content starts at row 0 now
+	footerRows     = 2  // Status bar + message line
+	renderBuffer   = 30 // Lines to render above/below viewport for smooth scrolling
 )
 
+// Buffer holds file content (can be shared across windows)
+type Buffer struct {
+	Lines     []string
+	FileName  string
+	undoStack []EditorState
+	redoStack []EditorState
+}
+
+// Window is a view into a buffer
+type Window struct {
+	buffer *Buffer
+
+	// Cursor position
+	Cursor int
+	Col    int
+
+	// Viewport
+	topLine        int
+	viewportHeight int
+	viewportWidth  int // for vertical splits
+
+	// Visual mode selection (per-window)
+	visualStart    int
+	visualStartCol int
+	visualLineMode bool
+
+	// Rendering
+	contentLayer      *tui.Layer
+	lineNumWidth      int
+	StatusBar         []tui.Span
+	renderedMin       int
+	renderedMax       int
+
+	// Debug stats
+	debugMode          bool
+	lastRenderTime     time.Duration
+	lastLinesRendered  int
+	totalRenders       int
+	totalLinesRendered int
+}
+
+// SplitDir indicates the split direction
+type SplitDir int
+
+const (
+	SplitNone SplitDir = iota
+	SplitHorizontal // windows stacked vertically (like :sp)
+	SplitVertical   // windows side by side (like :vs)
+)
+
+// SplitNode is a binary tree node for window layout.
+// Either Window is set (leaf) or Children are set (branch).
+type SplitNode struct {
+	// For branch nodes (splits)
+	Direction SplitDir
+	Children  [2]*SplitNode
+
+	// For leaf nodes (windows)
+	Window *Window
+
+	// Parent pointer for navigation
+	Parent *SplitNode
+}
+
+// IsLeaf returns true if this node contains a window
+func (n *SplitNode) IsLeaf() bool {
+	return n.Window != nil
+}
+
+// FindWindow returns the node containing the given window
+func (n *SplitNode) FindWindow(w *Window) *SplitNode {
+	if n.IsLeaf() {
+		if n.Window == w {
+			return n
+		}
+		return nil
+	}
+	if found := n.Children[0].FindWindow(w); found != nil {
+		return found
+	}
+	return n.Children[1].FindWindow(w)
+}
+
+// AllWindows returns all windows in the tree (in-order)
+func (n *SplitNode) AllWindows() []*Window {
+	if n.IsLeaf() {
+		return []*Window{n.Window}
+	}
+	result := n.Children[0].AllWindows()
+	return append(result, n.Children[1].AllWindows()...)
+}
+
+// FirstWindow returns the first (top-left-most) window
+func (n *SplitNode) FirstWindow() *Window {
+	if n.IsLeaf() {
+		return n.Window
+	}
+	return n.Children[0].FirstWindow()
+}
+
+// LastWindow returns the last (bottom-right-most) window
+func (n *SplitNode) LastWindow() *Window {
+	if n.IsLeaf() {
+		return n.Window
+	}
+	return n.Children[1].LastWindow()
+}
+
+// Editor manages windows and global state
 type Editor struct {
-	Lines      []string
-	Cursor     int    // current line
-	Col        int    // cursor column
-	Mode       string // "NORMAL", "INSERT", or "VISUAL"
-	StatusLine string // command/message line (bottom)
-	FileName   string // displayed in status bar
+	root          *SplitNode // root of the split tree
+	focusedWindow *Window    // currently focused window
 
 	app *tui.App // reference for cursor control
 
-	// Viewport scrolling
-	topLine        int // first visible line
-	viewportHeight int // number of visible content lines
+	// Global state
+	Mode       string // "NORMAL", "INSERT", or "VISUAL"
+	StatusLine string // command/message line (bottom)
 
-	// Undo/redo stacks
-	undoStack []EditorState
-	redoStack []EditorState
-
-	// Visual mode
-	visualStart    int  // line where visual selection started
-	visualStartCol int  // column where visual selection started
-	visualLineMode bool // V (line mode) vs v (char mode)
-
-	// Search
+	// Search (global)
 	searchPattern   string
-	searchDirection int // 1 forward, -1 backward
+	searchDirection int
 	lastSearch      string
 
-	// f/F/t/T last char for ; and ,
+	// f/F/t/T (global)
 	lastFindChar rune
-	lastFindDir  int  // 1=f/t forward, -1=F/T backward
-	lastFindTill bool // true for t/T
+	lastFindDir  int
+	lastFindTill bool
 
-	// Command line mode
-	cmdLineActive bool   // currently in command mode
-	cmdLinePrompt string // ":" or "/" or "?"
-	cmdLineInput  string // current input
-
-	// Layer-based rendering (imperative, efficient partial updates)
-	contentLayer *tui.Layer // pre-rendered content buffer
-	lineNumWidth int        // cached width of line number column
-	StatusBar    []tui.Span // vim-style status bar (inverse, full width)
+	// Command line mode (global)
+	cmdLineActive bool
+	cmdLinePrompt string
+	cmdLineInput  string
 }
+
+// Helper methods to access current window/buffer
+func (ed *Editor) win() *Window { return ed.focusedWindow }
+func (ed *Editor) buf() *Buffer { return ed.win().buffer }
 
 // EditorState captures state for undo/redo
 type EditorState struct {
@@ -81,11 +178,25 @@ func main() {
 		fileName = "[No Name]"
 	}
 
+	// Create initial buffer and window
+	buf := &Buffer{
+		Lines:    lines,
+		FileName: fileName,
+	}
+	win := &Window{
+		buffer:      buf,
+		renderedMin: -1,
+		renderedMax: -1,
+	}
+
+	// Create split tree with single window as root
+	root := &SplitNode{Window: win}
+
 	ed := &Editor{
-		Lines:      lines,
-		Mode:       "NORMAL",
-		FileName:   fileName,
-		StatusLine: "", // empty initially, used for messages
+		root:          root,
+		focusedWindow: win,
+		Mode:          "NORMAL",
+		StatusLine:    "", // empty initially, used for messages
 	}
 
 	app, err := tui.NewApp()
@@ -96,7 +207,7 @@ func main() {
 
 	// Initialize viewport and layer
 	size := app.Size()
-	ed.viewportHeight = max(1, size.Height-headerRows-footerRows)
+	ed.win().viewportHeight = max(1, size.Height-headerRows-footerRows)
 	ed.initLayer(size.Width)
 
 	ed.updateDisplay()
@@ -112,13 +223,13 @@ func main() {
 	app.Handle("k", func(m riffkey.Match) { ed.moveUp(m.Count) })
 	app.Handle("h", func(m riffkey.Match) { ed.moveLeft(m.Count) })
 	app.Handle("l", func(m riffkey.Match) { ed.moveRight(m.Count) })
-	app.Handle("gg", func(_ riffkey.Match) { ed.moveTo(0, ed.Col) })
-	app.Handle("G", func(_ riffkey.Match) { ed.moveTo(len(ed.Lines)-1, ed.Col) })
+	app.Handle("gg", func(_ riffkey.Match) { ed.moveTo(0, ed.win().Col) })
+	app.Handle("G", func(_ riffkey.Match) { ed.moveTo(len(ed.buf().Lines)-1, ed.win().Col) })
 	app.Handle("0", func(_ riffkey.Match) { ed.moveToCol(0) })
-	app.Handle("$", func(_ riffkey.Match) { ed.moveToCol(len(ed.Lines[ed.Cursor])) })
+	app.Handle("$", func(_ riffkey.Match) { ed.moveToCol(len(ed.buf().Lines[ed.win().Cursor])) })
 
 	app.Handle("w", func(m riffkey.Match) {
-		oldLine := ed.Cursor
+		oldLine := ed.win().Cursor
 		for range m.Count {
 			ed.wordForward()
 		}
@@ -128,7 +239,7 @@ func main() {
 	})
 
 	app.Handle("b", func(m riffkey.Match) {
-		oldLine := ed.Cursor
+		oldLine := ed.win().Cursor
 		for range m.Count {
 			ed.wordBackward()
 		}
@@ -138,7 +249,7 @@ func main() {
 	})
 
 	app.Handle("e", func(m riffkey.Match) {
-		oldLine := ed.Cursor
+		oldLine := ed.win().Cursor
 		for range m.Count {
 			ed.wordEnd()
 		}
@@ -153,43 +264,43 @@ func main() {
 
 	app.Handle("a", func(_ riffkey.Match) {
 		// Append after cursor
-		if len(ed.Lines[ed.Cursor]) > 0 {
-			ed.Col++
+		if len(ed.buf().Lines[ed.win().Cursor]) > 0 {
+			ed.win().Col++
 		}
 		ed.enterInsertMode(app)
 	})
 
 	app.Handle("A", func(_ riffkey.Match) {
-		ed.Col = len(ed.Lines[ed.Cursor])
+		ed.win().Col = len(ed.buf().Lines[ed.win().Cursor])
 		ed.enterInsertMode(app)
 	})
 
 	app.Handle("I", func(_ riffkey.Match) {
-		ed.Col = 0
+		ed.win().Col = 0
 		ed.enterInsertMode(app)
 	})
 
 	app.Handle("o", func(_ riffkey.Match) {
 		// Insert new line below
-		ed.Cursor++
-		newLines := make([]string, len(ed.Lines)+1)
-		copy(newLines[:ed.Cursor], ed.Lines[:ed.Cursor])
-		newLines[ed.Cursor] = ""
-		copy(newLines[ed.Cursor+1:], ed.Lines[ed.Cursor:])
-		ed.Lines = newLines
-		ed.Col = 0
+		ed.win().Cursor++
+		newLines := make([]string, len(ed.buf().Lines)+1)
+		copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+		newLines[ed.win().Cursor] = ""
+		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+		ed.buf().Lines = newLines
+		ed.win().Col = 0
 		ed.updateDisplay()
 		ed.enterInsertMode(app)
 	})
 
 	app.Handle("O", func(_ riffkey.Match) {
 		// Insert new line above
-		newLines := make([]string, len(ed.Lines)+1)
-		copy(newLines[:ed.Cursor], ed.Lines[:ed.Cursor])
-		newLines[ed.Cursor] = ""
-		copy(newLines[ed.Cursor+1:], ed.Lines[ed.Cursor:])
-		ed.Lines = newLines
-		ed.Col = 0
+		newLines := make([]string, len(ed.buf().Lines)+1)
+		copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+		newLines[ed.win().Cursor] = ""
+		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+		ed.buf().Lines = newLines
+		ed.win().Col = 0
 		ed.updateDisplay()
 		ed.enterInsertMode(app)
 	})
@@ -197,17 +308,17 @@ func main() {
 	app.Handle("dd", func(m riffkey.Match) {
 		ed.saveUndo()
 		for i := 0; i < m.Count; i++ {
-			if len(ed.Lines) > 1 {
-				ed.Lines = append(ed.Lines[:ed.Cursor], ed.Lines[ed.Cursor+1:]...)
-				if ed.Cursor >= len(ed.Lines) {
-					ed.Cursor = len(ed.Lines) - 1
+			if len(ed.buf().Lines) > 1 {
+				ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor], ed.buf().Lines[ed.win().Cursor+1:]...)
+				if ed.win().Cursor >= len(ed.buf().Lines) {
+					ed.win().Cursor = len(ed.buf().Lines) - 1
 				}
 			} else {
-				ed.Lines[0] = ""
+				ed.buf().Lines[0] = ""
 				break
 			}
 		}
-		ed.Col = min(ed.Col, max(0, len(ed.Lines[ed.Cursor])-1))
+		ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
 		ed.updateDisplay()
 		ed.updateCursor()
 	})
@@ -216,13 +327,13 @@ func main() {
 		ed.saveUndo()
 		// Delete character(s) under cursor
 		for i := 0; i < m.Count; i++ {
-			line := ed.Lines[ed.Cursor]
-			if len(line) > 0 && ed.Col < len(line) {
-				ed.Lines[ed.Cursor] = line[:ed.Col] + line[ed.Col+1:]
+			line := ed.buf().Lines[ed.win().Cursor]
+			if len(line) > 0 && ed.win().Col < len(line) {
+				ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + line[ed.win().Col+1:]
 			}
 		}
-		if ed.Col >= len(ed.Lines[ed.Cursor]) && ed.Col > 0 {
-			ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+		if ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) && ed.win().Col > 0 {
+			ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 		}
 		ed.updateDisplay()
 		ed.updateCursor()
@@ -243,10 +354,10 @@ func main() {
 	// Paste from yank register
 	app.Handle("p", func(_ riffkey.Match) {
 		if yankRegister != "" {
-			line := ed.Lines[ed.Cursor]
-			pos := min(ed.Col+1, len(line))
-			ed.Lines[ed.Cursor] = line[:pos] + yankRegister + line[pos:]
-			ed.Col = pos + len(yankRegister) - 1
+			line := ed.buf().Lines[ed.win().Cursor]
+			pos := min(ed.win().Col+1, len(line))
+			ed.buf().Lines[ed.win().Cursor] = line[:pos] + yankRegister + line[pos:]
+			ed.win().Col = pos + len(yankRegister) - 1
 			ed.updateDisplay()
 			ed.updateCursor()
 		}
@@ -254,8 +365,8 @@ func main() {
 
 	app.Handle("P", func(_ riffkey.Match) {
 		if yankRegister != "" {
-			line := ed.Lines[ed.Cursor]
-			ed.Lines[ed.Cursor] = line[:ed.Col] + yankRegister + line[ed.Col:]
+			line := ed.buf().Lines[ed.win().Cursor]
+			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
 			ed.updateDisplay()
 			ed.updateCursor()
 		}
@@ -274,9 +385,9 @@ func main() {
 	app.Handle("<C-d>", func(_ riffkey.Match) {
 		// Half page down
 		ed.ensureCursorVisible()
-		half := ed.viewportHeight / 2
-		ed.Cursor = min(ed.Cursor+half, len(ed.Lines)-1)
-		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		half := ed.win().viewportHeight / 2
+		ed.win().Cursor = min(ed.win().Cursor+half, len(ed.buf().Lines)-1)
+		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 		ed.updateDisplay()
 		ed.updateCursor()
 	})
@@ -284,9 +395,9 @@ func main() {
 	app.Handle("<C-u>", func(_ riffkey.Match) {
 		// Half page up
 		ed.ensureCursorVisible()
-		half := ed.viewportHeight / 2
-		ed.Cursor = max(ed.Cursor-half, 0)
-		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		half := ed.win().viewportHeight / 2
+		ed.win().Cursor = max(ed.win().Cursor-half, 0)
+		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 		ed.updateDisplay()
 		ed.updateCursor()
 	})
@@ -294,11 +405,11 @@ func main() {
 	app.Handle("<C-e>", func(_ riffkey.Match) {
 		// Scroll down one line (keep cursor in place if possible)
 		ed.ensureCursorVisible()
-		if ed.topLine < len(ed.Lines)-ed.viewportHeight {
-			ed.topLine++
-			if ed.Cursor < ed.topLine {
-				ed.Cursor = ed.topLine
-				ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		if ed.win().topLine < len(ed.buf().Lines)-ed.win().viewportHeight {
+			ed.win().topLine++
+			if ed.win().Cursor < ed.win().topLine {
+				ed.win().Cursor = ed.win().topLine
+				ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 			}
 			ed.updateDisplay()
 			ed.updateCursor()
@@ -307,11 +418,11 @@ func main() {
 
 	app.Handle("<C-y>", func(_ riffkey.Match) {
 		// Scroll up one line (keep cursor in place if possible)
-		if ed.topLine > 0 {
-			ed.topLine--
-			if ed.Cursor >= ed.topLine+ed.viewportHeight {
-				ed.Cursor = ed.topLine + ed.viewportHeight - 1
-				ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		if ed.win().topLine > 0 {
+			ed.win().topLine--
+			if ed.win().Cursor >= ed.win().topLine+ed.win().viewportHeight {
+				ed.win().Cursor = ed.win().topLine + ed.win().viewportHeight - 1
+				ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 			}
 			ed.updateDisplay()
 			ed.updateCursor()
@@ -333,10 +444,10 @@ func main() {
 	// Join lines (J)
 	app.Handle("J", func(_ riffkey.Match) {
 		ed.saveUndo()
-		if ed.Cursor < len(ed.Lines)-1 {
+		if ed.win().Cursor < len(ed.buf().Lines)-1 {
 			// Join current line with next
-			ed.Lines[ed.Cursor] += " " + ed.Lines[ed.Cursor+1]
-			ed.Lines = append(ed.Lines[:ed.Cursor+1], ed.Lines[ed.Cursor+2:]...)
+			ed.buf().Lines[ed.win().Cursor] += " " + ed.buf().Lines[ed.win().Cursor+1]
+			ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor+1], ed.buf().Lines[ed.win().Cursor+2:]...)
 			ed.updateDisplay()
 		}
 	})
@@ -348,9 +459,9 @@ func main() {
 		replaceRouter.HandleUnmatched(func(k riffkey.Key) bool {
 			if k.Rune != 0 && k.Mod == riffkey.ModNone {
 				ed.saveUndo()
-				line := ed.Lines[ed.Cursor]
-				if ed.Col < len(line) {
-					ed.Lines[ed.Cursor] = line[:ed.Col] + string(k.Rune) + line[ed.Col+1:]
+				line := ed.buf().Lines[ed.win().Cursor]
+				if ed.win().Col < len(line) {
+					ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(k.Rune) + line[ed.win().Col+1:]
 					ed.updateDisplay()
 				}
 			}
@@ -367,9 +478,9 @@ func main() {
 	app.Handle(".", func(_ riffkey.Match) {
 		if yankRegister != "" {
 			ed.saveUndo()
-			line := ed.Lines[ed.Cursor]
-			ed.Lines[ed.Cursor] = line[:ed.Col] + yankRegister + line[ed.Col:]
-			ed.Col += len(yankRegister)
+			line := ed.buf().Lines[ed.win().Cursor]
+			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
+			ed.win().Col += len(yankRegister)
 			ed.updateDisplay()
 			ed.updateCursor()
 		}
@@ -378,17 +489,17 @@ func main() {
 	// ~ toggle case
 	app.Handle("~", func(_ riffkey.Match) {
 		ed.saveUndo()
-		line := ed.Lines[ed.Cursor]
-		if ed.Col < len(line) {
-			c := line[ed.Col]
+		line := ed.buf().Lines[ed.win().Cursor]
+		if ed.win().Col < len(line) {
+			c := line[ed.win().Col]
 			if c >= 'a' && c <= 'z' {
 				c = c - 'a' + 'A'
 			} else if c >= 'A' && c <= 'Z' {
 				c = c - 'A' + 'a'
 			}
-			ed.Lines[ed.Cursor] = line[:ed.Col] + string(c) + line[ed.Col+1:]
-			if ed.Col < len(line)-1 {
-				ed.Col++
+			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(c) + line[ed.win().Col+1:]
+			if ed.win().Col < len(line)-1 {
+				ed.win().Col++
 			}
 			ed.updateDisplay()
 			ed.updateCursor()
@@ -417,6 +528,53 @@ func main() {
 		ed.searchNext(-1)
 	})
 
+	// Debug mode toggle - shows render stats in status bar
+	app.Handle("<C-g>", func(_ riffkey.Match) {
+		ed.win().debugMode = !ed.win().debugMode
+		if ed.win().debugMode {
+			ed.StatusLine = "Debug mode ON - showing render stats"
+		} else {
+			ed.StatusLine = "Debug mode OFF"
+		}
+		ed.updateDisplay()
+	})
+
+	// Window management: Ctrl-w commands
+	app.Handle("<C-w>w", func(_ riffkey.Match) {
+		ed.focusNextWindow()
+	})
+	app.Handle("<C-w>W", func(_ riffkey.Match) {
+		ed.focusPrevWindow()
+	})
+	app.Handle("<C-w>j", func(_ riffkey.Match) {
+		// Move to window below - find window with horizontal split parent
+		ed.focusDirection(SplitHorizontal, 1)
+	})
+	app.Handle("<C-w>k", func(_ riffkey.Match) {
+		// Move to window above - find window with horizontal split parent
+		ed.focusDirection(SplitHorizontal, -1)
+	})
+	app.Handle("<C-w>h", func(_ riffkey.Match) {
+		// Move to window left - find window with vertical split parent
+		ed.focusDirection(SplitVertical, -1)
+	})
+	app.Handle("<C-w>l", func(_ riffkey.Match) {
+		// Move to window right - find window with vertical split parent
+		ed.focusDirection(SplitVertical, 1)
+	})
+	app.Handle("<C-w>s", func(_ riffkey.Match) {
+		ed.splitHorizontal()
+	})
+	app.Handle("<C-w>v", func(_ riffkey.Match) {
+		ed.splitVertical()
+	})
+	app.Handle("<C-w>c", func(_ riffkey.Match) {
+		ed.closeWindow()
+	})
+	app.Handle("<C-w>o", func(_ riffkey.Match) {
+		ed.closeOtherWindows()
+	})
+
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
@@ -424,7 +582,7 @@ func main() {
 
 func (ed *Editor) enterInsertMode(app *tui.App) {
 	ed.Mode = "INSERT"
-	ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 	ed.StatusLine = "-- INSERT --  Esc:normal  Enter:newline  Ctrl+W:delete word"
 	ed.updateDisplay()
 
@@ -436,7 +594,7 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 	insertRouter := riffkey.NewRouter().Name("insert")
 
 	// TextHandler with OnChange callback for live updates
-	th := riffkey.NewTextHandler(&ed.Lines[ed.Cursor], &ed.Col)
+	th := riffkey.NewTextHandler(&ed.buf().Lines[ed.win().Cursor], &ed.win().Col)
 	th.OnChange = func(_ string) {
 		ed.updateDisplay()
 		ed.updateCursor()
@@ -449,22 +607,22 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 
 	// Enter creates a new line
 	insertRouter.Handle("<CR>", func(_ riffkey.Match) {
-		line := ed.Lines[ed.Cursor]
-		before := line[:ed.Col]
-		after := line[ed.Col:]
-		ed.Lines[ed.Cursor] = before
+		line := ed.buf().Lines[ed.win().Cursor]
+		before := line[:ed.win().Col]
+		after := line[ed.win().Col:]
+		ed.buf().Lines[ed.win().Cursor] = before
 
 		// Insert new line after
-		newLines := make([]string, len(ed.Lines)+1)
-		copy(newLines[:ed.Cursor+1], ed.Lines[:ed.Cursor+1])
-		newLines[ed.Cursor+1] = after
-		copy(newLines[ed.Cursor+2:], ed.Lines[ed.Cursor+1:])
-		ed.Lines = newLines
-		ed.Cursor++
-		ed.Col = 0
+		newLines := make([]string, len(ed.buf().Lines)+1)
+		copy(newLines[:ed.win().Cursor+1], ed.buf().Lines[:ed.win().Cursor+1])
+		newLines[ed.win().Cursor+1] = after
+		copy(newLines[ed.win().Cursor+2:], ed.buf().Lines[ed.win().Cursor+1:])
+		ed.buf().Lines = newLines
+		ed.win().Cursor++
+		ed.win().Col = 0
 
 		// Rebind TextHandler to new line
-		th.Value = &ed.Lines[ed.Cursor]
+		th.Value = &ed.buf().Lines[ed.win().Cursor]
 		ed.updateDisplay()
 		ed.updateCursor()
 	})
@@ -481,8 +639,8 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 	ed.StatusLine = "hjkl:move  w/b/e:word  ciw/daw/yi\":text-obj  p:paste  q:quit"
 
 	// Adjust cursor if at end of line (vim behavior)
-	if ed.Col > 0 && ed.Col >= len(ed.Lines[ed.Cursor]) {
-		ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+	if ed.win().Col > 0 && ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) {
+		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 	}
 
 	// Switch back to block cursor for normal mode
@@ -495,13 +653,78 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 
 func (ed *Editor) updateCursor() {
 	// Calculate screen position relative to viewport
-	// Row: headerRows + (cursor line - topLine)
-	screenY := headerRows + (ed.Cursor - ed.topLine)
+	screenY := headerRows + (ed.win().Cursor - ed.win().topLine)
+	screenX := ed.win().lineNumWidth + ed.win().Col
 
-	// Column: offset by line number width (cached from updateDisplay)
-	screenX := ed.lineNumWidth + ed.Col
+	// Adjust for split windows by traversing tree to find offset
+	offsetX, offsetY := ed.getWindowOffset(ed.focusedWindow)
+	screenX += offsetX
+	screenY += offsetY
 
 	ed.app.SetCursor(screenX, screenY)
+}
+
+// getWindowOffset calculates the screen offset for a window by traversing the tree
+func (ed *Editor) getWindowOffset(w *Window) (x, y int) {
+	node := ed.root.FindWindow(w)
+	if node == nil {
+		return 0, 0
+	}
+
+	// Walk up the tree, accumulating offsets
+	for node.Parent != nil {
+		parent := node.Parent
+		// If we're the second child, add the first child's dimensions
+		if parent.Children[1] == node {
+			first := parent.Children[0]
+			switch parent.Direction {
+			case SplitHorizontal:
+				// First child is above us, add its height
+				y += ed.getNodeHeight(first)
+			case SplitVertical:
+				// First child is to our left, add its width
+				x += ed.getNodeWidth(first)
+			}
+		}
+		node = parent
+	}
+	return x, y
+}
+
+// getNodeHeight returns the total height of a node (sum of all windows + status bars)
+func (ed *Editor) getNodeHeight(n *SplitNode) int {
+	if n.IsLeaf() {
+		return n.Window.viewportHeight + 1 // +1 for status bar
+	}
+	if n.Direction == SplitHorizontal {
+		// Stacked vertically - sum heights
+		return ed.getNodeHeight(n.Children[0]) + ed.getNodeHeight(n.Children[1])
+	}
+	// Side by side - max height
+	h0 := ed.getNodeHeight(n.Children[0])
+	h1 := ed.getNodeHeight(n.Children[1])
+	if h0 > h1 {
+		return h0
+	}
+	return h1
+}
+
+// getNodeWidth returns the total width of a node
+func (ed *Editor) getNodeWidth(n *SplitNode) int {
+	if n.IsLeaf() {
+		return n.Window.viewportWidth
+	}
+	if n.Direction == SplitVertical {
+		// Side by side - sum widths
+		return ed.getNodeWidth(n.Children[0]) + ed.getNodeWidth(n.Children[1])
+	}
+	// Stacked - max width
+	w0 := ed.getNodeWidth(n.Children[0])
+	w1 := ed.getNodeWidth(n.Children[1])
+	if w0 > w1 {
+		return w0
+	}
+	return w1
 }
 
 // refresh does a full re-render - use for content changes or visual mode.
@@ -513,9 +736,9 @@ func (ed *Editor) refresh() {
 
 // moveTo sets cursor to absolute position, clamping to valid range
 func (ed *Editor) moveTo(line, col int) {
-	oldLine := ed.Cursor
-	ed.Cursor = max(0, min(line, len(ed.Lines)-1))
-	ed.Col = max(0, min(col, len(ed.Lines[ed.Cursor])-1))
+	oldLine := ed.win().Cursor
+	ed.win().Cursor = max(0, min(line, len(ed.buf().Lines)-1))
+	ed.win().Col = max(0, min(col, len(ed.buf().Lines[ed.win().Cursor])-1))
 	ed.ensureCursorVisible()
 	ed.updateCursorHighlight(oldLine)
 	ed.updateCursor()
@@ -523,15 +746,15 @@ func (ed *Editor) moveTo(line, col int) {
 
 // moveToCol sets column only, clamping to valid range
 func (ed *Editor) moveToCol(col int) {
-	ed.Col = max(0, min(col, len(ed.Lines[ed.Cursor])-1))
+	ed.win().Col = max(0, min(col, len(ed.buf().Lines[ed.win().Cursor])-1))
 	ed.updateCursor()
 }
 
 // moveDown moves cursor down by count lines
 func (ed *Editor) moveDown(count int) {
-	oldLine := ed.Cursor
-	ed.Cursor = min(ed.Cursor+count, len(ed.Lines)-1)
-	ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+	oldLine := ed.win().Cursor
+	ed.win().Cursor = min(ed.win().Cursor+count, len(ed.buf().Lines)-1)
+	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 	ed.ensureCursorVisible()
 	ed.updateCursorHighlight(oldLine)
 	ed.updateCursor()
@@ -539,9 +762,9 @@ func (ed *Editor) moveDown(count int) {
 
 // moveUp moves cursor up by count lines
 func (ed *Editor) moveUp(count int) {
-	oldLine := ed.Cursor
-	ed.Cursor = max(ed.Cursor-count, 0)
-	ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+	oldLine := ed.win().Cursor
+	ed.win().Cursor = max(ed.win().Cursor-count, 0)
+	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 	ed.ensureCursorVisible()
 	ed.updateCursorHighlight(oldLine)
 	ed.updateCursor()
@@ -549,32 +772,32 @@ func (ed *Editor) moveUp(count int) {
 
 // moveLeft moves cursor left by count columns
 func (ed *Editor) moveLeft(count int) {
-	ed.Col = max(0, ed.Col-count)
+	ed.win().Col = max(0, ed.win().Col-count)
 	ed.updateCursor()
 }
 
 // moveRight moves cursor right by count columns
 func (ed *Editor) moveRight(count int) {
-	ed.Col = min(ed.Col+count, len(ed.Lines[ed.Cursor])-1)
+	ed.win().Col = min(ed.win().Col+count, len(ed.buf().Lines[ed.win().Cursor])-1)
 	ed.updateCursor()
 }
 
 func (ed *Editor) ensureCursorVisible() {
 	// Scroll viewport if cursor is outside visible area
-	if ed.viewportHeight == 0 {
+	if ed.win().viewportHeight == 0 {
 		// Get viewport height from screen (minus footer for status bar + message line)
 		size := ed.app.Size()
-		ed.viewportHeight = max(1, size.Height-headerRows-footerRows)
+		ed.win().viewportHeight = max(1, size.Height-headerRows-footerRows)
 	}
 
 	// Scroll up if cursor above viewport
-	if ed.Cursor < ed.topLine {
-		ed.topLine = ed.Cursor
+	if ed.win().Cursor < ed.win().topLine {
+		ed.win().topLine = ed.win().Cursor
 	}
 
 	// Scroll down if cursor below viewport
-	if ed.Cursor >= ed.topLine+ed.viewportHeight {
-		ed.topLine = ed.Cursor - ed.viewportHeight + 1
+	if ed.win().Cursor >= ed.win().topLine+ed.win().viewportHeight {
+		ed.win().topLine = ed.win().Cursor - ed.win().viewportHeight + 1
 	}
 }
 
@@ -626,19 +849,33 @@ func (ed *Editor) highlightSearchMatches(line string) []tui.Span {
 
 // updateStatusBar builds the vim-style status bar
 func (ed *Editor) updateStatusBar() {
-	// Get terminal width for padding
-	size := ed.app.Size()
-	width := size.Width
+	// Use stored viewport width if set, otherwise full screen width
+	width := ed.win().viewportWidth
+	if width == 0 {
+		width = ed.app.Size().Width
+	}
 
-	// Left side: filename
-	left := " " + ed.FileName
+	// Left side: filename (and debug stats if enabled)
+	left := " " + ed.buf().FileName
+	if ed.win().debugMode {
+		avgLines := 0
+		if ed.win().totalRenders > 0 {
+			avgLines = ed.win().totalLinesRendered / ed.win().totalRenders
+		}
+		left = fmt.Sprintf(" [%v last:%d avg:%d rng:%d-%d] %s",
+			ed.win().lastRenderTime.Round(time.Microsecond),
+			ed.win().lastLinesRendered,
+			avgLines,
+			ed.win().renderedMin, ed.win().renderedMax,
+			ed.buf().FileName)
+	}
 
 	// Right side: line:col percentage
 	percentage := 0
-	if len(ed.Lines) > 0 {
-		percentage = (ed.Cursor + 1) * 100 / len(ed.Lines)
+	if len(ed.buf().Lines) > 0 {
+		percentage = (ed.win().Cursor + 1) * 100 / len(ed.buf().Lines)
 	}
-	right := fmt.Sprintf(" %d,%d  %d%% ", ed.Cursor+1, ed.Col+1, percentage)
+	right := fmt.Sprintf(" %d,%d  %d%% ", ed.win().Cursor+1, ed.win().Col+1, percentage)
 
 	// Calculate padding to fill width
 	padding := width - len(left) - len(right)
@@ -651,9 +888,148 @@ func (ed *Editor) updateStatusBar() {
 	}
 
 	// Build single span with inverse style
-	ed.StatusBar = []tui.Span{
+	ed.win().StatusBar = []tui.Span{
 		{Text: left + middle + right, Style: statusBarStyle},
 	}
+}
+
+// updateWindowStatusBar builds status bar for a specific window
+func (ed *Editor) updateWindowStatusBar(w *Window, focused bool) {
+	// Use stored viewport width if set, otherwise full screen width
+	width := w.viewportWidth
+	if width == 0 {
+		width = ed.app.Size().Width
+	}
+
+	// Left side: filename (and debug stats if enabled)
+	left := " " + w.buffer.FileName
+	if w.debugMode {
+		avgLines := 0
+		if w.totalRenders > 0 {
+			avgLines = w.totalLinesRendered / w.totalRenders
+		}
+		left = fmt.Sprintf(" [%v last:%d avg:%d rng:%d-%d] %s",
+			w.lastRenderTime.Round(time.Microsecond),
+			w.lastLinesRendered,
+			avgLines,
+			w.renderedMin, w.renderedMax,
+			w.buffer.FileName)
+	}
+
+	// Right side: line:col percentage
+	percentage := 0
+	if len(w.buffer.Lines) > 0 {
+		percentage = (w.Cursor + 1) * 100 / len(w.buffer.Lines)
+	}
+	right := fmt.Sprintf(" %d,%d  %d%% ", w.Cursor+1, w.Col+1, percentage)
+
+	// Calculate padding to fill width
+	padding := width - len(left) - len(right)
+	if padding < 1 {
+		padding = 1
+	}
+	middle := strings.Repeat(" ", padding)
+
+	// Use different style for unfocused windows
+	style := statusBarStyle
+	if !focused {
+		style = tui.Style{Attr: tui.AttrDim | tui.AttrInverse} // Dimmer for unfocused
+	}
+
+	w.StatusBar = []tui.Span{
+		{Text: left + middle + right, Style: style},
+	}
+}
+
+// ensureWindowRendered makes sure visible region + buffer is rendered for a specific window
+func (ed *Editor) ensureWindowRendered(w *Window) {
+	if w.contentLayer == nil || w.contentLayer.Buffer() == nil {
+		return
+	}
+
+	start := time.Now()
+	linesRendered := 0
+
+	// Calculate line number width based on total lines
+	maxLineNum := len(w.buffer.Lines)
+	w.lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+
+	// Calculate desired render range (visible + buffer)
+	wantMin := max(0, w.topLine-renderBuffer)
+	wantMax := min(len(w.buffer.Lines)+w.viewportHeight-1, w.topLine+w.viewportHeight+renderBuffer)
+
+	// First time? Render the whole range
+	if w.renderedMin < 0 {
+		for i := wantMin; i <= wantMax; i++ {
+			ed.renderWindowLineToLayer(w, i)
+			linesRendered++
+		}
+		w.renderedMin = wantMin
+		w.renderedMax = wantMax
+	} else {
+		// Expand rendered range if needed
+		if wantMin < w.renderedMin {
+			for i := wantMin; i < w.renderedMin; i++ {
+				ed.renderWindowLineToLayer(w, i)
+				linesRendered++
+			}
+			w.renderedMin = wantMin
+		}
+		if wantMax > w.renderedMax {
+			for i := w.renderedMax + 1; i <= wantMax; i++ {
+				ed.renderWindowLineToLayer(w, i)
+				linesRendered++
+			}
+			w.renderedMax = wantMax
+		}
+	}
+
+	// Set scroll position
+	w.contentLayer.ScrollTo(w.topLine)
+
+	// Track stats
+	w.lastRenderTime = time.Since(start)
+	w.lastLinesRendered = linesRendered
+	w.totalRenders++
+	w.totalLinesRendered += linesRendered
+}
+
+// renderWindowLineToLayer renders a single line for a specific window
+func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
+	if w.contentLayer == nil || w.contentLayer.Buffer() == nil {
+		return
+	}
+
+	lineNumFmt := fmt.Sprintf("%%%dd ", w.lineNumWidth-1)
+	tildeFmt := fmt.Sprintf("%%%ds ", w.lineNumWidth-1)
+
+	var spans []tui.Span
+
+	if lineIdx < len(w.buffer.Lines) {
+		// Content line
+		line := w.buffer.Lines[lineIdx]
+		lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
+		isCursorLine := lineIdx == w.Cursor
+
+		numStyle := lineNumStyle
+		if isCursorLine {
+			numStyle = cursorLineNumStyle
+		}
+
+		// For the focused window in visual mode, use visual spans
+		if ed.Mode == "VISUAL" && ed.win() == w {
+			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, ed.getVisualSpans(lineIdx, line)...)
+		} else {
+			// Use search highlighting
+			contentSpans := ed.highlightSearchMatches(line)
+			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, contentSpans...)
+		}
+	} else {
+		// Tilde line (beyond EOF)
+		spans = []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
+	}
+
+	w.contentLayer.SetLine(lineIdx, spans)
 }
 
 func (ed *Editor) updateDisplay() {
@@ -663,53 +1039,404 @@ func (ed *Editor) updateDisplay() {
 	// Build vim-style status bar
 	ed.updateStatusBar()
 
-	// Render all lines to the layer
-	ed.renderAllLines()
+	// Re-render visible region (invalidate first for content changes)
+	ed.invalidateRenderedRange()
+	ed.ensureRendered()
+
+	// Sync other windows viewing the same buffer
+	ed.syncOtherWindows()
+}
+
+// syncOtherWindows re-renders other windows that share the same buffer
+func (ed *Editor) syncOtherWindows() {
+	allWindows := ed.root.AllWindows()
+	if len(allWindows) <= 1 {
+		return
+	}
+	currentBuf := ed.buf()
+	for _, w := range allWindows {
+		if w != ed.focusedWindow && w.buffer == currentBuf {
+			// Invalidate and re-render this window
+			w.renderedMin = -1
+			w.renderedMax = -1
+			ed.ensureWindowRendered(w)
+			ed.updateWindowStatusBar(w, false)
+		}
+	}
 }
 
 // initLayer creates and sizes the content layer
 func (ed *Editor) initLayer(width int) {
-	ed.contentLayer = tui.NewLayer()
-	// Layer holds ALL lines plus some buffer for scrolling
-	ed.contentLayer.EnsureSize(width, len(ed.Lines)+ed.viewportHeight)
-	ed.renderAllLines()
+	ed.initWindowLayer(ed.win(), width)
 }
 
-// renderAllLines renders every line to the layer (used on init or major changes)
-func (ed *Editor) renderAllLines() {
-	if ed.contentLayer == nil || ed.contentLayer.Buffer() == nil {
+// initWindowLayer sets up a layer for a specific window
+func (ed *Editor) initWindowLayer(w *Window, width int) {
+	w.viewportWidth = width
+	w.contentLayer = tui.NewLayer()
+	// Layer holds ALL lines plus some buffer for scrolling
+	w.contentLayer.EnsureSize(width, len(w.buffer.Lines)+w.viewportHeight)
+	w.renderedMin = -1
+	w.renderedMax = -1
+	ed.ensureWindowRendered(w)
+}
+
+// splitHorizontal creates a horizontal split (windows stacked vertically like :sp)
+func (ed *Editor) splitHorizontal() {
+	// Find the current window's node
+	currentNode := ed.root.FindWindow(ed.focusedWindow)
+	if currentNode == nil {
 		return
 	}
 
-	// Calculate line number width based on total lines
-	maxLineNum := len(ed.Lines)
-	ed.lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+	// Calculate available height for the current node's area
+	// For simplicity, split the current window's viewport in half
+	totalHeight := ed.focusedWindow.viewportHeight
+	halfHeight := max(1, totalHeight/2)
 
-	// Render each line
-	for i := 0; i < len(ed.Lines)+ed.viewportHeight; i++ {
-		ed.renderLineToLayer(i)
+	// Update existing window height
+	ed.focusedWindow.viewportHeight = halfHeight
+
+	// Create new window viewing the same buffer
+	newWin := &Window{
+		buffer:         ed.buf(),
+		Cursor:         ed.focusedWindow.Cursor,
+		Col:            ed.focusedWindow.Col,
+		topLine:        ed.focusedWindow.topLine,
+		viewportHeight: totalHeight - halfHeight,
+		viewportWidth:  ed.focusedWindow.viewportWidth,
+		renderedMin:    -1,
+		renderedMax:    -1,
+	}
+
+	// Initialize layer for new window
+	ed.initWindowLayer(newWin, newWin.viewportWidth)
+
+	// Create new nodes
+	newWindowNode := &SplitNode{Window: newWin}
+	currentWindowNode := &SplitNode{Window: ed.focusedWindow}
+
+	// Replace current leaf with a split branch
+	currentNode.Direction = SplitHorizontal
+	currentNode.Window = nil
+	currentNode.Children = [2]*SplitNode{currentWindowNode, newWindowNode}
+	currentWindowNode.Parent = currentNode
+	newWindowNode.Parent = currentNode
+
+	// Refresh display
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.StatusLine = ""
+}
+
+// splitVertical creates a vertical split (windows side by side like :vs)
+func (ed *Editor) splitVertical() {
+	// Find the current window's node
+	currentNode := ed.root.FindWindow(ed.focusedWindow)
+	if currentNode == nil {
+		return
+	}
+
+	// Split the current window's width in half
+	totalWidth := ed.focusedWindow.viewportWidth
+	halfWidth := max(1, totalWidth/2-1) // -1 for separator space
+
+	// Update existing window width
+	ed.focusedWindow.viewportWidth = halfWidth
+
+	// Create new window viewing the same buffer
+	newWin := &Window{
+		buffer:         ed.buf(),
+		Cursor:         ed.focusedWindow.Cursor,
+		Col:            ed.focusedWindow.Col,
+		topLine:        ed.focusedWindow.topLine,
+		viewportHeight: ed.focusedWindow.viewportHeight,
+		viewportWidth:  totalWidth - halfWidth - 1, // -1 for separator
+		renderedMin:    -1,
+		renderedMax:    -1,
+	}
+
+	// Reinitialize layers for both windows with new widths
+	ed.initWindowLayer(ed.focusedWindow, halfWidth)
+	ed.initWindowLayer(newWin, newWin.viewportWidth)
+
+	// Create new nodes
+	newWindowNode := &SplitNode{Window: newWin}
+	currentWindowNode := &SplitNode{Window: ed.focusedWindow}
+
+	// Replace current leaf with a split branch
+	currentNode.Direction = SplitVertical
+	currentNode.Window = nil
+	currentNode.Children = [2]*SplitNode{currentWindowNode, newWindowNode}
+	currentWindowNode.Parent = currentNode
+	newWindowNode.Parent = currentNode
+
+	// Refresh display
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.StatusLine = ""
+}
+
+// closeWindow closes the current window
+func (ed *Editor) closeWindow() {
+	// Can't close if this is the only window
+	if ed.root.IsLeaf() {
+		ed.StatusLine = "E444: Cannot close last window"
+		ed.updateDisplay()
+		return
+	}
+
+	// Find the current window's node and its parent
+	node := ed.root.FindWindow(ed.focusedWindow)
+	if node == nil || node.Parent == nil {
+		return
+	}
+
+	parent := node.Parent
+
+	// Find the sibling
+	var sibling *SplitNode
+	if parent.Children[0] == node {
+		sibling = parent.Children[1]
+	} else {
+		sibling = parent.Children[0]
+	}
+
+	// Promote sibling to parent's position
+	parent.Direction = sibling.Direction
+	parent.Window = sibling.Window
+	parent.Children = sibling.Children
+
+	// Update parent pointers for promoted children
+	if parent.Children[0] != nil {
+		parent.Children[0].Parent = parent
+	}
+	if parent.Children[1] != nil {
+		parent.Children[1].Parent = parent
+	}
+
+	// Focus the first window in the sibling subtree
+	ed.focusedWindow = parent.FirstWindow()
+
+	// Recalculate viewport sizes based on available space
+	size := ed.app.Size()
+	ed.recalculateViewports(ed.root, size.Width, size.Height-headerRows-footerRows)
+
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.updateCursor()
+}
+
+// closeOtherWindows closes all windows except the current one
+func (ed *Editor) closeOtherWindows() {
+	// If already just one window, nothing to do
+	if ed.root.IsLeaf() {
+		return
+	}
+
+	// Reset to single window
+	ed.root = &SplitNode{Window: ed.focusedWindow}
+
+	// Reclaim full viewport
+	size := ed.app.Size()
+	ed.focusedWindow.viewportHeight = max(1, size.Height-headerRows-footerRows)
+	ed.focusedWindow.viewportWidth = size.Width
+	ed.initWindowLayer(ed.focusedWindow, size.Width)
+
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.updateCursor()
+}
+
+// focusNextWindow moves focus to the next window
+func (ed *Editor) focusNextWindow() {
+	allWindows := ed.root.AllWindows()
+	if len(allWindows) <= 1 {
+		return
+	}
+	// Find current window index
+	for i, w := range allWindows {
+		if w == ed.focusedWindow {
+			ed.focusedWindow = allWindows[(i+1)%len(allWindows)]
+			break
+		}
+	}
+	ed.updateAllWindows()
+	ed.updateCursor()
+}
+
+// focusPrevWindow moves focus to the previous window
+func (ed *Editor) focusPrevWindow() {
+	allWindows := ed.root.AllWindows()
+	if len(allWindows) <= 1 {
+		return
+	}
+	// Find current window index
+	for i, w := range allWindows {
+		if w == ed.focusedWindow {
+			ed.focusedWindow = allWindows[(i-1+len(allWindows))%len(allWindows)]
+			break
+		}
+	}
+	ed.updateAllWindows()
+	ed.updateCursor()
+}
+
+// focusDirection moves focus to an adjacent window in the specified direction
+func (ed *Editor) focusDirection(dir SplitDir, delta int) {
+	// Find the current window's node
+	node := ed.root.FindWindow(ed.focusedWindow)
+	if node == nil {
+		return
+	}
+
+	// Walk up to find a parent with the matching direction
+	for node.Parent != nil {
+		parent := node.Parent
+		if parent.Direction == dir {
+			// Found a split in the right direction
+			var target *SplitNode
+			if delta > 0 {
+				// Move forward (down/right) - if we're first child, go to second
+				if parent.Children[0] == node {
+					target = parent.Children[1]
+				}
+			} else {
+				// Move backward (up/left) - if we're second child, go to first
+				if parent.Children[1] == node {
+					target = parent.Children[0]
+				}
+			}
+			if target != nil {
+				// Focus the appropriate window in the target subtree
+				if delta > 0 {
+					ed.focusedWindow = target.FirstWindow()
+				} else {
+					ed.focusedWindow = target.LastWindow()
+				}
+				ed.updateAllWindows()
+				ed.updateCursor()
+				return
+			}
+		}
+		node = parent
+	}
+}
+
+// updateAllWindows updates the display for all windows
+func (ed *Editor) updateAllWindows() {
+	for _, w := range ed.root.AllWindows() {
+		ed.updateWindowDisplay(w, w == ed.focusedWindow)
+	}
+}
+
+// recalculateViewports recursively calculates viewport sizes for the tree
+func (ed *Editor) recalculateViewports(node *SplitNode, width, height int) {
+	if node.IsLeaf() {
+		node.Window.viewportWidth = width
+		node.Window.viewportHeight = height - 1 // -1 for status bar
+		ed.initWindowLayer(node.Window, width)
+		return
+	}
+
+	if node.Direction == SplitHorizontal {
+		// Stack vertically - split height
+		halfHeight := height / 2
+		ed.recalculateViewports(node.Children[0], width, halfHeight)
+		ed.recalculateViewports(node.Children[1], width, height-halfHeight)
+	} else {
+		// Side by side - split width
+		halfWidth := width / 2
+		ed.recalculateViewports(node.Children[0], halfWidth, height)
+		ed.recalculateViewports(node.Children[1], width-halfWidth, height)
+	}
+}
+
+// updateWindowDisplay updates a specific window's display
+func (ed *Editor) updateWindowDisplay(w *Window, focused bool) {
+	ed.ensureWindowRendered(w)
+	ed.updateWindowStatusBar(w, focused)
+}
+
+// ensureRendered makes sure visible region + buffer is rendered.
+// This is the lazy rendering entry point - call after any scroll or cursor move.
+func (ed *Editor) ensureRendered() {
+	if ed.win().contentLayer == nil || ed.win().contentLayer.Buffer() == nil {
+		return
+	}
+
+	start := time.Now()
+	linesRendered := 0
+
+	// Calculate line number width based on total lines
+	maxLineNum := len(ed.buf().Lines)
+	ed.win().lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+
+	// Calculate desired render range (visible + buffer)
+	wantMin := max(0, ed.win().topLine-renderBuffer)
+	wantMax := min(len(ed.buf().Lines)+ed.win().viewportHeight-1, ed.win().topLine+ed.win().viewportHeight+renderBuffer)
+
+	// First time? Render the whole range
+	if ed.win().renderedMin < 0 {
+		for i := wantMin; i <= wantMax; i++ {
+			ed.renderLineToLayer(i)
+			linesRendered++
+		}
+		ed.win().renderedMin = wantMin
+		ed.win().renderedMax = wantMax
+	} else {
+		// Expand rendered range if needed
+		// Render any lines below current min
+		if wantMin < ed.win().renderedMin {
+			for i := wantMin; i < ed.win().renderedMin; i++ {
+				ed.renderLineToLayer(i)
+				linesRendered++
+			}
+			ed.win().renderedMin = wantMin
+		}
+		// Render any lines above current max
+		if wantMax > ed.win().renderedMax {
+			for i := ed.win().renderedMax + 1; i <= wantMax; i++ {
+				ed.renderLineToLayer(i)
+				linesRendered++
+			}
+			ed.win().renderedMax = wantMax
+		}
 	}
 
 	// Set scroll position
-	ed.contentLayer.ScrollTo(ed.topLine)
+	ed.win().contentLayer.ScrollTo(ed.win().topLine)
+
+	// Track stats
+	ed.win().lastRenderTime = time.Since(start)
+	ed.win().lastLinesRendered = linesRendered
+	ed.win().totalRenders++
+	ed.win().totalLinesRendered += linesRendered
+}
+
+// invalidateRenderedRange marks that content has changed and needs re-render.
+// Call after insert/delete operations that modify line content.
+func (ed *Editor) invalidateRenderedRange() {
+	ed.win().renderedMin = -1
+	ed.win().renderedMax = -1
 }
 
 // renderLineToLayer renders a single line to the layer buffer
 func (ed *Editor) renderLineToLayer(lineIdx int) {
-	if ed.contentLayer == nil || ed.contentLayer.Buffer() == nil {
+	if ed.win().contentLayer == nil || ed.win().contentLayer.Buffer() == nil {
 		return
 	}
 
-	lineNumFmt := fmt.Sprintf("%%%dd ", ed.lineNumWidth-1)
-	tildeFmt := fmt.Sprintf("%%%ds ", ed.lineNumWidth-1)
+	lineNumFmt := fmt.Sprintf("%%%dd ", ed.win().lineNumWidth-1)
+	tildeFmt := fmt.Sprintf("%%%ds ", ed.win().lineNumWidth-1)
 
 	var spans []tui.Span
 
-	if lineIdx < len(ed.Lines) {
+	if lineIdx < len(ed.buf().Lines) {
 		// Content line
-		line := ed.Lines[lineIdx]
+		line := ed.buf().Lines[lineIdx]
 		lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
-		isCursorLine := lineIdx == ed.Cursor
+		isCursorLine := lineIdx == ed.win().Cursor
 
 		numStyle := lineNumStyle
 		if isCursorLine {
@@ -727,7 +1454,7 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 		spans = []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
 	}
 
-	ed.contentLayer.SetLine(lineIdx, spans)
+	ed.win().contentLayer.SetLine(lineIdx, spans)
 }
 
 // updateLine efficiently updates just the changed lines (for cursor movement)
@@ -738,18 +1465,24 @@ func (ed *Editor) updateLine(lineIdx int) {
 // updateCursorHighlight efficiently updates highlight when cursor moves between lines
 // Returns the old cursor line index for callers that need it
 func (ed *Editor) updateCursorHighlight(oldLine int) {
-	if ed.contentLayer == nil {
+	if ed.win().contentLayer == nil {
 		return
 	}
 
+	// Ensure visible region is rendered (lazy render on scroll)
+	ed.ensureRendered()
+
 	// Only update if cursor actually moved to a different line
-	if oldLine != ed.Cursor && oldLine >= 0 && oldLine < len(ed.Lines) {
+	if oldLine != ed.win().Cursor && oldLine >= 0 && oldLine < len(ed.buf().Lines) {
 		ed.renderLineToLayer(oldLine) // Remove yellow from old line
 	}
-	ed.renderLineToLayer(ed.Cursor) // Add yellow to new line
+	ed.renderLineToLayer(ed.win().Cursor) // Add yellow to new line
 
 	// Sync layer scroll position
-	ed.contentLayer.ScrollTo(ed.topLine)
+	ed.win().contentLayer.ScrollTo(ed.win().topLine)
+
+	// Update status bar (needed for debug stats to refresh)
+	ed.updateStatusBar()
 }
 
 // getVisualSpans splits a line into styled spans for visual mode highlighting
@@ -764,7 +1497,7 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 		return []tui.Span{{Text: " ", Style: normalStyle}}
 	}
 
-	if ed.visualLineMode {
+	if ed.win().visualLineMode {
 		// Line mode: entire line is selected or not
 		if ed.isLineSelected(lineIdx) {
 			return []tui.Span{{Text: line, Style: inverseStyle}}
@@ -774,7 +1507,7 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 
 	// Character mode: need to calculate per-character selection
 	// Simplified: only works for single-line selection for now
-	if lineIdx != ed.Cursor && lineIdx != ed.visualStart {
+	if lineIdx != ed.win().Cursor && lineIdx != ed.win().visualStart {
 		// Line is either fully selected or not (if between start and cursor)
 		if ed.isLineSelected(lineIdx) {
 			return []tui.Span{{Text: line, Style: inverseStyle}}
@@ -783,30 +1516,30 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 	}
 
 	// This is the line with the cursor or visual start - split into spans
-	startCol := min(ed.visualStartCol, ed.Col)
-	endCol := max(ed.visualStartCol, ed.Col) + 1
+	startCol := min(ed.win().visualStartCol, ed.win().Col)
+	endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
 
-	if lineIdx != ed.Cursor || lineIdx != ed.visualStart {
+	if lineIdx != ed.win().Cursor || lineIdx != ed.win().visualStart {
 		// Multi-line selection - this line is start or end
-		if lineIdx == min(ed.visualStart, ed.Cursor) {
+		if lineIdx == min(ed.win().visualStart, ed.win().Cursor) {
 			// First line - select from startCol to end
-			col := ed.visualStartCol
-			if lineIdx == ed.Cursor {
-				col = ed.Col
+			col := ed.win().visualStartCol
+			if lineIdx == ed.win().Cursor {
+				col = ed.win().Col
 			}
-			if lineIdx != ed.visualStart {
-				col = ed.Col
+			if lineIdx != ed.win().visualStart {
+				col = ed.win().Col
 			} else {
-				col = ed.visualStartCol
+				col = ed.win().visualStartCol
 			}
 			// Simplified: highlight from col to end
 			startCol = min(col, len(line))
 			endCol = len(line)
 		} else {
 			// Last line - select from start to col
-			col := ed.Col
-			if lineIdx == ed.visualStart {
-				col = ed.visualStartCol
+			col := ed.win().Col
+			if lineIdx == ed.win().visualStart {
+				col = ed.win().visualStartCol
 			}
 			startCol = 0
 			endCol = min(col+1, len(line))
@@ -832,20 +1565,51 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 
 // isLineSelected returns true if a line is within the visual selection
 func (ed *Editor) isLineSelected(lineIdx int) bool {
-	minLine := min(ed.visualStart, ed.Cursor)
-	maxLine := max(ed.visualStart, ed.Cursor)
+	minLine := min(ed.win().visualStart, ed.win().Cursor)
+	maxLine := max(ed.win().visualStart, ed.win().Cursor)
 	return lineIdx >= minLine && lineIdx <= maxLine
 }
 
-func buildView(ed *Editor) any {
+// buildWindowView builds the view for a single window
+func buildWindowView(w *Window, focused bool) any {
 	return tui.Col{Children: []any{
 		// Content area - imperative layer, efficiently updated
-		tui.LayerView{Layer: ed.contentLayer, Height: int16(ed.viewportHeight)},
-
+		// Width is set for vertical splits to constrain each window's area
+		tui.LayerView{
+			Layer:  w.contentLayer,
+			Height: int16(w.viewportHeight),
+			Width:  int16(w.viewportWidth),
+		},
 		// Vim-style status bar (inverse video, shows filename and position)
-		tui.RichText{Spans: &ed.StatusBar},
+		tui.RichText{Spans: &w.StatusBar},
+	}}
+}
 
-		// Command/message line (shows mode indicator and messages)
+// buildNodeView recursively builds the view for a split node
+func buildNodeView(node *SplitNode, focusedWindow *Window) any {
+	if node.IsLeaf() {
+		return buildWindowView(node.Window, node.Window == focusedWindow)
+	}
+
+	// Build children recursively
+	child0 := buildNodeView(node.Children[0], focusedWindow)
+	child1 := buildNodeView(node.Children[1], focusedWindow)
+
+	if node.Direction == SplitHorizontal {
+		// Stack vertically (Col)
+		return tui.Col{Children: []any{child0, child1}}
+	}
+	// Side by side (Row)
+	return tui.Row{Children: []any{child0, child1}}
+}
+
+func buildView(ed *Editor) any {
+	// Build the window tree
+	windowTree := buildNodeView(ed.root, ed.focusedWindow)
+
+	// Wrap in Col to add global status line at bottom
+	return tui.Col{Children: []any{
+		windowTree,
 		tui.Text{Content: &ed.StatusLine},
 	}}
 }
@@ -894,8 +1658,8 @@ func registerOperatorTextObjects(app *tui.App, ed *Editor) {
 			pattern := op.key + obj.key
 			opFn, objFn := op.fn, obj.fn // capture for closure
 			app.Handle(pattern, func(m riffkey.Match) {
-				line := ed.Lines[ed.Cursor]
-				start, end := objFn(line, ed.Col)
+				line := ed.buf().Lines[ed.win().Cursor]
+				start, end := objFn(line, ed.win().Col)
 				if start < end {
 					opFn(ed, app, start, end)
 				}
@@ -911,11 +1675,11 @@ func registerOperatorTextObjects(app *tui.App, ed *Editor) {
 // Operators
 func opDelete(ed *Editor, app *tui.App, start, end int) {
 	ed.saveUndo()
-	line := ed.Lines[ed.Cursor]
-	ed.Lines[ed.Cursor] = line[:start] + line[end:]
-	ed.Col = start
-	if ed.Col >= len(ed.Lines[ed.Cursor]) && ed.Col > 0 {
-		ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+	line := ed.buf().Lines[ed.win().Cursor]
+	ed.buf().Lines[ed.win().Cursor] = line[:start] + line[end:]
+	ed.win().Col = start
+	if ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) && ed.win().Col > 0 {
+		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 	}
 	ed.updateDisplay()
 	ed.updateCursor()
@@ -923,9 +1687,9 @@ func opDelete(ed *Editor, app *tui.App, start, end int) {
 
 func opChange(ed *Editor, app *tui.App, start, end int) {
 	ed.saveUndo()
-	line := ed.Lines[ed.Cursor]
-	ed.Lines[ed.Cursor] = line[:start] + line[end:]
-	ed.Col = start
+	line := ed.buf().Lines[ed.win().Cursor]
+	ed.buf().Lines[ed.win().Cursor] = line[:start] + line[end:]
+	ed.win().Col = start
 	ed.updateDisplay()
 	ed.enterInsertMode(app)
 }
@@ -933,7 +1697,7 @@ func opChange(ed *Editor, app *tui.App, start, end int) {
 var yankRegister string
 
 func opYank(ed *Editor, app *tui.App, start, end int) {
-	line := ed.Lines[ed.Cursor]
+	line := ed.buf().Lines[ed.win().Cursor]
 	yankRegister = line[start:end]
 	ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
 	ed.updateDisplay()
@@ -1099,53 +1863,53 @@ func registerParagraphTextObjects(app *tui.App, ed *Editor) {
 	}{
 		// Linewise motions (full lines: col 0 to end)
 		{"j", func(ed *Editor, count int) (int, int, int, int) {
-			endLine := min(ed.Cursor+count, len(ed.Lines)-1)
-			return ed.Cursor, 0, endLine, len(ed.Lines[endLine])
+			endLine := min(ed.win().Cursor+count, len(ed.buf().Lines)-1)
+			return ed.win().Cursor, 0, endLine, len(ed.buf().Lines[endLine])
 		}},
 		{"k", func(ed *Editor, count int) (int, int, int, int) {
-			startLine := max(ed.Cursor-count, 0)
-			return startLine, 0, ed.Cursor, len(ed.Lines[ed.Cursor])
+			startLine := max(ed.win().Cursor-count, 0)
+			return startLine, 0, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
 		}},
 		{"gg", func(ed *Editor, count int) (int, int, int, int) {
-			return 0, 0, ed.Cursor, len(ed.Lines[ed.Cursor])
+			return 0, 0, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
 		}},
 		{"G", func(ed *Editor, count int) (int, int, int, int) {
-			endLine := len(ed.Lines) - 1
-			return ed.Cursor, 0, endLine, len(ed.Lines[endLine])
+			endLine := len(ed.buf().Lines) - 1
+			return ed.win().Cursor, 0, endLine, len(ed.buf().Lines[endLine])
 		}},
 		// Characterwise motions
 		{"w", func(ed *Editor, count int) (int, int, int, int) {
-			startLine, startCol := ed.Cursor, ed.Col
+			startLine, startCol := ed.win().Cursor, ed.win().Col
 			for range count {
 				ed.wordForward()
 			}
-			endLine, endCol := ed.Cursor, ed.Col
-			ed.Cursor, ed.Col = startLine, startCol
+			endLine, endCol := ed.win().Cursor, ed.win().Col
+			ed.win().Cursor, ed.win().Col = startLine, startCol
 			return startLine, startCol, endLine, endCol
 		}},
 		{"b", func(ed *Editor, count int) (int, int, int, int) {
-			endLine, endCol := ed.Cursor, ed.Col
+			endLine, endCol := ed.win().Cursor, ed.win().Col
 			for range count {
 				ed.wordBackward()
 			}
-			startLine, startCol := ed.Cursor, ed.Col
-			ed.Cursor, ed.Col = endLine, endCol
+			startLine, startCol := ed.win().Cursor, ed.win().Col
+			ed.win().Cursor, ed.win().Col = endLine, endCol
 			return startLine, startCol, endLine, endCol
 		}},
 		{"e", func(ed *Editor, count int) (int, int, int, int) {
-			startLine, startCol := ed.Cursor, ed.Col
+			startLine, startCol := ed.win().Cursor, ed.win().Col
 			for range count {
 				ed.wordEnd()
 			}
-			endLine, endCol := ed.Cursor, ed.Col+1
-			ed.Cursor, ed.Col = startLine, startCol
+			endLine, endCol := ed.win().Cursor, ed.win().Col+1
+			ed.win().Cursor, ed.win().Col = startLine, startCol
 			return startLine, startCol, endLine, endCol
 		}},
 		{"$", func(ed *Editor, count int) (int, int, int, int) {
-			return ed.Cursor, ed.Col, ed.Cursor, len(ed.Lines[ed.Cursor])
+			return ed.win().Cursor, ed.win().Col, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
 		}},
 		{"0", func(ed *Editor, count int) (int, int, int, int) {
-			return ed.Cursor, 0, ed.Cursor, ed.Col
+			return ed.win().Cursor, 0, ed.win().Cursor, ed.win().Col
 		}},
 	}
 
@@ -1164,8 +1928,8 @@ func registerParagraphTextObjects(app *tui.App, ed *Editor) {
 	// cc - change whole line
 	app.Handle("cc", func(_ riffkey.Match) {
 		ed.saveUndo()
-		ed.Lines[ed.Cursor] = ""
-		ed.Col = 0
+		ed.buf().Lines[ed.win().Cursor] = ""
+		ed.win().Col = 0
 		ed.updateDisplay()
 		ed.enterInsertMode(app)
 	})
@@ -1173,22 +1937,22 @@ func registerParagraphTextObjects(app *tui.App, ed *Editor) {
 	// S - same as cc
 	app.Handle("S", func(_ riffkey.Match) {
 		ed.saveUndo()
-		ed.Lines[ed.Cursor] = ""
-		ed.Col = 0
+		ed.buf().Lines[ed.win().Cursor] = ""
+		ed.win().Col = 0
 		ed.updateDisplay()
 		ed.enterInsertMode(app)
 	})
 
 	// yy - yank whole line
 	app.Handle("yy", func(_ riffkey.Match) {
-		yankRegister = ed.Lines[ed.Cursor]
+		yankRegister = ed.buf().Lines[ed.win().Cursor]
 		ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
 		ed.updateDisplay()
 	})
 
 	// Y - same as yy
 	app.Handle("Y", func(_ riffkey.Match) {
-		yankRegister = ed.Lines[ed.Cursor]
+		yankRegister = ed.buf().Lines[ed.win().Cursor]
 		ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
 		ed.updateDisplay()
 	})
@@ -1197,19 +1961,19 @@ func registerParagraphTextObjects(app *tui.App, ed *Editor) {
 // findInnerParagraph returns the line range of the current paragraph (non-blank lines)
 func (ed *Editor) findInnerParagraph() (startLine, endLine int) {
 	// If on a blank line, return just this line
-	if strings.TrimSpace(ed.Lines[ed.Cursor]) == "" {
-		return ed.Cursor, ed.Cursor
+	if strings.TrimSpace(ed.buf().Lines[ed.win().Cursor]) == "" {
+		return ed.win().Cursor, ed.win().Cursor
 	}
 
 	// Find start of paragraph (first non-blank line going backward)
-	startLine = ed.Cursor
-	for startLine > 0 && strings.TrimSpace(ed.Lines[startLine-1]) != "" {
+	startLine = ed.win().Cursor
+	for startLine > 0 && strings.TrimSpace(ed.buf().Lines[startLine-1]) != "" {
 		startLine--
 	}
 
 	// Find end of paragraph (last non-blank line going forward)
-	endLine = ed.Cursor
-	for endLine < len(ed.Lines)-1 && strings.TrimSpace(ed.Lines[endLine+1]) != "" {
+	endLine = ed.win().Cursor
+	for endLine < len(ed.buf().Lines)-1 && strings.TrimSpace(ed.buf().Lines[endLine+1]) != "" {
 		endLine++
 	}
 
@@ -1221,7 +1985,7 @@ func (ed *Editor) findAParagraph() (startLine, endLine int) {
 	startLine, endLine = ed.findInnerParagraph()
 
 	// Include trailing blank lines
-	for endLine < len(ed.Lines)-1 && strings.TrimSpace(ed.Lines[endLine+1]) == "" {
+	for endLine < len(ed.buf().Lines)-1 && strings.TrimSpace(ed.buf().Lines[endLine+1]) == "" {
 		endLine++
 	}
 
@@ -1265,7 +2029,7 @@ func mlOpYank(ed *Editor, app *tui.App, startLine, startCol, endLine, endCol int
 func (ed *Editor) extractRange(startLine, startCol, endLine, endCol int) string {
 	if startLine == endLine {
 		// Same line
-		line := ed.Lines[startLine]
+		line := ed.buf().Lines[startLine]
 		endCol = min(endCol, len(line))
 		startCol = min(startCol, len(line))
 		return line[startCol:endCol]
@@ -1275,20 +2039,20 @@ func (ed *Editor) extractRange(startLine, startCol, endLine, endCol int) string 
 	var parts []string
 
 	// First line (from startCol to end)
-	if startLine < len(ed.Lines) {
-		line := ed.Lines[startLine]
+	if startLine < len(ed.buf().Lines) {
+		line := ed.buf().Lines[startLine]
 		startCol = min(startCol, len(line))
 		parts = append(parts, line[startCol:])
 	}
 
 	// Middle lines (full lines)
-	for i := startLine + 1; i < endLine && i < len(ed.Lines); i++ {
-		parts = append(parts, ed.Lines[i])
+	for i := startLine + 1; i < endLine && i < len(ed.buf().Lines); i++ {
+		parts = append(parts, ed.buf().Lines[i])
 	}
 
 	// Last line (from start to endCol)
-	if endLine < len(ed.Lines) && endLine > startLine {
-		line := ed.Lines[endLine]
+	if endLine < len(ed.buf().Lines) && endLine > startLine {
+		line := ed.buf().Lines[endLine]
 		endCol = min(endCol, len(line))
 		parts = append(parts, line[:endCol])
 	}
@@ -1300,44 +2064,44 @@ func (ed *Editor) extractRange(startLine, startCol, endLine, endCol int) string 
 func (ed *Editor) deleteRange(startLine, startCol, endLine, endCol int) {
 	if startLine == endLine {
 		// Same line - simple case
-		line := ed.Lines[startLine]
+		line := ed.buf().Lines[startLine]
 		endCol = min(endCol, len(line))
 		startCol = min(startCol, len(line))
-		ed.Lines[startLine] = line[:startCol] + line[endCol:]
-		ed.Cursor = startLine
-		ed.Col = startCol
+		ed.buf().Lines[startLine] = line[:startCol] + line[endCol:]
+		ed.win().Cursor = startLine
+		ed.win().Col = startCol
 		return
 	}
 
 	// Multiple lines - join first and last line remnants
 	firstPart := ""
-	if startLine < len(ed.Lines) {
-		line := ed.Lines[startLine]
+	if startLine < len(ed.buf().Lines) {
+		line := ed.buf().Lines[startLine]
 		startCol = min(startCol, len(line))
 		firstPart = line[:startCol]
 	}
 
 	lastPart := ""
-	if endLine < len(ed.Lines) {
-		line := ed.Lines[endLine]
+	if endLine < len(ed.buf().Lines) {
+		line := ed.buf().Lines[endLine]
 		endCol = min(endCol, len(line))
 		lastPart = line[endCol:]
 	}
 
 	// Create new lines array
-	newLines := make([]string, 0, len(ed.Lines)-(endLine-startLine))
-	newLines = append(newLines, ed.Lines[:startLine]...)
+	newLines := make([]string, 0, len(ed.buf().Lines)-(endLine-startLine))
+	newLines = append(newLines, ed.buf().Lines[:startLine]...)
 	newLines = append(newLines, firstPart+lastPart)
-	if endLine+1 < len(ed.Lines) {
-		newLines = append(newLines, ed.Lines[endLine+1:]...)
+	if endLine+1 < len(ed.buf().Lines) {
+		newLines = append(newLines, ed.buf().Lines[endLine+1:]...)
 	}
 
-	ed.Lines = newLines
-	if len(ed.Lines) == 0 {
-		ed.Lines = []string{""}
+	ed.buf().Lines = newLines
+	if len(ed.buf().Lines) == 0 {
+		ed.buf().Lines = []string{""}
 	}
-	ed.Cursor = min(startLine, len(ed.Lines)-1)
-	ed.Col = startCol
+	ed.win().Cursor = min(startLine, len(ed.buf().Lines)-1)
+	ed.win().Col = startCol
 }
 
 // Multi-line text object functions
@@ -1346,13 +2110,13 @@ func (ed *Editor) deleteRange(startLine, startCol, endLine, endCol int) {
 func toInnerParagraphML(ed *Editor) (startLine, startCol, endLine, endCol int) {
 	start, end := ed.findInnerParagraph()
 	// For paragraph, we delete whole lines (col 0 to end of last line)
-	return start, 0, end, len(ed.Lines[end])
+	return start, 0, end, len(ed.buf().Lines[end])
 }
 
 // toAParagraphML returns the range including trailing blank lines
 func toAParagraphML(ed *Editor) (startLine, startCol, endLine, endCol int) {
 	start, end := ed.findAParagraph()
-	return start, 0, end, len(ed.Lines[end])
+	return start, 0, end, len(ed.buf().Lines[end])
 }
 
 // toInnerSentenceML finds the current sentence boundaries across lines
@@ -1368,14 +2132,14 @@ func toASentenceML(ed *Editor) (startLine, startCol, endLine, endCol int) {
 // findSentenceBounds finds sentence boundaries across lines
 func (ed *Editor) findSentenceBounds(includeTrailing bool) (startLine, startCol, endLine, endCol int) {
 	// Start from cursor position
-	startLine = ed.Cursor
-	startCol = ed.Col
-	endLine = ed.Cursor
-	endCol = ed.Col
+	startLine = ed.win().Cursor
+	startCol = ed.win().Col
+	endLine = ed.win().Cursor
+	endCol = ed.win().Col
 
 	// Search backward for sentence start (after previous sentence end or start of paragraph)
 	for {
-		line := ed.Lines[startLine]
+		line := ed.buf().Lines[startLine]
 		for startCol > 0 {
 			startCol--
 			if startCol < len(line) && isSentenceEnd(line[startCol]) {
@@ -1385,11 +2149,11 @@ func (ed *Editor) findSentenceBounds(includeTrailing bool) (startLine, startCol,
 				for startCol < len(line) && (line[startCol] == ' ' || line[startCol] == '\t') {
 					startCol++
 				}
-				if startCol >= len(line) && startLine < len(ed.Lines)-1 {
+				if startCol >= len(line) && startLine < len(ed.buf().Lines)-1 {
 					// Move to next line
 					startLine++
 					startCol = 0
-					line = ed.Lines[startLine]
+					line = ed.buf().Lines[startLine]
 					// Skip leading whitespace on next line
 					for startCol < len(line) && (line[startCol] == ' ' || line[startCol] == '\t') {
 						startCol++
@@ -1401,12 +2165,12 @@ func (ed *Editor) findSentenceBounds(includeTrailing bool) (startLine, startCol,
 		// Reached start of line, check previous line
 		if startLine > 0 {
 			// Check if previous line is blank (paragraph boundary)
-			if strings.TrimSpace(ed.Lines[startLine-1]) == "" {
+			if strings.TrimSpace(ed.buf().Lines[startLine-1]) == "" {
 				startCol = 0
 				goto foundStart
 			}
 			startLine--
-			startCol = len(ed.Lines[startLine])
+			startCol = len(ed.buf().Lines[startLine])
 		} else {
 			// Start of file
 			startCol = 0
@@ -1417,7 +2181,7 @@ foundStart:
 
 	// Search forward for sentence end
 	for {
-		line := ed.Lines[endLine]
+		line := ed.buf().Lines[endLine]
 		for endCol < len(line) {
 			if isSentenceEnd(line[endCol]) {
 				endCol++ // Include the punctuation
@@ -1426,9 +2190,9 @@ foundStart:
 			endCol++
 		}
 		// Reached end of line, check next line
-		if endLine < len(ed.Lines)-1 {
+		if endLine < len(ed.buf().Lines)-1 {
 			// Check if next line is blank (paragraph boundary)
-			if strings.TrimSpace(ed.Lines[endLine+1]) == "" {
+			if strings.TrimSpace(ed.buf().Lines[endLine+1]) == "" {
 				endCol = len(line)
 				goto foundEnd
 			}
@@ -1445,7 +2209,7 @@ foundEnd:
 	// Include trailing whitespace if requested
 	if includeTrailing {
 		for {
-			line := ed.Lines[endLine]
+			line := ed.buf().Lines[endLine]
 			for endCol < len(line) && (line[endCol] == ' ' || line[endCol] == '\t') {
 				endCol++
 			}
@@ -1453,7 +2217,7 @@ foundEnd:
 				break // Found non-whitespace
 			}
 			// Check next line
-			if endLine < len(ed.Lines)-1 && strings.TrimSpace(ed.Lines[endLine+1]) != "" {
+			if endLine < len(ed.buf().Lines)-1 && strings.TrimSpace(ed.buf().Lines[endLine+1]) != "" {
 				endLine++
 				endCol = 0
 			} else {
@@ -1467,78 +2231,24 @@ foundEnd:
 
 // Multi-line bracket/brace/paren text objects
 
-// findPairBoundsML finds matching bracket pairs across multiple lines
+// findPairBoundsML finds matching bracket pairs across multiple lines.
+// If cursor is inside a pair, uses that. Otherwise searches forward for next pair.
 func (ed *Editor) findPairBoundsML(open, close byte, inner bool) (startLine, startCol, endLine, endCol int) {
-	// Search backward for opening bracket
-	startLine = ed.Cursor
-	startCol = ed.Col
-	depth := 0
-
-	// First, search backward from cursor
-	for {
-		line := ed.Lines[startLine]
-		for startCol >= 0 {
-			if startCol < len(line) {
-				ch := line[startCol]
-				if ch == close {
-					depth++
-				} else if ch == open {
-					if depth == 0 {
-						// Found the opening bracket
-						goto foundOpen
-					}
-					depth--
-				}
-			}
-			startCol--
-		}
-		// Move to previous line
-		if startLine > 0 {
-			startLine--
-			startCol = len(ed.Lines[startLine]) - 1
-		} else {
-			// Not found
-			return -1, -1, -1, -1
-		}
+	// Try to find a pair containing the cursor, or search forward for next pair
+	startLine, startCol, endLine, endCol = ed.findPairContaining(open, close)
+	if startLine < 0 {
+		// Not inside a pair - search forward for next opening bracket
+		startLine, startCol, endLine, endCol = ed.findNextPair(open, close)
 	}
-foundOpen:
-
-	// Now search forward for closing bracket
-	endLine = ed.Cursor
-	endCol = ed.Col
-	depth = 0
-
-	for {
-		line := ed.Lines[endLine]
-		for endCol < len(line) {
-			ch := line[endCol]
-			if ch == open {
-				depth++
-			} else if ch == close {
-				if depth == 0 {
-					// Found the closing bracket
-					goto foundClose
-				}
-				depth--
-			}
-			endCol++
-		}
-		// Move to next line
-		if endLine < len(ed.Lines)-1 {
-			endLine++
-			endCol = 0
-		} else {
-			// Not found
-			return -1, -1, -1, -1
-		}
+	if startLine < 0 {
+		return -1, -1, -1, -1
 	}
-foundClose:
 
 	if inner {
 		// Exclude the brackets themselves
 		startCol++
 		// If startCol goes past end of line, move to next line
-		if startCol >= len(ed.Lines[startLine]) && startLine < endLine {
+		if startCol >= len(ed.buf().Lines[startLine]) && startLine < endLine {
 			startLine++
 			startCol = 0
 		}
@@ -1549,6 +2259,99 @@ foundClose:
 	}
 
 	return startLine, startCol, endLine, endCol
+}
+
+// findPairContaining searches backward for an opening bracket and forward for its match.
+// Returns the bracket positions if cursor is inside a pair, or -1,-1,-1,-1 if not.
+func (ed *Editor) findPairContaining(open, close byte) (startLine, startCol, endLine, endCol int) {
+	// Search backward for opening bracket
+	startLine = ed.win().Cursor
+	startCol = ed.win().Col
+	depth := 0
+
+	for {
+		line := ed.buf().Lines[startLine]
+		for startCol >= 0 {
+			if startCol < len(line) {
+				ch := line[startCol]
+				if ch == close {
+					depth++
+				} else if ch == open {
+					if depth == 0 {
+						// Found opening bracket - now verify there's a matching close after cursor
+						endLine, endCol = ed.findMatchingClose(open, close, startLine, startCol)
+						if endLine >= 0 {
+							return startLine, startCol, endLine, endCol
+						}
+						// No matching close, keep searching backward
+					}
+					depth--
+				}
+			}
+			startCol--
+		}
+		if startLine > 0 {
+			startLine--
+			startCol = len(ed.buf().Lines[startLine]) - 1
+		} else {
+			return -1, -1, -1, -1
+		}
+	}
+}
+
+// findMatchingClose searches forward from an opening bracket for its matching close.
+func (ed *Editor) findMatchingClose(open, close byte, fromLine, fromCol int) (endLine, endCol int) {
+	endLine = fromLine
+	endCol = fromCol + 1 // Start after the opening bracket
+	depth := 0
+
+	for {
+		line := ed.buf().Lines[endLine]
+		for endCol < len(line) {
+			ch := line[endCol]
+			if ch == open {
+				depth++
+			} else if ch == close {
+				if depth == 0 {
+					return endLine, endCol
+				}
+				depth--
+			}
+			endCol++
+		}
+		if endLine < len(ed.buf().Lines)-1 {
+			endLine++
+			endCol = 0
+		} else {
+			return -1, -1
+		}
+	}
+}
+
+// findNextPair searches forward for the next opening bracket and its matching close.
+func (ed *Editor) findNextPair(open, close byte) (startLine, startCol, endLine, endCol int) {
+	startLine = ed.win().Cursor
+	startCol = ed.win().Col + 1 // Start after cursor
+
+	for {
+		line := ed.buf().Lines[startLine]
+		for startCol < len(line) {
+			if line[startCol] == open {
+				// Found opening bracket - find its match
+				endLine, endCol = ed.findMatchingClose(open, close, startLine, startCol)
+				if endLine >= 0 {
+					return startLine, startCol, endLine, endCol
+				}
+			}
+			startCol++
+		}
+		if startLine < len(ed.buf().Lines)-1 {
+			startLine++
+			startCol = 0
+		} else {
+			return -1, -1, -1, -1
+		}
+	}
 }
 
 // Paren text objects
@@ -1592,11 +2395,11 @@ func isWordChar(r byte) bool {
 
 // wordForward moves to the start of the next word, crossing lines
 func (ed *Editor) wordForward() {
-	line := ed.Lines[ed.Cursor]
+	line := ed.buf().Lines[ed.win().Cursor]
 	n := len(line)
 
 	// Try to find next word on current line
-	col := ed.Col
+	col := ed.win().Col
 	// Skip current word
 	for col < n && isWordChar(line[col]) {
 		col++
@@ -1608,32 +2411,32 @@ func (ed *Editor) wordForward() {
 
 	if col < n {
 		// Found word on this line
-		ed.Col = col
+		ed.win().Col = col
 		return
 	}
 
 	// Move to next line
-	for ed.Cursor < len(ed.Lines)-1 {
-		ed.Cursor++
-		line = ed.Lines[ed.Cursor]
+	for ed.win().Cursor < len(ed.buf().Lines)-1 {
+		ed.win().Cursor++
+		line = ed.buf().Lines[ed.win().Cursor]
 		// Find first word char on new line
 		col = 0
 		for col < len(line) && !isWordChar(line[col]) {
 			col++
 		}
 		if col < len(line) {
-			ed.Col = col
+			ed.win().Col = col
 			return
 		}
 	}
 	// At end, go to end of last line
-	ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+	ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 }
 
 // wordBackward moves to the start of the previous word, crossing lines
 func (ed *Editor) wordBackward() {
-	line := ed.Lines[ed.Cursor]
-	col := ed.Col
+	line := ed.buf().Lines[ed.win().Cursor]
+	col := ed.win().Col
 
 	if col > 0 {
 		col--
@@ -1646,15 +2449,15 @@ func (ed *Editor) wordBackward() {
 			col--
 		}
 		if col > 0 || isWordChar(line[0]) {
-			ed.Col = col
+			ed.win().Col = col
 			return
 		}
 	}
 
 	// Move to previous line
-	for ed.Cursor > 0 {
-		ed.Cursor--
-		line = ed.Lines[ed.Cursor]
+	for ed.win().Cursor > 0 {
+		ed.win().Cursor--
+		line = ed.buf().Lines[ed.win().Cursor]
 		if len(line) == 0 {
 			continue
 		}
@@ -1671,18 +2474,18 @@ func (ed *Editor) wordBackward() {
 		for col > 0 && isWordChar(line[col-1]) {
 			col--
 		}
-		ed.Col = col
+		ed.win().Col = col
 		return
 	}
 	// At start
-	ed.Col = 0
+	ed.win().Col = 0
 }
 
 // wordEnd moves to the end of the current/next word, crossing lines
 func (ed *Editor) wordEnd() {
-	line := ed.Lines[ed.Cursor]
+	line := ed.buf().Lines[ed.win().Cursor]
 	n := len(line)
-	col := ed.Col
+	col := ed.win().Col
 
 	if col < n-1 {
 		col++
@@ -1695,15 +2498,15 @@ func (ed *Editor) wordEnd() {
 			col++
 		}
 		if col < n && isWordChar(line[col]) {
-			ed.Col = col
+			ed.win().Col = col
 			return
 		}
 	}
 
 	// Move to next line
-	for ed.Cursor < len(ed.Lines)-1 {
-		ed.Cursor++
-		line = ed.Lines[ed.Cursor]
+	for ed.win().Cursor < len(ed.buf().Lines)-1 {
+		ed.win().Cursor++
+		line = ed.buf().Lines[ed.win().Cursor]
 		n = len(line)
 		// Find first word
 		col = 0
@@ -1717,73 +2520,73 @@ func (ed *Editor) wordEnd() {
 		for col < n-1 && isWordChar(line[col+1]) {
 			col++
 		}
-		ed.Col = col
+		ed.win().Col = col
 		return
 	}
 	// At end
-	ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+	ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 }
 
 // Undo/Redo implementation
 func (ed *Editor) saveUndo() {
 	// Deep copy current state
-	linesCopy := make([]string, len(ed.Lines))
-	copy(linesCopy, ed.Lines)
-	ed.undoStack = append(ed.undoStack, EditorState{
+	linesCopy := make([]string, len(ed.buf().Lines))
+	copy(linesCopy, ed.buf().Lines)
+	ed.buf().undoStack = append(ed.buf().undoStack, EditorState{
 		Lines:  linesCopy,
-		Cursor: ed.Cursor,
-		Col:    ed.Col,
+		Cursor: ed.win().Cursor,
+		Col:    ed.win().Col,
 	})
 	// Clear redo stack on new change
-	ed.redoStack = nil
+	ed.buf().redoStack = nil
 }
 
 func (ed *Editor) undo() {
-	if len(ed.undoStack) == 0 {
+	if len(ed.buf().undoStack) == 0 {
 		ed.StatusLine = "Already at oldest change"
 		ed.updateDisplay()
 		return
 	}
 	// Save current state to redo stack
-	linesCopy := make([]string, len(ed.Lines))
-	copy(linesCopy, ed.Lines)
-	ed.redoStack = append(ed.redoStack, EditorState{
+	linesCopy := make([]string, len(ed.buf().Lines))
+	copy(linesCopy, ed.buf().Lines)
+	ed.buf().redoStack = append(ed.buf().redoStack, EditorState{
 		Lines:  linesCopy,
-		Cursor: ed.Cursor,
-		Col:    ed.Col,
+		Cursor: ed.win().Cursor,
+		Col:    ed.win().Col,
 	})
 	// Pop from undo stack
-	state := ed.undoStack[len(ed.undoStack)-1]
-	ed.undoStack = ed.undoStack[:len(ed.undoStack)-1]
-	ed.Lines = state.Lines
-	ed.Cursor = state.Cursor
-	ed.Col = state.Col
-	ed.StatusLine = fmt.Sprintf("Undo (%d more)", len(ed.undoStack))
+	state := ed.buf().undoStack[len(ed.buf().undoStack)-1]
+	ed.buf().undoStack = ed.buf().undoStack[:len(ed.buf().undoStack)-1]
+	ed.buf().Lines = state.Lines
+	ed.win().Cursor = state.Cursor
+	ed.win().Col = state.Col
+	ed.StatusLine = fmt.Sprintf("Undo (%d more)", len(ed.buf().undoStack))
 	ed.updateDisplay()
 	ed.updateCursor()
 }
 
 func (ed *Editor) redo() {
-	if len(ed.redoStack) == 0 {
+	if len(ed.buf().redoStack) == 0 {
 		ed.StatusLine = "Already at newest change"
 		ed.updateDisplay()
 		return
 	}
 	// Save current state to undo stack
-	linesCopy := make([]string, len(ed.Lines))
-	copy(linesCopy, ed.Lines)
-	ed.undoStack = append(ed.undoStack, EditorState{
+	linesCopy := make([]string, len(ed.buf().Lines))
+	copy(linesCopy, ed.buf().Lines)
+	ed.buf().undoStack = append(ed.buf().undoStack, EditorState{
 		Lines:  linesCopy,
-		Cursor: ed.Cursor,
-		Col:    ed.Col,
+		Cursor: ed.win().Cursor,
+		Col:    ed.win().Col,
 	})
 	// Pop from redo stack
-	state := ed.redoStack[len(ed.redoStack)-1]
-	ed.redoStack = ed.redoStack[:len(ed.redoStack)-1]
-	ed.Lines = state.Lines
-	ed.Cursor = state.Cursor
-	ed.Col = state.Col
-	ed.StatusLine = fmt.Sprintf("Redo (%d more)", len(ed.redoStack))
+	state := ed.buf().redoStack[len(ed.buf().redoStack)-1]
+	ed.buf().redoStack = ed.buf().redoStack[:len(ed.buf().redoStack)-1]
+	ed.buf().Lines = state.Lines
+	ed.win().Cursor = state.Cursor
+	ed.win().Col = state.Col
+	ed.StatusLine = fmt.Sprintf("Redo (%d more)", len(ed.buf().redoStack))
 	ed.updateDisplay()
 	ed.updateCursor()
 }
@@ -1791,9 +2594,9 @@ func (ed *Editor) redo() {
 // Visual mode implementation
 func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	ed.Mode = "VISUAL"
-	ed.visualStart = ed.Cursor
-	ed.visualStartCol = ed.Col
-	ed.visualLineMode = lineMode
+	ed.win().visualStart = ed.win().Cursor
+	ed.win().visualStartCol = ed.win().Col
+	ed.win().visualLineMode = lineMode
 	if lineMode {
 		ed.StatusLine = "-- VISUAL LINE --  hjkl:select  d/y:operate  Esc:cancel"
 	} else {
@@ -1807,43 +2610,43 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	// Movement keys update selection
 	// Visual mode needs full refresh for multi-line selection highlighting
 	visualRouter.Handle("j", func(m riffkey.Match) {
-		ed.Cursor = min(ed.Cursor+m.Count, len(ed.Lines)-1)
-		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		ed.win().Cursor = min(ed.win().Cursor+m.Count, len(ed.buf().Lines)-1)
+		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 		ed.ensureCursorVisible()
 		ed.refresh()
 	})
 	visualRouter.Handle("k", func(m riffkey.Match) {
-		ed.Cursor = max(ed.Cursor-m.Count, 0)
-		ed.Col = min(ed.Col, len(ed.Lines[ed.Cursor]))
+		ed.win().Cursor = max(ed.win().Cursor-m.Count, 0)
+		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 		ed.ensureCursorVisible()
 		ed.refresh()
 	})
 	visualRouter.Handle("h", func(m riffkey.Match) {
-		ed.Col = max(0, ed.Col-m.Count)
+		ed.win().Col = max(0, ed.win().Col-m.Count)
 		ed.refresh()
 	})
 	visualRouter.Handle("l", func(m riffkey.Match) {
-		ed.Col = min(ed.Col+m.Count, max(0, len(ed.Lines[ed.Cursor])-1))
+		ed.win().Col = min(ed.win().Col+m.Count, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
 		ed.refresh()
 	})
 	visualRouter.Handle("gg", func(_ riffkey.Match) {
-		ed.Cursor = 0
-		ed.Col = 0
+		ed.win().Cursor = 0
+		ed.win().Col = 0
 		ed.ensureCursorVisible()
 		ed.refresh()
 	})
 	visualRouter.Handle("G", func(_ riffkey.Match) {
-		ed.Cursor = len(ed.Lines) - 1
-		ed.Col = len(ed.Lines[ed.Cursor])
+		ed.win().Cursor = len(ed.buf().Lines) - 1
+		ed.win().Col = len(ed.buf().Lines[ed.win().Cursor])
 		ed.ensureCursorVisible()
 		ed.refresh()
 	})
 	visualRouter.Handle("0", func(_ riffkey.Match) {
-		ed.Col = 0
+		ed.win().Col = 0
 		ed.refresh()
 	})
 	visualRouter.Handle("$", func(_ riffkey.Match) {
-		ed.Col = max(0, len(ed.Lines[ed.Cursor])-1)
+		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 		ed.refresh()
 	})
 
@@ -1868,42 +2671,42 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 
 	// o/O swaps cursor to other end of selection
 	visualRouter.Handle("o", func(_ riffkey.Match) {
-		ed.Cursor, ed.visualStart = ed.visualStart, ed.Cursor
-		ed.Col, ed.visualStartCol = ed.visualStartCol, ed.Col
+		ed.win().Cursor, ed.win().visualStart = ed.win().visualStart, ed.win().Cursor
+		ed.win().Col, ed.win().visualStartCol = ed.win().visualStartCol, ed.win().Col
 		ed.refresh()
 	})
 	visualRouter.Handle("O", func(_ riffkey.Match) {
-		ed.Cursor, ed.visualStart = ed.visualStart, ed.Cursor
-		ed.Col, ed.visualStartCol = ed.visualStartCol, ed.Col
+		ed.win().Cursor, ed.win().visualStart = ed.win().visualStart, ed.win().Cursor
+		ed.win().Col, ed.win().visualStartCol = ed.win().visualStartCol, ed.win().Col
 		ed.refresh()
 	})
 
 	// d deletes selection
 	visualRouter.Handle("d", func(_ riffkey.Match) {
 		ed.saveUndo()
-		if ed.visualLineMode {
+		if ed.win().visualLineMode {
 			// Delete entire lines
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
-			if endLine-startLine+1 >= len(ed.Lines) {
-				ed.Lines = []string{""}
-				ed.Cursor = 0
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
+			if endLine-startLine+1 >= len(ed.buf().Lines) {
+				ed.buf().Lines = []string{""}
+				ed.win().Cursor = 0
 			} else {
-				ed.Lines = append(ed.Lines[:startLine], ed.Lines[endLine+1:]...)
-				ed.Cursor = min(startLine, len(ed.Lines)-1)
+				ed.buf().Lines = append(ed.buf().Lines[:startLine], ed.buf().Lines[endLine+1:]...)
+				ed.win().Cursor = min(startLine, len(ed.buf().Lines)-1)
 			}
-			ed.Col = min(ed.Col, max(0, len(ed.Lines[ed.Cursor])-1))
+			ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
 		} else {
 			// Character mode - can span multiple lines
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
 			var startCol, endCol int
-			if ed.visualStart < ed.Cursor || (ed.visualStart == ed.Cursor && ed.visualStartCol <= ed.Col) {
-				startCol = ed.visualStartCol
-				endCol = ed.Col + 1
+			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
+				startCol = ed.win().visualStartCol
+				endCol = ed.win().Col + 1
 			} else {
-				startCol = ed.Col
-				endCol = ed.visualStartCol + 1
+				startCol = ed.win().Col
+				endCol = ed.win().visualStartCol + 1
 			}
 			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
 			ed.deleteRange(startLine, startCol, endLine, endCol)
@@ -1914,36 +2717,36 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	// c changes selection (delete and enter insert mode)
 	visualRouter.Handle("c", func(_ riffkey.Match) {
 		ed.saveUndo()
-		if ed.visualLineMode {
+		if ed.win().visualLineMode {
 			// Change entire lines - delete and insert on first line
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
-			yankRegister = ed.extractRange(startLine, 0, endLine, len(ed.Lines[endLine]))
-			if endLine-startLine+1 >= len(ed.Lines) {
-				ed.Lines = []string{""}
-				ed.Cursor = 0
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
+			yankRegister = ed.extractRange(startLine, 0, endLine, len(ed.buf().Lines[endLine]))
+			if endLine-startLine+1 >= len(ed.buf().Lines) {
+				ed.buf().Lines = []string{""}
+				ed.win().Cursor = 0
 			} else {
-				ed.Lines = append(ed.Lines[:startLine], ed.Lines[endLine+1:]...)
-				ed.Cursor = min(startLine, len(ed.Lines)-1)
+				ed.buf().Lines = append(ed.buf().Lines[:startLine], ed.buf().Lines[endLine+1:]...)
+				ed.win().Cursor = min(startLine, len(ed.buf().Lines)-1)
 			}
 			// Insert a blank line to type on
-			newLines := make([]string, len(ed.Lines)+1)
-			copy(newLines[:ed.Cursor], ed.Lines[:ed.Cursor])
-			newLines[ed.Cursor] = ""
-			copy(newLines[ed.Cursor+1:], ed.Lines[ed.Cursor:])
-			ed.Lines = newLines
-			ed.Col = 0
+			newLines := make([]string, len(ed.buf().Lines)+1)
+			copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+			newLines[ed.win().Cursor] = ""
+			copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+			ed.buf().Lines = newLines
+			ed.win().Col = 0
 		} else {
 			// Character mode - delete selection
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
 			var startCol, endCol int
-			if ed.visualStart < ed.Cursor || (ed.visualStart == ed.Cursor && ed.visualStartCol <= ed.Col) {
-				startCol = ed.visualStartCol
-				endCol = ed.Col + 1
+			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
+				startCol = ed.win().visualStartCol
+				endCol = ed.win().Col + 1
 			} else {
-				startCol = ed.Col
-				endCol = ed.visualStartCol + 1
+				startCol = ed.win().Col
+				endCol = ed.win().visualStartCol + 1
 			}
 			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
 			ed.deleteRange(startLine, startCol, endLine, endCol)
@@ -1956,12 +2759,12 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 
 	// y yanks selection
 	visualRouter.Handle("y", func(_ riffkey.Match) {
-		if ed.visualLineMode {
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
+		if ed.win().visualLineMode {
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
 			var yanked string
 			for i := startLine; i <= endLine; i++ {
-				yanked += ed.Lines[i]
+				yanked += ed.buf().Lines[i]
 				if i < endLine {
 					yanked += "\n"
 				}
@@ -1970,15 +2773,15 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 			ed.StatusLine = fmt.Sprintf("Yanked %d lines", endLine-startLine+1)
 		} else {
 			// Character mode - can span multiple lines
-			startLine := min(ed.visualStart, ed.Cursor)
-			endLine := max(ed.visualStart, ed.Cursor)
+			startLine := min(ed.win().visualStart, ed.win().Cursor)
+			endLine := max(ed.win().visualStart, ed.win().Cursor)
 			var startCol, endCol int
-			if ed.visualStart < ed.Cursor || (ed.visualStart == ed.Cursor && ed.visualStartCol <= ed.Col) {
-				startCol = ed.visualStartCol
-				endCol = ed.Col + 1
+			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
+				startCol = ed.win().visualStartCol
+				endCol = ed.win().Col + 1
 			} else {
-				startCol = ed.Col
-				endCol = ed.visualStartCol + 1
+				startCol = ed.win().Col
+				endCol = ed.win().visualStartCol + 1
 			}
 			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
 			ed.StatusLine = fmt.Sprintf("Yanked %d chars", len(yankRegister))
@@ -2019,11 +2822,11 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 			startLine, startCol, endLine, endCol := objFn(ed)
 			if startLine >= 0 {
 				// Expand visual selection to cover the text object
-				ed.visualStart = startLine
-				ed.visualStartCol = startCol
-				ed.Cursor = endLine
-				ed.Col = max(0, endCol-1) // endCol is exclusive, cursor should be on last char
-				ed.visualLineMode = false
+				ed.win().visualStart = startLine
+				ed.win().visualStartCol = startCol
+				ed.win().Cursor = endLine
+				ed.win().Col = max(0, endCol-1) // endCol is exclusive, cursor should be on last char
+				ed.win().visualLineMode = false
 				ed.updateDisplay()
 				ed.updateCursor()
 			}
@@ -2044,13 +2847,13 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	for _, obj := range visualWordObjects {
 		objFn := obj.fn
 		visualRouter.Handle(obj.key, func(_ riffkey.Match) {
-			line := ed.Lines[ed.Cursor]
-			start, end := objFn(line, ed.Col)
+			line := ed.buf().Lines[ed.win().Cursor]
+			start, end := objFn(line, ed.win().Col)
 			if start < end {
-				ed.visualStart = ed.Cursor
-				ed.visualStartCol = start
-				ed.Col = end - 1
-				ed.visualLineMode = false
+				ed.win().visualStart = ed.win().Cursor
+				ed.win().visualStartCol = start
+				ed.win().Col = end - 1
+				ed.win().visualLineMode = false
 				ed.updateDisplay()
 				ed.updateCursor()
 			}
@@ -2151,6 +2954,13 @@ func (ed *Editor) executeCommand(app *tui.App, prompt, cmd string) {
 func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
 	switch cmd {
 	case "q", "quit":
+		if !ed.root.IsLeaf() {
+			// Close current window if there are multiple
+			ed.closeWindow()
+		} else {
+			app.Stop()
+		}
+	case "qa", "qall":
 		app.Stop()
 	case "w", "write":
 		ed.StatusLine = "E37: No write since last change (use :w! to override)"
@@ -2158,6 +2968,16 @@ func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
 	case "wq", "x":
 		ed.StatusLine = "E37: No write since last change (use :wq! to override)"
 		ed.updateDisplay()
+	case "sp", "split":
+		// Horizontal split
+		ed.splitHorizontal()
+	case "vs", "vsplit":
+		// Vertical split
+		ed.splitVertical()
+	case "close":
+		ed.closeWindow()
+	case "only", "on":
+		ed.closeOtherWindows()
 	case "noh", "nohlsearch":
 		// Clear search highlighting
 		ed.searchPattern = ""
@@ -2173,9 +2993,9 @@ func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
 					break
 				}
 			}
-			if lineNum > 0 && lineNum <= len(ed.Lines) {
-				ed.Cursor = lineNum - 1
-				ed.Col = 0
+			if lineNum > 0 && lineNum <= len(ed.buf().Lines) {
+				ed.win().Cursor = lineNum - 1
+				ed.win().Col = 0
 				ed.updateDisplay()
 				ed.updateCursor()
 				return
@@ -2216,22 +3036,22 @@ func (ed *Editor) searchNext(direction int) {
 	actualDir := ed.searchDirection * direction
 
 	// Start search from next/prev position
-	startLine := ed.Cursor
-	startCol := ed.Col + 1
+	startLine := ed.win().Cursor
+	startCol := ed.win().Col + 1
 	if actualDir < 0 {
-		startCol = ed.Col - 1
+		startCol = ed.win().Col - 1
 	}
 
 	// Search through all lines
-	for i := 0; i < len(ed.Lines); i++ {
+	for i := 0; i < len(ed.buf().Lines); i++ {
 		lineIdx := startLine
 		if actualDir > 0 {
-			lineIdx = (startLine + i) % len(ed.Lines)
+			lineIdx = (startLine + i) % len(ed.buf().Lines)
 		} else {
-			lineIdx = (startLine - i + len(ed.Lines)) % len(ed.Lines)
+			lineIdx = (startLine - i + len(ed.buf().Lines)) % len(ed.buf().Lines)
 		}
 
-		line := ed.Lines[lineIdx]
+		line := ed.buf().Lines[lineIdx]
 		col := -1
 
 		if i == 0 {
@@ -2256,8 +3076,8 @@ func (ed *Editor) searchNext(direction int) {
 		}
 
 		if col >= 0 {
-			ed.Cursor = lineIdx
-			ed.Col = col
+			ed.win().Cursor = lineIdx
+			ed.win().Col = col
 			ed.StatusLine = fmt.Sprintf("/%s", ed.searchPattern)
 			ed.updateDisplay()
 			ed.updateCursor()
@@ -2324,26 +3144,26 @@ func registerFindChar(app *tui.App, ed *Editor) {
 }
 
 func (ed *Editor) doFindChar(forward, till bool, ch rune) {
-	line := ed.Lines[ed.Cursor]
+	line := ed.buf().Lines[ed.win().Cursor]
 	if forward {
-		for i := ed.Col + 1; i < len(line); i++ {
+		for i := ed.win().Col + 1; i < len(line); i++ {
 			if rune(line[i]) == ch {
 				if till {
-					ed.Col = i - 1
+					ed.win().Col = i - 1
 				} else {
-					ed.Col = i
+					ed.win().Col = i
 				}
 				ed.updateCursor()
 				return
 			}
 		}
 	} else {
-		for i := ed.Col - 1; i >= 0; i-- {
+		for i := ed.win().Col - 1; i >= 0; i-- {
 			if rune(line[i]) == ch {
 				if till {
-					ed.Col = i + 1
+					ed.win().Col = i + 1
 				} else {
-					ed.Col = i
+					ed.win().Col = i
 				}
 				ed.updateCursor()
 				return

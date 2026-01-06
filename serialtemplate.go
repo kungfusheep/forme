@@ -77,6 +77,7 @@ type SerialOp struct {
 	// Layer
 	LayerPtr    *Layer
 	LayerHeight int16
+	LayerWidth  int16
 
 	// Generic condition (If[T])
 	CondNode ConditionNode
@@ -411,6 +412,7 @@ func (t *SerialTemplate) compileLayer(v LayerView, parentIdx int16, level int) i
 		Parent:      parentIdx,
 		LayerPtr:    v.Layer,
 		LayerHeight: v.Height,
+		LayerWidth:  v.Width,
 	}
 	return t.addOp(op, level)
 }
@@ -1051,6 +1053,7 @@ func (t *SerialTemplate) measureRichTextOffset(op *SerialOp, elemBase unsafe.Poi
 func (t *SerialTemplate) measureLayer(op *SerialOp) {
 	layer := op.LayerPtr
 	h := op.LayerHeight
+	w := op.LayerWidth
 	// Height 0 means we'll use whatever height is available
 	// For now, use the layer's content height or the specified height
 	if h == 0 && layer != nil && layer.buffer != nil {
@@ -1063,7 +1066,7 @@ func (t *SerialTemplate) measureLayer(op *SerialOp) {
 		Kind:  SerialOpLayer,
 		Layer: layer,
 		H:     h,
-		W:     0, // will be set to full width during render
+		W:     w, // 0 = fill available width during render
 	})
 }
 
@@ -1335,8 +1338,13 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 			buf.WriteSpans(int(node.X), int(node.Y), node.Spans, int(w))
 		case node.Kind == SerialOpLayer:
 			if node.Layer != nil {
-				node.Layer.setViewport(int(w), int(node.H))
-				node.Layer.blit(buf, int(node.X), int(node.Y), int(w), int(node.H))
+				// Use node.W if explicitly set, otherwise fill available width
+				layerW := w
+				if node.W > 0 {
+					layerW = node.W
+				}
+				node.Layer.setViewport(int(layerW), int(node.H))
+				node.Layer.blit(buf, int(node.X), int(node.Y), int(layerW), int(node.H))
 			}
 		}
 	}

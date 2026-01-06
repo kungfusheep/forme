@@ -266,6 +266,7 @@ type Progress struct {
 type LayerView struct {
 	Layer  *Layer // the pre-rendered layer
 	Height int16  // viewport height (0 = fill available)
+	Width  int16  // viewport width (0 = fill available)
 }
 
 // Row arranges children horizontally.
