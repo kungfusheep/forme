@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,10 +20,22 @@ import (
 
 // Layout constants
 const (
-	headerRows     = 0  // Content starts at row 0 now
-	footerRows     = 2  // Status bar + message line
-	renderBuffer   = 30 // Lines to render above/below viewport for smooth scrolling
+	headerRows   = 0  // Content starts at row 0 now
+	footerRows   = 2  // Status bar + message line
+	renderBuffer = 30 // Lines to render above/below viewport for smooth scrolling
 )
+
+// Pos represents a position in a buffer
+type Pos struct {
+	Line int
+	Col  int
+}
+
+// Range represents a selection in a buffer
+type Range struct {
+	Start Pos
+	End   Pos
+}
 
 // Buffer holds file content (can be shared across windows)
 type Buffer struct {
@@ -28,6 +43,7 @@ type Buffer struct {
 	FileName  string
 	undoStack []EditorState
 	redoStack []EditorState
+	marks     map[rune]Pos // a-z marks (per-buffer)
 }
 
 // Window is a view into a buffer
@@ -50,11 +66,11 @@ type Window struct {
 	visualLineMode bool
 
 	// Rendering
-	contentLayer      *tui.Layer
-	lineNumWidth      int
-	StatusBar         []tui.Span
-	renderedMin       int
-	renderedMax       int
+	contentLayer *tui.Layer
+	lineNumWidth int
+	StatusBar    []tui.Span
+	renderedMin  int
+	renderedMax  int
 
 	// Debug stats
 	debugMode          bool
@@ -78,9 +94,9 @@ type JumpPos struct {
 type SplitDir int
 
 const (
-	SplitNone SplitDir = iota
-	SplitHorizontal // windows stacked vertically (like :sp)
-	SplitVertical   // windows side by side (like :vs)
+	SplitNone       SplitDir = iota
+	SplitHorizontal          // windows stacked vertically (like :sp)
+	SplitVertical            // windows side by side (like :vs)
 )
 
 // SplitNode is a binary tree node for window layout.
@@ -163,9 +179,17 @@ type Editor struct {
 	lastFindTill bool
 
 	// Command line mode (global)
-	cmdLineActive bool
-	cmdLinePrompt string
-	cmdLineInput  string
+	cmdLineActive  bool
+	cmdLinePrompt  string
+	cmdLineInput   string
+	lastColonCmd   string // for @: repeat
+
+	// Command completion (wildmenu)
+	cmdCompletions      []string   // all available commands (harvested once)
+	cmdMatches          []string   // filtered matches for current input
+	cmdMatchSelected    int        // selected match index
+	cmdCompletionActive bool       // whether completion popup is showing
+	cmdWildmenuSpans    []tui.Span // rendered wildmenu line
 
 	// Debounce for C-a/C-x
 	lastNumberModify time.Time
@@ -180,6 +204,1202 @@ type Editor struct {
 func (ed *Editor) win() *Window { return ed.focusedWindow }
 func (ed *Editor) buf() *Buffer { return ed.win().buffer }
 
+// Cursor returns the current cursor position
+func (ed *Editor) Cursor() Pos {
+	return Pos{Line: ed.win().Cursor, Col: ed.win().Col}
+}
+
+// SetCursor moves cursor to position with bounds clamping, viewport scroll, and display update
+func (ed *Editor) SetCursor(p Pos) {
+	ed.SetCursorQuiet(p)
+	ed.ensureCursorVisible()
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// SetCursorQuiet moves cursor with clamping but no display update (for batch operations)
+func (ed *Editor) SetCursorQuiet(p Pos) {
+	// Clamp line to buffer bounds
+	p.Line = max(0, min(p.Line, len(ed.buf().Lines)-1))
+	// Clamp column to line length
+	lineLen := len(ed.buf().Lines[p.Line])
+	if lineLen == 0 {
+		p.Col = 0
+	} else {
+		p.Col = max(0, min(p.Col, lineLen-1))
+	}
+	ed.win().Cursor = p.Line
+	ed.win().Col = p.Col
+}
+
+// moveCursor moves cursor with clamping and scroll but NO display update.
+// This is the core movement primitive - display updates are handled by middleware.
+func (ed *Editor) moveCursor(p Pos) {
+	ed.SetCursorQuiet(p)
+	ed.ensureCursorVisible()
+}
+
+// =============================================================================
+// Movement Actions - pure cursor movement, NO display updates
+// Display updates are handled by middleware (normal mode vs visual mode)
+// =============================================================================
+
+// GotoLine moves to line n (1-indexed for user-facing commands)
+func (ed *Editor) GotoLine(n int) Pos {
+	ed.addJump()
+	ed.moveCursor(Pos{Line: n - 1, Col: 0})
+	return ed.Cursor()
+}
+
+// BufferStart moves to the first line (gg)
+func (ed *Editor) BufferStart() Pos {
+	ed.addJump()
+	ed.moveCursor(Pos{Line: 0, Col: 0})
+	return ed.Cursor()
+}
+
+// BufferEnd moves to the last line (G)
+func (ed *Editor) BufferEnd() Pos {
+	ed.addJump()
+	ed.moveCursor(Pos{Line: len(ed.buf().Lines) - 1, Col: 0})
+	return ed.Cursor()
+}
+
+// LineStart moves to the first column (0)
+func (ed *Editor) LineStart() Pos {
+	ed.moveCursor(Pos{Line: ed.win().Cursor, Col: 0})
+	return ed.Cursor()
+}
+
+// LineEnd moves to the last column ($)
+func (ed *Editor) LineEnd() Pos {
+	line := ed.buf().Lines[ed.win().Cursor]
+	ed.moveCursor(Pos{Line: ed.win().Cursor, Col: len(line)})
+	return ed.Cursor()
+}
+
+// FirstNonBlank moves to the first non-whitespace character (^)
+func (ed *Editor) FirstNonBlank() Pos {
+	line := ed.buf().Lines[ed.win().Cursor]
+	col := 0
+	for col < len(line) && (line[col] == ' ' || line[col] == '\t') {
+		col++
+	}
+	ed.moveCursor(Pos{Line: ed.win().Cursor, Col: col})
+	return ed.Cursor()
+}
+
+// Left moves cursor left by n characters (h)
+func (ed *Editor) Left(n int) Pos {
+	ed.moveCursor(Pos{Line: ed.win().Cursor, Col: ed.win().Col - n})
+	return ed.Cursor()
+}
+
+// Right moves cursor right by n characters (l)
+func (ed *Editor) Right(n int) Pos {
+	ed.moveCursor(Pos{Line: ed.win().Cursor, Col: ed.win().Col + n})
+	return ed.Cursor()
+}
+
+// Up moves cursor up by n lines (k)
+func (ed *Editor) Up(n int) Pos {
+	ed.moveCursor(Pos{Line: ed.win().Cursor - n, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// Down moves cursor down by n lines (j)
+func (ed *Editor) Down(n int) Pos {
+	ed.moveCursor(Pos{Line: ed.win().Cursor + n, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// HalfPageDown moves cursor down by half a page (C-d)
+func (ed *Editor) HalfPageDown() Pos {
+	ed.addJump()
+	half := ed.win().viewportHeight / 2
+	ed.moveCursor(Pos{Line: ed.win().Cursor + half, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// HalfPageUp moves cursor up by half a page (C-u)
+func (ed *Editor) HalfPageUp() Pos {
+	ed.addJump()
+	half := ed.win().viewportHeight / 2
+	ed.moveCursor(Pos{Line: ed.win().Cursor - half, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// PageDown moves cursor down by a full page (C-f)
+func (ed *Editor) PageDown() Pos {
+	ed.addJump()
+	ed.moveCursor(Pos{Line: ed.win().Cursor + ed.win().viewportHeight, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// PageUp moves cursor up by a full page (C-b)
+func (ed *Editor) PageUp() Pos {
+	ed.addJump()
+	ed.moveCursor(Pos{Line: ed.win().Cursor - ed.win().viewportHeight, Col: ed.win().Col})
+	return ed.Cursor()
+}
+
+// CenterCursor positions viewport so cursor is in the middle (zz)
+func (ed *Editor) CenterCursor() Pos {
+	ed.scrollCursorTo(ed.win().viewportHeight / 2)
+	return ed.Cursor()
+}
+
+// CursorToTop positions viewport so cursor is at the top (zt)
+func (ed *Editor) CursorToTop() Pos {
+	ed.scrollCursorTo(0)
+	return ed.Cursor()
+}
+
+// CursorToBottom positions viewport so cursor is at the bottom (zb)
+func (ed *Editor) CursorToBottom() Pos {
+	ed.scrollCursorTo(ed.win().viewportHeight - 1)
+	return ed.Cursor()
+}
+
+// JumpBack moves to previous position in jump list (C-o)
+func (ed *Editor) JumpBack() Pos {
+	ed.jumpBack()
+	return ed.Cursor()
+}
+
+// JumpForward moves to next position in jump list (C-i)
+func (ed *Editor) JumpForward() Pos {
+	ed.jumpForward()
+	return ed.Cursor()
+}
+
+// NextWordStart moves to the start of the next word (w)
+func (ed *Editor) NextWordStart(n int) Pos {
+	for range n {
+		ed.wordForward()
+	}
+	ed.ensureCursorVisible()
+	return ed.Cursor()
+}
+
+// PrevWordStart moves to the start of the previous word (b)
+func (ed *Editor) PrevWordStart(n int) Pos {
+	for range n {
+		ed.wordBackward()
+	}
+	ed.ensureCursorVisible()
+	return ed.Cursor()
+}
+
+// NextWordEnd moves to the end of the current/next word (e)
+func (ed *Editor) NextWordEnd(n int) Pos {
+	for range n {
+		ed.wordEnd()
+	}
+	ed.ensureCursorVisible()
+	return ed.Cursor()
+}
+
+// =============================================================================
+// Editing Actions
+// =============================================================================
+
+// ToggleCase toggles the case of the character under cursor and moves right
+func (ed *Editor) ToggleCase() {
+	ed.saveUndo()
+	line := ed.buf().Lines[ed.win().Cursor]
+	if ed.win().Col < len(line) {
+		c := line[ed.win().Col]
+		if c >= 'a' && c <= 'z' {
+			c = c - 'a' + 'A'
+		} else if c >= 'A' && c <= 'Z' {
+			c = c - 'A' + 'a'
+		}
+		ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(c) + line[ed.win().Col+1:]
+		if ed.win().Col < len(line)-1 {
+			ed.win().Col++
+		}
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// JoinLines joins the current line with the next line
+func (ed *Editor) JoinLines() {
+	ed.saveUndo()
+	if ed.win().Cursor < len(ed.buf().Lines)-1 {
+		ed.buf().Lines[ed.win().Cursor] += " " + ed.buf().Lines[ed.win().Cursor+1]
+		ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor+1], ed.buf().Lines[ed.win().Cursor+2:]...)
+		ed.updateDisplay()
+	}
+}
+
+// DeleteChar deletes n characters under and after cursor (x)
+func (ed *Editor) DeleteChar(n int) {
+	ed.saveUndo()
+	for i := 0; i < n; i++ {
+		line := ed.buf().Lines[ed.win().Cursor]
+		if len(line) > 0 && ed.win().Col < len(line) {
+			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + line[ed.win().Col+1:]
+		}
+	}
+	if ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) && ed.win().Col > 0 {
+		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
+	}
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// DeleteLine deletes n lines starting from cursor (dd)
+func (ed *Editor) DeleteLine(n int) {
+	ed.saveUndo()
+	for i := 0; i < n; i++ {
+		if len(ed.buf().Lines) > 1 {
+			ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor], ed.buf().Lines[ed.win().Cursor+1:]...)
+			if ed.win().Cursor >= len(ed.buf().Lines) {
+				ed.win().Cursor = len(ed.buf().Lines) - 1
+			}
+		} else {
+			ed.buf().Lines[0] = ""
+			break
+		}
+	}
+	ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// Undo reverts the last change
+func (ed *Editor) Undo() {
+	ed.undo()
+}
+
+// Redo reapplies the last undone change
+func (ed *Editor) Redo() {
+	ed.redo()
+}
+
+// SearchNext finds the next match in the current search direction
+func (ed *Editor) SearchNext() {
+	ed.searchNext(1)
+}
+
+// SearchPrev finds the previous match (opposite of search direction)
+func (ed *Editor) SearchPrev() {
+	ed.searchNext(-1)
+}
+
+// IncrementNumber increments the number under or after cursor (C-a)
+func (ed *Editor) IncrementNumber() {
+	ed.modifyNumber(1)
+}
+
+// DecrementNumber decrements the number under or after cursor (C-x)
+func (ed *Editor) DecrementNumber() {
+	ed.modifyNumber(-1)
+}
+
+// ScrollLineDown scrolls viewport down one line (C-e)
+func (ed *Editor) ScrollLineDown() {
+	ed.ensureCursorVisible()
+	if ed.win().topLine < len(ed.buf().Lines)-ed.win().viewportHeight {
+		ed.win().topLine++
+		if ed.win().Cursor < ed.win().topLine {
+			ed.win().Cursor = ed.win().topLine
+			ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
+		}
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// ScrollLineUp scrolls viewport up one line (C-y)
+func (ed *Editor) ScrollLineUp() {
+	if ed.win().topLine > 0 {
+		ed.win().topLine--
+		if ed.win().Cursor >= ed.win().topLine+ed.win().viewportHeight {
+			ed.win().Cursor = ed.win().topLine + ed.win().viewportHeight - 1
+			ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
+		}
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// ClearSearchHighlight clears search highlighting (C-l / :nohl)
+func (ed *Editor) ClearSearchHighlight() {
+	ed.searchPattern = ""
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// =============================================================================
+// Insert Mode Actions - buffer operations for insert mode handlers
+// These don't include display updates (caller handles that + TextHandler rebinding)
+// =============================================================================
+
+// InsertNewline splits the current line at cursor and moves to the new line (Enter in insert mode)
+func (ed *Editor) InsertNewline() {
+	line := ed.buf().Lines[ed.win().Cursor]
+	before := line[:ed.win().Col]
+	after := line[ed.win().Col:]
+	ed.buf().Lines[ed.win().Cursor] = before
+
+	// Insert new line after
+	newLines := make([]string, len(ed.buf().Lines)+1)
+	copy(newLines[:ed.win().Cursor+1], ed.buf().Lines[:ed.win().Cursor+1])
+	newLines[ed.win().Cursor+1] = after
+	copy(newLines[ed.win().Cursor+2:], ed.buf().Lines[ed.win().Cursor+1:])
+	ed.buf().Lines = newLines
+	ed.win().Cursor++
+	ed.win().Col = 0
+}
+
+// DeleteToLineStart deletes from cursor to start of line (C-u in insert mode)
+func (ed *Editor) DeleteToLineStart() {
+	line := ed.buf().Lines[ed.win().Cursor]
+	ed.buf().Lines[ed.win().Cursor] = line[ed.win().Col:]
+	ed.win().Col = 0
+}
+
+// DeleteToLineEnd deletes from cursor to end of line (C-k in insert mode)
+func (ed *Editor) DeleteToLineEnd() {
+	line := ed.buf().Lines[ed.win().Cursor]
+	ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col]
+}
+
+// IndentLine adds a tab at the start of the current line (C-t in insert mode)
+func (ed *Editor) IndentLine() {
+	ed.buf().Lines[ed.win().Cursor] = "\t" + ed.buf().Lines[ed.win().Cursor]
+	ed.win().Col++
+}
+
+// UnindentLine removes leading whitespace from the current line (C-d in insert mode)
+func (ed *Editor) UnindentLine() {
+	line := ed.buf().Lines[ed.win().Cursor]
+	if len(line) > 0 && (line[0] == '\t' || line[0] == ' ') {
+		ed.buf().Lines[ed.win().Cursor] = line[1:]
+		if ed.win().Col > 0 {
+			ed.win().Col--
+		}
+	}
+}
+
+// =============================================================================
+// Mode Entry Actions
+// =============================================================================
+
+// EnterInsert enters insert mode at cursor position (i)
+func (ed *Editor) EnterInsert() {
+	ed.enterInsertMode(ed.app)
+}
+
+// Append enters insert mode after cursor (a)
+func (ed *Editor) Append() {
+	if len(ed.buf().Lines[ed.win().Cursor]) > 0 {
+		ed.win().Col++
+	}
+	ed.enterInsertMode(ed.app)
+}
+
+// AppendLine enters insert mode at end of line (A)
+func (ed *Editor) AppendLine() {
+	ed.win().Col = len(ed.buf().Lines[ed.win().Cursor])
+	ed.enterInsertMode(ed.app)
+}
+
+// InsertLine enters insert mode at start of line (I)
+func (ed *Editor) InsertLine() {
+	ed.win().Col = 0
+	ed.enterInsertMode(ed.app)
+}
+
+// OpenBelow opens a new line below and enters insert mode (o)
+func (ed *Editor) OpenBelow() {
+	ed.win().Cursor++
+	newLines := make([]string, len(ed.buf().Lines)+1)
+	copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+	newLines[ed.win().Cursor] = ""
+	copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+	ed.buf().Lines = newLines
+	ed.win().Col = 0
+	ed.updateDisplay()
+	ed.enterInsertMode(ed.app)
+}
+
+// OpenAbove opens a new line above and enters insert mode (O)
+func (ed *Editor) OpenAbove() {
+	newLines := make([]string, len(ed.buf().Lines)+1)
+	copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+	newLines[ed.win().Cursor] = ""
+	copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+	ed.buf().Lines = newLines
+	ed.win().Col = 0
+	ed.updateDisplay()
+	ed.enterInsertMode(ed.app)
+}
+
+// EnterVisual enters character-wise visual mode (v)
+func (ed *Editor) EnterVisual() {
+	ed.enterVisualMode(ed.app, false)
+}
+
+// EnterVisualLine enters line-wise visual mode (V)
+func (ed *Editor) EnterVisualLine() {
+	ed.enterVisualMode(ed.app, true)
+}
+
+// =============================================================================
+// Paste Actions
+// =============================================================================
+
+// Paste pastes after cursor (p)
+func (ed *Editor) Paste() {
+	if yankRegister != "" {
+		line := ed.buf().Lines[ed.win().Cursor]
+		pos := min(ed.win().Col+1, len(line))
+		ed.buf().Lines[ed.win().Cursor] = line[:pos] + yankRegister + line[pos:]
+		ed.win().Col = pos + len(yankRegister) - 1
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// PasteBefore pastes before cursor (P)
+func (ed *Editor) PasteBefore() {
+	if yankRegister != "" {
+		line := ed.buf().Lines[ed.win().Cursor]
+		ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// =============================================================================
+// Screen Position Actions
+// =============================================================================
+
+// ScreenTop moves cursor to top of screen (H)
+func (ed *Editor) ScreenTop(offset int) {
+	targetLine := ed.win().topLine + offset - 1
+	targetLine = max(ed.win().topLine, min(targetLine, ed.win().topLine+ed.win().viewportHeight-1))
+	targetLine = min(targetLine, len(ed.buf().Lines)-1)
+	ed.win().Cursor = targetLine
+	ed.FirstNonBlank()
+}
+
+// ScreenMiddle moves cursor to middle of screen (M)
+func (ed *Editor) ScreenMiddle() {
+	targetLine := ed.win().topLine + ed.win().viewportHeight/2
+	targetLine = min(targetLine, len(ed.buf().Lines)-1)
+	ed.win().Cursor = targetLine
+	ed.FirstNonBlank()
+}
+
+// ScreenBottom moves cursor to bottom of screen (L)
+func (ed *Editor) ScreenBottom(offset int) {
+	targetLine := ed.win().topLine + ed.win().viewportHeight - offset
+	targetLine = max(ed.win().topLine, min(targetLine, ed.win().topLine+ed.win().viewportHeight-1))
+	targetLine = min(targetLine, len(ed.buf().Lines)-1)
+	ed.win().Cursor = targetLine
+	ed.FirstNonBlank()
+}
+
+// ScrollRight scrolls viewport right by n columns (zl)
+func (ed *Editor) ScrollRight(n int) {
+	ed.scrollRight(n)
+}
+
+// ScrollLeft scrolls viewport left by n columns (zh)
+func (ed *Editor) ScrollLeft(n int) {
+	ed.scrollLeft(n)
+}
+
+// CursorToScreenStart scrolls to put cursor at left edge (zs)
+func (ed *Editor) CursorToScreenStart() {
+	ed.win().leftCol = ed.win().Col
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// CursorToScreenEnd scrolls to put cursor at right edge (ze)
+func (ed *Editor) CursorToScreenEnd() {
+	ed.win().leftCol = max(0, ed.win().Col-ed.win().viewportWidth+ed.win().lineNumWidth+1)
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// NextScreenLine moves to first line below window at top (z+)
+func (ed *Editor) NextScreenLine() {
+	newLine := ed.win().topLine + ed.win().viewportHeight
+	if newLine < len(ed.buf().Lines) {
+		ed.win().Cursor = newLine
+		ed.CursorToTop()
+		ed.FirstNonBlank()
+	}
+}
+
+// PrevScreenLine moves to last line above window at bottom (z^)
+func (ed *Editor) PrevScreenLine() {
+	newLine := ed.win().topLine - 1
+	if newLine >= 0 {
+		ed.win().Cursor = newLine
+		ed.CursorToBottom()
+		ed.FirstNonBlank()
+	}
+}
+
+// ToggleDebug toggles debug mode (C-g)
+func (ed *Editor) ToggleDebug() {
+	ed.win().debugMode = !ed.win().debugMode
+	if ed.win().debugMode {
+		ed.StatusLine = "Debug mode ON - showing render stats"
+	} else {
+		ed.StatusLine = "Debug mode OFF"
+	}
+	ed.updateDisplay()
+}
+
+// =============================================================================
+// Mark Actions
+// =============================================================================
+
+// SetMark sets a mark at the current position (m{a-z})
+func (ed *Editor) SetMark(reg rune) {
+	ed.buf().marks[reg] = Pos{
+		Line: ed.win().Cursor,
+		Col:  ed.win().Col,
+	}
+	ed.StatusLine = fmt.Sprintf("Mark '%c' set", reg)
+	ed.updateDisplay()
+}
+
+// GotoMark jumps to exact mark position (`{a-z})
+func (ed *Editor) GotoMark(reg rune) {
+	if mark, ok := ed.buf().marks[reg]; ok {
+		ed.addJump()
+		ed.win().Cursor = min(mark.Line, len(ed.buf().Lines)-1)
+		line := ed.buf().Lines[ed.win().Cursor]
+		ed.win().Col = min(mark.Col, max(0, len(line)-1))
+		ed.ensureCursorVisible()
+		ed.StatusLine = fmt.Sprintf("Mark `%c'", reg)
+	} else {
+		ed.StatusLine = fmt.Sprintf("E20: Mark not set: %c", reg)
+	}
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// GotoMarkLine jumps to mark line, first non-blank ('{a-z})
+func (ed *Editor) GotoMarkLine(reg rune) {
+	if mark, ok := ed.buf().marks[reg]; ok {
+		ed.addJump()
+		ed.win().Cursor = min(mark.Line, len(ed.buf().Lines)-1)
+		line := ed.buf().Lines[ed.win().Cursor]
+		col := 0
+		for col < len(line) && (line[col] == ' ' || line[col] == '\t') {
+			col++
+		}
+		ed.win().Col = min(col, max(0, len(line)-1))
+		ed.ensureCursorVisible()
+		ed.StatusLine = fmt.Sprintf("Mark '%c'", reg)
+	} else {
+		ed.StatusLine = fmt.Sprintf("E20: Mark not set: %c", reg)
+	}
+	ed.updateDisplay()
+	ed.updateCursor()
+}
+
+// =============================================================================
+// Other Actions
+// =============================================================================
+
+// ReplaceChar replaces the character under cursor (r{char})
+func (ed *Editor) ReplaceChar(ch rune) {
+	ed.saveUndo()
+	line := ed.buf().Lines[ed.win().Cursor]
+	if ed.win().Col < len(line) {
+		ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(ch) + line[ed.win().Col+1:]
+		ed.updateDisplay()
+	}
+}
+
+// RepeatLast repeats the last change (.) - simplified version
+func (ed *Editor) RepeatLast() {
+	if yankRegister != "" {
+		ed.saveUndo()
+		line := ed.buf().Lines[ed.win().Cursor]
+		ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
+		ed.win().Col += len(yankRegister)
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// EnterCommand enters command line mode (:, /, ?)
+func (ed *Editor) EnterCommand(prompt string) {
+	ed.enterCommandMode(ed.app, prompt)
+}
+
+// =============================================================================
+// Macro Actions
+// =============================================================================
+
+// StopMacroRecording stops recording and saves the macro to the register
+func (ed *Editor) StopMacroRecording(app *tui.App) {
+	macro := app.Input().StopRecording()
+	ed.macros[ed.recordingMacro] = macro
+	ed.StatusLine = fmt.Sprintf("Recorded @%c (%d keys)", ed.recordingMacro, len(macro))
+	ed.recordingMacro = 0
+	ed.updateDisplay()
+}
+
+// StartMacroRecording begins recording keystrokes to the given register
+func (ed *Editor) StartMacroRecording(app *tui.App, reg rune) {
+	ed.recordingMacro = reg
+	app.Input().StartRecording()
+	ed.StatusLine = fmt.Sprintf("Recording @%c...", reg)
+	ed.updateDisplay()
+}
+
+// PlayMacro executes the macro stored in the given register
+func (ed *Editor) PlayMacro(app *tui.App, reg rune) {
+	if macro, ok := ed.macros[reg]; ok && len(macro) > 0 {
+		ed.lastMacro = reg
+		app.Input().ExecuteMacro(macro)
+		ed.StatusLine = fmt.Sprintf("Played @%c", reg)
+	} else {
+		ed.StatusLine = fmt.Sprintf("E35: No recorded macro in register %c", reg)
+	}
+	ed.updateDisplay()
+}
+
+// =============================================================================
+// Prompt Helpers - push a router to wait for a character input
+// =============================================================================
+
+// promptForRegister pushes a router that waits for a register (a-z) and calls the action
+func (ed *Editor) promptForRegister(app *tui.App, action func(rune)) {
+	router := riffkey.NewRouter()
+	router.HandleUnmatched(func(k riffkey.Key) bool {
+		app.Pop()
+		if k.Rune >= 'a' && k.Rune <= 'z' {
+			action(k.Rune)
+		}
+		return true
+	})
+	router.Handle("<Esc>", func(_ riffkey.Match) { app.Pop() })
+	app.Push(router)
+}
+
+// promptForChar pushes a router that waits for any printable character and calls the action
+func (ed *Editor) promptForChar(app *tui.App, action func(rune)) {
+	router := riffkey.NewRouter().Name("char-prompt")
+	router.HandleUnmatched(func(k riffkey.Key) bool {
+		if k.Rune != 0 && k.Mod == riffkey.ModNone {
+			action(k.Rune)
+		}
+		app.Pop()
+		return true
+	})
+	router.Handle("<Esc>", func(_ riffkey.Match) { app.Pop() })
+	app.Push(router)
+}
+
+// =============================================================================
+// Window Actions
+// =============================================================================
+
+// FocusNextWindow focuses the next window (C-w w)
+func (ed *Editor) FocusNextWindow() {
+	ed.focusNextWindow()
+}
+
+// FocusPrevWindow focuses the previous window (C-w W)
+func (ed *Editor) FocusPrevWindow() {
+	ed.focusPrevWindow()
+}
+
+// SplitHoriz splits the window horizontally (C-w s)
+func (ed *Editor) SplitHoriz() {
+	ed.splitHorizontal()
+}
+
+// SplitVert splits the window vertically (C-w v)
+func (ed *Editor) SplitVert() {
+	ed.splitVertical()
+}
+
+// CloseWindow closes the current window (C-w c)
+func (ed *Editor) CloseWindow() {
+	ed.closeWindow()
+}
+
+// OnlyWindow closes all other windows (C-w o)
+func (ed *Editor) OnlyWindow() {
+	ed.closeOtherWindows()
+}
+
+// FocusDown moves to the window below (C-w j)
+func (ed *Editor) FocusDown() {
+	ed.focusDirection(SplitHorizontal, 1)
+}
+
+// FocusUp moves to the window above (C-w k)
+func (ed *Editor) FocusUp() {
+	ed.focusDirection(SplitHorizontal, -1)
+}
+
+// FocusLeft moves to the window left (C-w h)
+func (ed *Editor) FocusLeft() {
+	ed.focusDirection(SplitVertical, -1)
+}
+
+// FocusRight moves to the window right (C-w l)
+func (ed *Editor) FocusRight() {
+	ed.focusDirection(SplitVertical, 1)
+}
+
+// =============================================================================
+// Motion Ranges - return (startLine, startCol, endLine, endCol) for operators
+// =============================================================================
+
+// MotionDown returns range from current line to n lines below (for dj, cj, yj)
+func (ed *Editor) MotionDown(count int) Range {
+	endLine := min(ed.win().Cursor+count, len(ed.buf().Lines)-1)
+	return Range{
+		Start: Pos{Line: ed.win().Cursor, Col: 0},
+		End:   Pos{Line: endLine, Col: len(ed.buf().Lines[endLine])},
+	}
+}
+
+// MotionUp returns range from n lines above to current line (for dk, ck, yk)
+func (ed *Editor) MotionUp(count int) Range {
+	startLine := max(ed.win().Cursor-count, 0)
+	return Range{
+		Start: Pos{Line: startLine, Col: 0},
+		End:   Pos{Line: ed.win().Cursor, Col: len(ed.buf().Lines[ed.win().Cursor])},
+	}
+}
+
+// MotionToStart returns range from buffer start to current line (for dgg, cgg, ygg)
+func (ed *Editor) MotionToStart() Range {
+	return Range{
+		Start: Pos{Line: 0, Col: 0},
+		End:   Pos{Line: ed.win().Cursor, Col: len(ed.buf().Lines[ed.win().Cursor])},
+	}
+}
+
+// MotionToEnd returns range from current line to buffer end (for dG, cG, yG)
+func (ed *Editor) MotionToEnd() Range {
+	endLine := len(ed.buf().Lines) - 1
+	return Range{
+		Start: Pos{Line: ed.win().Cursor, Col: 0},
+		End:   Pos{Line: endLine, Col: len(ed.buf().Lines[endLine])},
+	}
+}
+
+// MotionWordForward returns range from cursor to n words forward (for dw, cw, yw)
+func (ed *Editor) MotionWordForward(count int) Range {
+	startLine, startCol := ed.win().Cursor, ed.win().Col
+	for range count {
+		ed.wordForward()
+	}
+	endLine, endCol := ed.win().Cursor, ed.win().Col
+	ed.win().Cursor, ed.win().Col = startLine, startCol
+	return Range{
+		Start: Pos{Line: startLine, Col: startCol},
+		End:   Pos{Line: endLine, Col: endCol},
+	}
+}
+
+// MotionWordBackward returns range from n words back to cursor (for db, cb, yb)
+func (ed *Editor) MotionWordBackward(count int) Range {
+	endLine, endCol := ed.win().Cursor, ed.win().Col
+	for range count {
+		ed.wordBackward()
+	}
+	startLine, startCol := ed.win().Cursor, ed.win().Col
+	ed.win().Cursor, ed.win().Col = endLine, endCol
+	return Range{
+		Start: Pos{Line: startLine, Col: startCol},
+		End:   Pos{Line: endLine, Col: endCol},
+	}
+}
+
+// MotionWordEnd returns range from cursor to end of nth word (for de, ce, ye)
+func (ed *Editor) MotionWordEnd(count int) Range {
+	startLine, startCol := ed.win().Cursor, ed.win().Col
+	for range count {
+		ed.wordEnd()
+	}
+	endLine, endCol := ed.win().Cursor, ed.win().Col+1
+	ed.win().Cursor, ed.win().Col = startLine, startCol
+	return Range{
+		Start: Pos{Line: startLine, Col: startCol},
+		End:   Pos{Line: endLine, Col: endCol},
+	}
+}
+
+// MotionToLineEnd returns range from cursor to end of line (for d$, c$, y$)
+func (ed *Editor) MotionToLineEnd() Range {
+	return Range{
+		Start: Pos{Line: ed.win().Cursor, Col: ed.win().Col},
+		End:   Pos{Line: ed.win().Cursor, Col: len(ed.buf().Lines[ed.win().Cursor])},
+	}
+}
+
+// MotionToLineStart returns range from start of line to cursor (for d0, c0, y0)
+func (ed *Editor) MotionToLineStart() Range {
+	return Range{
+		Start: Pos{Line: ed.win().Cursor, Col: 0},
+		End:   Pos{Line: ed.win().Cursor, Col: ed.win().Col},
+	}
+}
+
+// =============================================================================
+// Line Operations - whole line actions
+// =============================================================================
+
+// ChangeLine clears the current line and enters insert mode (cc, S)
+func (ed *Editor) ChangeLine(app *tui.App) {
+	ed.saveUndo()
+	ed.buf().Lines[ed.win().Cursor] = ""
+	ed.win().Col = 0
+	ed.updateDisplay()
+	ed.enterInsertMode(app)
+}
+
+// YankLine yanks the current line (yy, Y)
+func (ed *Editor) YankLine() {
+	yankRegister = ed.buf().Lines[ed.win().Cursor]
+	ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
+	ed.updateDisplay()
+}
+
+// =============================================================================
+// Visual Mode Actions
+// =============================================================================
+
+// VisualRange returns normalized selection bounds (start always <= end)
+func (ed *Editor) VisualRange() Range {
+	startLine := min(ed.win().visualStart, ed.win().Cursor)
+	endLine := max(ed.win().visualStart, ed.win().Cursor)
+
+	var startCol, endCol int
+	if ed.win().visualStart < ed.win().Cursor ||
+		(ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
+		startCol = ed.win().visualStartCol
+		endCol = ed.win().Col + 1
+	} else {
+		startCol = ed.win().Col
+		endCol = ed.win().visualStartCol + 1
+	}
+	return Range{
+		Start: Pos{Line: startLine, Col: startCol},
+		End:   Pos{Line: endLine, Col: endCol},
+	}
+}
+
+// SwapVisualEnds swaps cursor to other end of selection (o, O)
+func (ed *Editor) SwapVisualEnds() {
+	ed.win().Cursor, ed.win().visualStart = ed.win().visualStart, ed.win().Cursor
+	ed.win().Col, ed.win().visualStartCol = ed.win().visualStartCol, ed.win().Col
+	ed.refresh()
+}
+
+// VisualDelete deletes the visual selection (d)
+func (ed *Editor) VisualDelete(app *tui.App) {
+	ed.saveUndo()
+	r := ed.VisualRange()
+	if ed.win().visualLineMode {
+		if r.End.Line-r.Start.Line+1 >= len(ed.buf().Lines) {
+			ed.buf().Lines = []string{""}
+			ed.win().Cursor = 0
+		} else {
+			ed.buf().Lines = append(ed.buf().Lines[:r.Start.Line], ed.buf().Lines[r.End.Line+1:]...)
+			ed.win().Cursor = min(r.Start.Line, len(ed.buf().Lines)-1)
+		}
+		ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
+	} else {
+		yankRegister = ed.extractRange(r)
+		ed.deleteRange(r)
+	}
+	ed.exitVisualMode(app)
+}
+
+// VisualChange deletes selection and enters insert mode (c)
+func (ed *Editor) VisualChange(app *tui.App) {
+	ed.saveUndo()
+	r := ed.VisualRange()
+	if ed.win().visualLineMode {
+		fullLineRange := Range{
+			Start: Pos{Line: r.Start.Line, Col: 0},
+			End:   Pos{Line: r.End.Line, Col: len(ed.buf().Lines[r.End.Line])},
+		}
+		yankRegister = ed.extractRange(fullLineRange)
+		if r.End.Line-r.Start.Line+1 >= len(ed.buf().Lines) {
+			ed.buf().Lines = []string{""}
+			ed.win().Cursor = 0
+		} else {
+			ed.buf().Lines = append(ed.buf().Lines[:r.Start.Line], ed.buf().Lines[r.End.Line+1:]...)
+			ed.win().Cursor = min(r.Start.Line, len(ed.buf().Lines)-1)
+		}
+		// Insert a blank line to type on
+		newLines := make([]string, len(ed.buf().Lines)+1)
+		copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
+		newLines[ed.win().Cursor] = ""
+		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
+		ed.buf().Lines = newLines
+		ed.win().Col = 0
+	} else {
+		yankRegister = ed.extractRange(r)
+		ed.deleteRange(r)
+	}
+	ed.Mode = "NORMAL"
+	app.Pop()
+	ed.updateDisplay()
+	ed.enterInsertMode(app)
+}
+
+// VisualYank yanks the visual selection (y)
+func (ed *Editor) VisualYank(app *tui.App) {
+	r := ed.VisualRange()
+	if ed.win().visualLineMode {
+		var yanked string
+		for i := r.Start.Line; i <= r.End.Line; i++ {
+			yanked += ed.buf().Lines[i]
+			if i < r.End.Line {
+				yanked += "\n"
+			}
+		}
+		yankRegister = yanked
+		ed.StatusLine = fmt.Sprintf("Yanked %d lines", r.End.Line-r.Start.Line+1)
+	} else {
+		yankRegister = ed.extractRange(r)
+		ed.StatusLine = fmt.Sprintf("Yanked %d chars", len(yankRegister))
+	}
+	ed.exitVisualMode(app)
+}
+
+// VisualExpandToTextObject expands selection to cover a text object
+func (ed *Editor) VisualExpandToTextObject(r Range) {
+	if r.Start.Line >= 0 {
+		ed.win().visualStart = r.Start.Line
+		ed.win().visualStartCol = r.Start.Col
+		ed.win().Cursor = r.End.Line
+		ed.win().Col = max(0, r.End.Col-1)
+		ed.win().visualLineMode = false
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// VisualExpandToWordObject expands selection to cover a word text object
+func (ed *Editor) VisualExpandToWordObject(start, end int) {
+	if start < end {
+		ed.win().visualStart = ed.win().Cursor
+		ed.win().visualStartCol = start
+		ed.win().Col = end - 1
+		ed.win().visualLineMode = false
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+}
+
+// =============================================================================
+// Command Dispatcher - reflects on Editor methods to execute commands
+// =============================================================================
+
+// ExecCommand executes a command by name with string arguments.
+// Uses reflection to find matching Editor method and convert args.
+func (ed *Editor) ExecCommand(name string, args []string) error {
+	// Find method by case-insensitive match
+	method, methodName := ed.findMethod(name)
+	if !method.IsValid() {
+		return fmt.Errorf("unknown command: %s", name)
+	}
+	_ = methodName // for future logging/help
+
+	methodType := method.Type()
+	numIn := methodType.NumIn()
+
+	if len(args) < numIn {
+		return fmt.Errorf("%s requires %d argument(s)", name, numIn)
+	}
+
+	// Convert string args to method parameter types
+	in := make([]reflect.Value, numIn)
+	for i := 0; i < numIn; i++ {
+		paramType := methodType.In(i)
+		converted, err := convertArg(args[i], paramType)
+		if err != nil {
+			return fmt.Errorf("argument %d: %v", i+1, err)
+		}
+		in[i] = converted
+	}
+
+	method.Call(in)
+	return nil
+}
+
+// findMethod finds an Editor method by case-insensitive name match
+func (ed *Editor) findMethod(name string) (reflect.Value, string) {
+	nameLower := strings.ToLower(name)
+	editorType := reflect.TypeOf(ed)
+	editorVal := reflect.ValueOf(ed)
+
+	for i := 0; i < editorType.NumMethod(); i++ {
+		method := editorType.Method(i)
+		if strings.ToLower(method.Name) == nameLower {
+			return editorVal.Method(i), method.Name
+		}
+	}
+	return reflect.Value{}, ""
+}
+
+// convertArg converts a string argument to the target type
+func convertArg(s string, t reflect.Type) (reflect.Value, error) {
+	switch t.Kind() {
+	case reflect.Int:
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("expected integer, got %q", s)
+		}
+		return reflect.ValueOf(n), nil
+	case reflect.Int32: // rune
+		if len(s) == 0 {
+			return reflect.Value{}, fmt.Errorf("expected character, got empty string")
+		}
+		return reflect.ValueOf(rune(s[0])), nil
+	case reflect.String:
+		return reflect.ValueOf(s), nil
+	case reflect.Bool:
+		return reflect.ValueOf(s == "true" || s == "1" || s == "yes"), nil
+	default:
+		return reflect.Value{}, fmt.Errorf("unsupported parameter type: %v", t)
+	}
+}
+
+// =============================================================================
+// Command Completion (Wildmenu)
+// =============================================================================
+
+// harvestCommands builds the list of available commands from Editor methods.
+// Called once at startup.
+func (ed *Editor) harvestCommands() {
+	editorType := reflect.TypeOf(ed)
+	var commands []string
+
+	for i := 0; i < editorType.NumMethod(); i++ {
+		method := editorType.Method(i)
+		// Skip internal methods (those with unexported-style names or special prefixes)
+		name := method.Name
+		if len(name) == 0 {
+			continue
+		}
+		// Include methods that look like commands (start with uppercase, no weird prefixes)
+		// Exclude obvious internal methods
+		switch name {
+		case "Cursor", "SetCursor", "SetCursorQuiet":
+			continue // internal cursor management
+		}
+		commands = append(commands, strings.ToLower(name))
+	}
+	sort.Strings(commands)
+	ed.cmdCompletions = commands
+}
+
+// updateCompletions filters completions based on current input.
+func (ed *Editor) updateCompletions() {
+	prefix := strings.ToLower(ed.cmdLineInput)
+	if prefix == "" {
+		ed.cmdMatches = nil
+		ed.cmdCompletionActive = false
+		ed.cmdWildmenuSpans = nil
+		return
+	}
+
+	var matches []string
+	for _, cmd := range ed.cmdCompletions {
+		if strings.HasPrefix(cmd, prefix) {
+			matches = append(matches, cmd)
+		}
+	}
+	ed.cmdMatches = matches
+	ed.cmdMatchSelected = 0
+	ed.cmdCompletionActive = len(matches) > 0
+	ed.buildWildmenuSpans()
+}
+
+// completeNext cycles to next completion match.
+func (ed *Editor) completeNext() {
+	if len(ed.cmdMatches) == 0 {
+		return
+	}
+	// If current input doesn't match selection, apply first (don't advance)
+	if ed.cmdLineInput != ed.cmdMatches[ed.cmdMatchSelected] {
+		ed.applyCmdCompletion()
+		return
+	}
+	// Already showing a completion, cycle to next
+	ed.cmdMatchSelected = (ed.cmdMatchSelected + 1) % len(ed.cmdMatches)
+	ed.applyCmdCompletion()
+}
+
+// completePrev cycles to previous completion match.
+func (ed *Editor) completePrev() {
+	if len(ed.cmdMatches) == 0 {
+		return
+	}
+	// If current input doesn't match selection, apply first (don't advance)
+	if ed.cmdLineInput != ed.cmdMatches[ed.cmdMatchSelected] {
+		ed.applyCmdCompletion()
+		return
+	}
+	// Already showing a completion, cycle to previous
+	ed.cmdMatchSelected = (ed.cmdMatchSelected - 1 + len(ed.cmdMatches)) % len(ed.cmdMatches)
+	ed.applyCmdCompletion()
+}
+
+// applyCmdCompletion applies the selected completion to the command line.
+func (ed *Editor) applyCmdCompletion() {
+	if ed.cmdMatchSelected < len(ed.cmdMatches) {
+		ed.cmdLineInput = ed.cmdMatches[ed.cmdMatchSelected]
+		ed.StatusLine = ed.cmdLinePrompt + ed.cmdLineInput
+		ed.updateCmdLineCursor()
+		ed.buildWildmenuSpans()
+	}
+}
+
+// buildWildmenuSpans builds the visual representation of the wildmenu.
+// Shows matches horizontally with the selected one highlighted.
+func (ed *Editor) buildWildmenuSpans() {
+	if !ed.cmdCompletionActive || len(ed.cmdMatches) == 0 {
+		ed.cmdWildmenuSpans = nil
+		return
+	}
+
+	// Style for normal and selected items
+	normalStyle := tui.Style{}
+	selectedStyle := tui.Style{Attr: tui.AttrInverse}
+
+	// Build spans
+	var spans []tui.Span
+	for i, match := range ed.cmdMatches {
+		if i > 0 {
+			spans = append(spans, tui.Span{Text: " "})
+		}
+		style := normalStyle
+		if i == ed.cmdMatchSelected {
+			style = selectedStyle
+		}
+		spans = append(spans, tui.Span{Text: match, Style: style})
+	}
+	ed.cmdWildmenuSpans = spans
+}
+
 // EditorState captures state for undo/redo
 type EditorState struct {
 	Lines  []string
@@ -187,8 +1407,9 @@ type EditorState struct {
 	Col    int
 }
 
-
 func main() {
+	initTextObjectDefs()
+
 	// Load own source file for demo
 	fileName := "cmd/minivim/main.go"
 	lines := loadFile(fileName)
@@ -201,6 +1422,7 @@ func main() {
 	buf := &Buffer{
 		Lines:    lines,
 		FileName: fileName,
+		marks:    make(map[rune]Pos),
 	}
 	win := &Window{
 		buffer:      buf,
@@ -224,6 +1446,7 @@ func main() {
 		log.Fatal(err)
 	}
 	ed.app = app
+	ed.harvestCommands() // Build command list for completion
 
 	// Initialize viewport and layer
 	size := app.Size()
@@ -238,128 +1461,30 @@ func main() {
 	app.ShowCursor(tui.CursorBlock)
 	ed.updateCursor()
 
-	// Normal mode handlers
-	app.Handle("j", func(m riffkey.Match) { ed.moveDown(m.Count) })
-	app.Handle("k", func(m riffkey.Match) { ed.moveUp(m.Count) })
-	app.Handle("h", func(m riffkey.Match) { ed.moveLeft(m.Count) })
-	app.Handle("l", func(m riffkey.Match) { ed.moveRight(m.Count) })
-	app.Handle("gg", func(_ riffkey.Match) { ed.moveTo(0, ed.win().Col) })
-	app.Handle("G", func(_ riffkey.Match) { ed.moveTo(len(ed.buf().Lines)-1, ed.win().Col) })
-	app.Handle("0", func(_ riffkey.Match) { ed.moveToCol(0) })
-	app.Handle("$", func(_ riffkey.Match) { ed.moveToCol(len(ed.buf().Lines[ed.win().Cursor])) })
-	app.Handle("^", func(_ riffkey.Match) { ed.moveToFirstNonBlank() })
-	app.Handle("_", func(_ riffkey.Match) { ed.moveToFirstNonBlank() }) // _ is like ^ but accepts count (simplified here)
+	// Normal mode handlers - movement actions
+	app.Handle("j", func(m riffkey.Match) { ed.Down(m.Count) })
+	app.Handle("k", func(m riffkey.Match) { ed.Up(m.Count) })
+	app.Handle("h", func(m riffkey.Match) { ed.Left(m.Count) })
+	app.Handle("l", func(m riffkey.Match) { ed.Right(m.Count) })
+	app.Handle("gg", func(_ riffkey.Match) { ed.BufferStart() })
+	app.Handle("G", func(_ riffkey.Match) { ed.BufferEnd() })
+	app.Handle("0", func(_ riffkey.Match) { ed.LineStart() })
+	app.Handle("$", func(_ riffkey.Match) { ed.LineEnd() })
+	app.Handle("^", func(_ riffkey.Match) { ed.FirstNonBlank() })
+	app.Handle("_", func(_ riffkey.Match) { ed.FirstNonBlank() })
+	app.Handle("w", func(m riffkey.Match) { ed.NextWordStart(m.Count) })
+	app.Handle("b", func(m riffkey.Match) { ed.PrevWordStart(m.Count) })
+	app.Handle("e", func(m riffkey.Match) { ed.NextWordEnd(m.Count) })
 
-	app.Handle("w", func(m riffkey.Match) {
-		oldLine := ed.win().Cursor
-		for range m.Count {
-			ed.wordForward()
-		}
-		ed.ensureCursorVisible()
-		ed.updateCursorHighlight(oldLine)
-		ed.updateCursor()
-	})
+	app.Handle("i", func(_ riffkey.Match) { ed.EnterInsert() })
+	app.Handle("a", func(_ riffkey.Match) { ed.Append() })
+	app.Handle("A", func(_ riffkey.Match) { ed.AppendLine() })
+	app.Handle("I", func(_ riffkey.Match) { ed.InsertLine() })
+	app.Handle("o", func(_ riffkey.Match) { ed.OpenBelow() })
+	app.Handle("O", func(_ riffkey.Match) { ed.OpenAbove() })
 
-	app.Handle("b", func(m riffkey.Match) {
-		oldLine := ed.win().Cursor
-		for range m.Count {
-			ed.wordBackward()
-		}
-		ed.ensureCursorVisible()
-		ed.updateCursorHighlight(oldLine)
-		ed.updateCursor()
-	})
-
-	app.Handle("e", func(m riffkey.Match) {
-		oldLine := ed.win().Cursor
-		for range m.Count {
-			ed.wordEnd()
-		}
-		ed.ensureCursorVisible()
-		ed.updateCursorHighlight(oldLine)
-		ed.updateCursor()
-	})
-
-	app.Handle("i", func(_ riffkey.Match) {
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("a", func(_ riffkey.Match) {
-		// Append after cursor
-		if len(ed.buf().Lines[ed.win().Cursor]) > 0 {
-			ed.win().Col++
-		}
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("A", func(_ riffkey.Match) {
-		ed.win().Col = len(ed.buf().Lines[ed.win().Cursor])
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("I", func(_ riffkey.Match) {
-		ed.win().Col = 0
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("o", func(_ riffkey.Match) {
-		// Insert new line below
-		ed.win().Cursor++
-		newLines := make([]string, len(ed.buf().Lines)+1)
-		copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
-		newLines[ed.win().Cursor] = ""
-		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
-		ed.buf().Lines = newLines
-		ed.win().Col = 0
-		ed.updateDisplay()
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("O", func(_ riffkey.Match) {
-		// Insert new line above
-		newLines := make([]string, len(ed.buf().Lines)+1)
-		copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
-		newLines[ed.win().Cursor] = ""
-		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
-		ed.buf().Lines = newLines
-		ed.win().Col = 0
-		ed.updateDisplay()
-		ed.enterInsertMode(app)
-	})
-
-	app.Handle("dd", func(m riffkey.Match) {
-		ed.saveUndo()
-		for i := 0; i < m.Count; i++ {
-			if len(ed.buf().Lines) > 1 {
-				ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor], ed.buf().Lines[ed.win().Cursor+1:]...)
-				if ed.win().Cursor >= len(ed.buf().Lines) {
-					ed.win().Cursor = len(ed.buf().Lines) - 1
-				}
-			} else {
-				ed.buf().Lines[0] = ""
-				break
-			}
-		}
-		ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
-
-	app.Handle("x", func(m riffkey.Match) {
-		ed.saveUndo()
-		// Delete character(s) under cursor
-		for i := 0; i < m.Count; i++ {
-			line := ed.buf().Lines[ed.win().Cursor]
-			if len(line) > 0 && ed.win().Col < len(line) {
-				ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + line[ed.win().Col+1:]
-			}
-		}
-		if ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) && ed.win().Col > 0 {
-			ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
-		}
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	app.Handle("dd", func(m riffkey.Match) { ed.DeleteLine(m.Count) })
+	app.Handle("x", func(m riffkey.Match) { ed.DeleteChar(m.Count) })
 
 	app.Handle("<Esc>", func(_ riffkey.Match) {
 		// Already in normal mode, do nothing
@@ -368,432 +1493,143 @@ func main() {
 	// Register operator + text object combinations (diw, ciw, yaw, etc.)
 	registerOperatorTextObjects(app, ed)
 
-
 	// Paste from yank register
-	app.Handle("p", func(_ riffkey.Match) {
-		if yankRegister != "" {
-			line := ed.buf().Lines[ed.win().Cursor]
-			pos := min(ed.win().Col+1, len(line))
-			ed.buf().Lines[ed.win().Cursor] = line[:pos] + yankRegister + line[pos:]
-			ed.win().Col = pos + len(yankRegister) - 1
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
-
-	app.Handle("P", func(_ riffkey.Match) {
-		if yankRegister != "" {
-			line := ed.buf().Lines[ed.win().Cursor]
-			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	app.Handle("p", func(_ riffkey.Match) { ed.Paste() })
+	app.Handle("P", func(_ riffkey.Match) { ed.PasteBefore() })
 
 	// Undo/Redo
-	app.Handle("u", func(_ riffkey.Match) {
-		ed.undo()
-	})
-
-	app.Handle("<C-r>", func(_ riffkey.Match) {
-		ed.redo()
-	})
+	app.Handle("u", func(_ riffkey.Match) { ed.Undo() })
+	app.Handle("<C-r>", func(_ riffkey.Match) { ed.Redo() })
 
 	// Scrolling
-	app.Handle("<C-d>", func(_ riffkey.Match) {
-		// Half page down
-		ed.ensureCursorVisible()
-		half := ed.win().viewportHeight / 2
-		ed.win().Cursor = min(ed.win().Cursor+half, len(ed.buf().Lines)-1)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	app.Handle("<C-d>", func(_ riffkey.Match) { ed.HalfPageDown() })
+	app.Handle("<C-u>", func(_ riffkey.Match) { ed.HalfPageUp() })
+	app.Handle("<C-f>", func(_ riffkey.Match) { ed.PageDown() })
+	app.Handle("<C-b>", func(_ riffkey.Match) { ed.PageUp() })
 
-	app.Handle("<C-u>", func(_ riffkey.Match) {
-		// Half page up
-		ed.ensureCursorVisible()
-		half := ed.win().viewportHeight / 2
-		ed.win().Cursor = max(ed.win().Cursor-half, 0)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	app.Handle("<C-e>", func(_ riffkey.Match) { ed.ScrollLineDown() })
+	app.Handle("<C-y>", func(_ riffkey.Match) { ed.ScrollLineUp() })
 
-	app.Handle("<C-e>", func(_ riffkey.Match) {
-		// Scroll down one line (keep cursor in place if possible)
-		ed.ensureCursorVisible()
-		if ed.win().topLine < len(ed.buf().Lines)-ed.win().viewportHeight {
-			ed.win().topLine++
-			if ed.win().Cursor < ed.win().topLine {
-				ed.win().Cursor = ed.win().topLine
-				ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-			}
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	app.Handle("<C-l>", func(_ riffkey.Match) { ed.ClearSearchHighlight() })
+	app.Handle("<C-a>", func(_ riffkey.Match) { ed.IncrementNumber() })
+	app.Handle("<C-x>", func(_ riffkey.Match) { ed.DecrementNumber() })
 
-	app.Handle("<C-y>", func(_ riffkey.Match) {
-		// Scroll up one line (keep cursor in place if possible)
-		if ed.win().topLine > 0 {
-			ed.win().topLine--
-			if ed.win().Cursor >= ed.win().topLine+ed.win().viewportHeight {
-				ed.win().Cursor = ed.win().topLine + ed.win().viewportHeight - 1
-				ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-			}
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	app.Handle("<C-o>", func(_ riffkey.Match) { ed.JumpBack() })
 
-	app.Handle("<C-f>", func(_ riffkey.Match) {
-		// Full page down
-		ed.win().Cursor = min(ed.win().Cursor+ed.win().viewportHeight, len(ed.buf().Lines)-1)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.ensureCursorVisible()
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
-
-	app.Handle("<C-b>", func(_ riffkey.Match) {
-		// Full page up
-		ed.win().Cursor = max(ed.win().Cursor-ed.win().viewportHeight, 0)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.ensureCursorVisible()
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
-
-	app.Handle("<C-l>", func(_ riffkey.Match) {
-		// Clear search highlighting and redraw (like :nohl)
-		ed.searchPattern = ""
-		ed.invalidateRenderedRange()
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
-
-	app.Handle("<C-a>", func(_ riffkey.Match) {
-		ed.modifyNumber(1)
-	})
-
-	app.Handle("<C-x>", func(_ riffkey.Match) {
-		ed.modifyNumber(-1)
-	})
-
-	app.Handle("<C-o>", func(_ riffkey.Match) {
-		// Jump back in jump list
-		ed.jumpBack()
-	})
-
-	app.Handle("<C-i>", func(_ riffkey.Match) {
-		// Jump forward in jump list
-		ed.jumpForward()
-	})
+	app.Handle("<C-i>", func(_ riffkey.Match) { ed.JumpForward() })
 
 	// f/F/t/T - find character on line
 	registerFindChar(app, ed)
 
 	// Visual mode
-	app.Handle("v", func(_ riffkey.Match) {
-		ed.enterVisualMode(app, false)
-	})
-
-	app.Handle("V", func(_ riffkey.Match) {
-		ed.enterVisualMode(app, true)
-	})
+	app.Handle("v", func(_ riffkey.Match) { ed.EnterVisual() })
+	app.Handle("V", func(_ riffkey.Match) { ed.EnterVisualLine() })
 
 	// Join lines (J)
-	app.Handle("J", func(_ riffkey.Match) {
-		ed.saveUndo()
-		if ed.win().Cursor < len(ed.buf().Lines)-1 {
-			// Join current line with next
-			ed.buf().Lines[ed.win().Cursor] += " " + ed.buf().Lines[ed.win().Cursor+1]
-			ed.buf().Lines = append(ed.buf().Lines[:ed.win().Cursor+1], ed.buf().Lines[ed.win().Cursor+2:]...)
-			ed.updateDisplay()
-		}
-	})
+	app.Handle("J", func(_ riffkey.Match) { ed.JoinLines() })
 
 	// Replace single char (r)
-	app.Handle("r", func(_ riffkey.Match) {
-		// Next key will replace char - push a one-shot router
-		replaceRouter := riffkey.NewRouter().Name("replace")
-		replaceRouter.HandleUnmatched(func(k riffkey.Key) bool {
-			if k.Rune != 0 && k.Mod == riffkey.ModNone {
-				ed.saveUndo()
-				line := ed.buf().Lines[ed.win().Cursor]
-				if ed.win().Col < len(line) {
-					ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(k.Rune) + line[ed.win().Col+1:]
-					ed.updateDisplay()
-				}
-			}
-			app.Pop()
-			return true
-		})
-		replaceRouter.Handle("<Esc>", func(_ riffkey.Match) {
-			app.Pop()
-		})
-		app.Push(replaceRouter)
-	})
+	app.Handle("r", func(_ riffkey.Match) { ed.promptForChar(app, ed.ReplaceChar) })
 
-	// Repeat last change (.) - simplified: just re-insert last deleted text
-	app.Handle(".", func(_ riffkey.Match) {
-		if yankRegister != "" {
-			ed.saveUndo()
-			line := ed.buf().Lines[ed.win().Cursor]
-			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + yankRegister + line[ed.win().Col:]
-			ed.win().Col += len(yankRegister)
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	// Repeat last change (.)
+	app.Handle(".", func(_ riffkey.Match) { ed.RepeatLast() })
 
 	// ~ toggle case
-	app.Handle("~", func(_ riffkey.Match) {
-		ed.saveUndo()
-		line := ed.buf().Lines[ed.win().Cursor]
-		if ed.win().Col < len(line) {
-			c := line[ed.win().Col]
-			if c >= 'a' && c <= 'z' {
-				c = c - 'a' + 'A'
-			} else if c >= 'A' && c <= 'Z' {
-				c = c - 'A' + 'a'
-			}
-			ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col] + string(c) + line[ed.win().Col+1:]
-			if ed.win().Col < len(line)-1 {
-				ed.win().Col++
-			}
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	app.Handle("~", func(_ riffkey.Match) { ed.ToggleCase() })
 
 	// Macro recording: q{a-z} to start, q to stop
 	app.Handle("q", func(_ riffkey.Match) {
 		if app.Input().IsRecording() {
-			// Stop recording and save to register
-			macro := app.Input().StopRecording()
-			ed.macros[ed.recordingMacro] = macro
-			ed.StatusLine = fmt.Sprintf("Recorded @%c (%d keys)", ed.recordingMacro, len(macro))
-			ed.recordingMacro = 0
-			ed.updateDisplay()
+			ed.StopMacroRecording(app)
 		} else {
-			// Start recording - wait for register
-			qRouter := riffkey.NewRouter()
-			qRouter.HandleUnmatched(func(k riffkey.Key) bool {
-				if k.Rune >= 'a' && k.Rune <= 'z' {
-					ed.recordingMacro = k.Rune
-					app.Input().StartRecording()
-					ed.StatusLine = fmt.Sprintf("Recording @%c...", k.Rune)
-					ed.updateDisplay()
-				}
-				app.Pop()
-				return true
+			ed.promptForRegister(app, func(reg rune) {
+				ed.StartMacroRecording(app, reg)
 			})
-			qRouter.Handle("<Esc>", func(_ riffkey.Match) {
-				app.Pop()
-			})
-			app.Push(qRouter)
 		}
 	})
 
-	// Macro playback: @{a-z}
+	// Macro playback: @{a-z} or @@ for last
 	app.Handle("@", func(_ riffkey.Match) {
-		atRouter := riffkey.NewRouter()
-		atRouter.HandleUnmatched(func(k riffkey.Key) bool {
-			app.Pop()
-			var reg rune
-			if k.Rune == '@' {
-				// @@ - repeat last macro
-				reg = ed.lastMacro
-			} else if k.Rune >= 'a' && k.Rune <= 'z' {
-				reg = k.Rune
-			}
-			if reg != 0 {
-				if macro, ok := ed.macros[reg]; ok && len(macro) > 0 {
-					ed.lastMacro = reg
-					app.Input().ExecuteMacro(macro)
-					ed.StatusLine = fmt.Sprintf("Played @%c", reg)
-				} else {
-					ed.StatusLine = fmt.Sprintf("E35: No recorded macro in register %c", reg)
-				}
-				ed.updateDisplay()
-			}
-			return true
+		ed.promptForRegister(app, func(reg rune) {
+			ed.PlayMacro(app, reg)
 		})
-		atRouter.Handle("<Esc>", func(_ riffkey.Match) {
-			app.Pop()
-		})
-		app.Push(atRouter)
 	})
+
+	// Repeat last : command
+	app.Handle("@:", func(_ riffkey.Match) {
+		if ed.lastColonCmd != "" {
+			ed.executeColonCommand(app, ed.lastColonCmd)
+		}
+	})
+
+	// @@ - repeat last macro (special case)
+	app.Handle("@@", func(_ riffkey.Match) {
+		if ed.lastMacro != 0 {
+			ed.PlayMacro(app, ed.lastMacro)
+		}
+	})
+
+	// Marks: m{a-z} to set mark
+	app.Handle("m", func(_ riffkey.Match) { ed.promptForRegister(app, ed.SetMark) })
+
+	// Marks: '{a-z} to jump to mark line (first non-blank)
+	app.Handle("'", func(_ riffkey.Match) { ed.promptForRegister(app, ed.GotoMarkLine) })
+
+	// Marks: `{a-z} to jump to exact mark position
+	app.Handle("`", func(_ riffkey.Match) { ed.promptForRegister(app, ed.GotoMark) })
 
 	// Command line mode handlers
-	app.Handle(":", func(_ riffkey.Match) {
-		ed.enterCommandMode(app, ":")
-	})
-
-	app.Handle("/", func(_ riffkey.Match) {
-		ed.enterCommandMode(app, "/")
-	})
-
-	app.Handle("?", func(_ riffkey.Match) {
-		ed.enterCommandMode(app, "?")
-	})
+	app.Handle(":", func(_ riffkey.Match) { ed.enterCommandMode(app, ":") })
+	app.Handle("/", func(_ riffkey.Match) { ed.enterCommandMode(app, "/") })
+	app.Handle("?", func(_ riffkey.Match) { ed.enterCommandMode(app, "?") })
 
 	// n/N for search repeat
-	app.Handle("n", func(_ riffkey.Match) {
-		ed.searchNext(1)
-	})
+	app.Handle("n", func(_ riffkey.Match) { ed.SearchNext() })
+	app.Handle("N", func(_ riffkey.Match) { ed.SearchPrev() })
 
-	app.Handle("N", func(_ riffkey.Match) {
-		ed.searchNext(-1)
-	})
-
-	// Debug mode toggle - shows render stats in status bar
-	app.Handle("<C-g>", func(_ riffkey.Match) {
-		ed.win().debugMode = !ed.win().debugMode
-		if ed.win().debugMode {
-			ed.StatusLine = "Debug mode ON - showing render stats"
-		} else {
-			ed.StatusLine = "Debug mode OFF"
-		}
-		ed.updateDisplay()
-	})
+	// Debug mode toggle
+	app.Handle("<C-g>", func(_ riffkey.Match) { ed.ToggleDebug() })
 
 	// z commands - screen positioning
-	app.Handle("zz", func(_ riffkey.Match) {
-		// Center cursor line on screen
-		ed.scrollCursorTo(ed.win().viewportHeight / 2)
-	})
-	app.Handle("zt", func(_ riffkey.Match) {
-		// Cursor line to top of screen
-		ed.scrollCursorTo(0)
-	})
-	app.Handle("zb", func(_ riffkey.Match) {
-		// Cursor line to bottom of screen
-		ed.scrollCursorTo(ed.win().viewportHeight - 1)
-	})
-	app.Handle("z<CR>", func(_ riffkey.Match) {
-		// Cursor line to top, move cursor to first non-blank
-		ed.scrollCursorTo(0)
-		ed.moveToFirstNonBlank()
-	})
-	app.Handle("z.", func(_ riffkey.Match) {
-		// Center cursor line, move cursor to first non-blank
-		ed.scrollCursorTo(ed.win().viewportHeight / 2)
-		ed.moveToFirstNonBlank()
-	})
-	app.Handle("z-", func(_ riffkey.Match) {
-		// Cursor line to bottom, move cursor to first non-blank
-		ed.scrollCursorTo(ed.win().viewportHeight - 1)
-		ed.moveToFirstNonBlank()
-	})
-	app.Handle("z+", func(_ riffkey.Match) {
-		// Move to first line below window, position at top
-		newLine := ed.win().topLine + ed.win().viewportHeight
-		if newLine < len(ed.buf().Lines) {
-			ed.win().Cursor = newLine
-			ed.scrollCursorTo(0)
-			ed.moveToFirstNonBlank()
-		}
-	})
-	app.Handle("z^", func(_ riffkey.Match) {
-		// Move to last line above window, position at bottom
-		newLine := ed.win().topLine - 1
-		if newLine >= 0 {
-			ed.win().Cursor = newLine
-			ed.scrollCursorTo(ed.win().viewportHeight - 1)
-			ed.moveToFirstNonBlank()
-		}
-	})
+	app.Handle("zz", func(_ riffkey.Match) { ed.CenterCursor() })
+	app.Handle("zt", func(_ riffkey.Match) { ed.CursorToTop() })
+	app.Handle("zb", func(_ riffkey.Match) { ed.CursorToBottom() })
+	app.Handle("z<CR>", func(_ riffkey.Match) { ed.CursorToTop(); ed.FirstNonBlank() })
+	app.Handle("z.", func(_ riffkey.Match) { ed.CenterCursor(); ed.FirstNonBlank() })
+	app.Handle("z-", func(_ riffkey.Match) { ed.CursorToBottom(); ed.FirstNonBlank() })
+	app.Handle("z+", func(_ riffkey.Match) { ed.NextScreenLine() })
+	app.Handle("z^", func(_ riffkey.Match) { ed.PrevScreenLine() })
 
 	// Horizontal scroll commands
-	app.Handle("zl", func(_ riffkey.Match) {
-		ed.scrollRight(1)
-	})
-	app.Handle("zh", func(_ riffkey.Match) {
-		ed.scrollLeft(1)
-	})
-	app.Handle("zL", func(_ riffkey.Match) {
-		// Scroll half screen right
-		ed.scrollRight(ed.win().viewportWidth / 2)
-	})
-	app.Handle("zH", func(_ riffkey.Match) {
-		// Scroll half screen left
-		ed.scrollLeft(ed.win().viewportWidth / 2)
-	})
-	app.Handle("zs", func(_ riffkey.Match) {
-		// Scroll to put cursor at start (left) of screen
-		ed.win().leftCol = ed.win().Col
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
-	app.Handle("ze", func(_ riffkey.Match) {
-		// Scroll to put cursor at end (right) of screen
-		ed.win().leftCol = max(0, ed.win().Col-ed.win().viewportWidth+ed.win().lineNumWidth+1)
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	app.Handle("zl", func(_ riffkey.Match) { ed.ScrollRight(1) })
+	app.Handle("zh", func(_ riffkey.Match) { ed.ScrollLeft(1) })
+	app.Handle("zL", func(_ riffkey.Match) { ed.ScrollRight(ed.win().viewportWidth / 2) })
+	app.Handle("zH", func(_ riffkey.Match) { ed.ScrollLeft(ed.win().viewportWidth / 2) })
+	app.Handle("zs", func(_ riffkey.Match) { ed.CursorToScreenStart() })
+	app.Handle("ze", func(_ riffkey.Match) { ed.CursorToScreenEnd() })
 
 	// H/M/L - move cursor to top/middle/bottom of screen
-	app.Handle("H", func(m riffkey.Match) {
-		// Move to top of screen (with optional count offset)
-		targetLine := ed.win().topLine + m.Count - 1
-		targetLine = max(ed.win().topLine, min(targetLine, ed.win().topLine+ed.win().viewportHeight-1))
-		targetLine = min(targetLine, len(ed.buf().Lines)-1)
-		ed.win().Cursor = targetLine
-		ed.moveToFirstNonBlank()
-	})
-	app.Handle("M", func(_ riffkey.Match) {
-		// Move to middle of screen
-		targetLine := ed.win().topLine + ed.win().viewportHeight/2
-		targetLine = min(targetLine, len(ed.buf().Lines)-1)
-		ed.win().Cursor = targetLine
-		ed.moveToFirstNonBlank()
-	})
-	app.Handle("L", func(m riffkey.Match) {
-		// Move to bottom of screen (with optional count offset from bottom)
-		targetLine := ed.win().topLine + ed.win().viewportHeight - m.Count
-		targetLine = max(ed.win().topLine, min(targetLine, ed.win().topLine+ed.win().viewportHeight-1))
-		targetLine = min(targetLine, len(ed.buf().Lines)-1)
-		ed.win().Cursor = targetLine
-		ed.moveToFirstNonBlank()
-	})
+	app.Handle("H", func(m riffkey.Match) { ed.ScreenTop(m.Count) })
+	app.Handle("M", func(_ riffkey.Match) { ed.ScreenMiddle() })
+	app.Handle("L", func(m riffkey.Match) { ed.ScreenBottom(m.Count) })
 
 	// Window management: Ctrl-w commands
-	app.Handle("<C-w>w", func(_ riffkey.Match) {
-		ed.focusNextWindow()
-	})
-	app.Handle("<C-w>W", func(_ riffkey.Match) {
-		ed.focusPrevWindow()
-	})
-	app.Handle("<C-w>j", func(_ riffkey.Match) {
-		// Move to window below - find window with horizontal split parent
-		ed.focusDirection(SplitHorizontal, 1)
-	})
-	app.Handle("<C-w>k", func(_ riffkey.Match) {
-		// Move to window above - find window with horizontal split parent
-		ed.focusDirection(SplitHorizontal, -1)
-	})
-	app.Handle("<C-w>h", func(_ riffkey.Match) {
-		// Move to window left - find window with vertical split parent
-		ed.focusDirection(SplitVertical, -1)
-	})
-	app.Handle("<C-w>l", func(_ riffkey.Match) {
-		// Move to window right - find window with vertical split parent
-		ed.focusDirection(SplitVertical, 1)
-	})
-	app.Handle("<C-w>s", func(_ riffkey.Match) {
-		ed.splitHorizontal()
-	})
-	app.Handle("<C-w>v", func(_ riffkey.Match) {
-		ed.splitVertical()
-	})
-	app.Handle("<C-w>c", func(_ riffkey.Match) {
-		ed.closeWindow()
-	})
-	app.Handle("<C-w>o", func(_ riffkey.Match) {
-		ed.closeOtherWindows()
+	app.Handle("<C-w>w", func(_ riffkey.Match) { ed.FocusNextWindow() })
+	app.Handle("<C-w>W", func(_ riffkey.Match) { ed.FocusPrevWindow() })
+	app.Handle("<C-w>j", func(_ riffkey.Match) { ed.FocusDown() })
+	app.Handle("<C-w>k", func(_ riffkey.Match) { ed.FocusUp() })
+	app.Handle("<C-w>h", func(_ riffkey.Match) { ed.FocusLeft() })
+	app.Handle("<C-w>l", func(_ riffkey.Match) { ed.FocusRight() })
+	app.Handle("<C-w>s", func(_ riffkey.Match) { ed.SplitHoriz() })
+	app.Handle("<C-w>v", func(_ riffkey.Match) { ed.SplitVert() })
+	app.Handle("<C-w>c", func(_ riffkey.Match) { ed.CloseWindow() })
+	app.Handle("<C-w>o", func(_ riffkey.Match) { ed.OnlyWindow() })
+
+	// Add hook to normal mode router for display updates.
+	// Movement actions are now pure - hooks handle display refresh.
+	app.Router().AddOnAfter(func() {
+		ed.updateDisplay()
+		ed.updateCursor()
 	})
 
 	if err := app.Run(); err != nil {
@@ -804,15 +1640,15 @@ func main() {
 func (ed *Editor) enterInsertMode(app *tui.App) {
 	ed.Mode = "INSERT"
 	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-	ed.StatusLine = "-- INSERT --  Esc:normal  Enter:newline  Ctrl+W:delete word"
+	ed.StatusLine = "-- INSERT --"
 	ed.updateDisplay()
 
 	// Switch to bar cursor for insert mode
 	app.ShowCursor(tui.CursorBar)
 	ed.updateCursor()
 
-	// Create insert mode router
-	insertRouter := riffkey.NewRouter().Name("insert")
+	// Create insert mode router (NoCounts so digits aren't count prefixes)
+	insertRouter := riffkey.NewRouter().Name("insert").NoCounts()
 
 	// TextHandler with OnChange callback for live updates
 	th := riffkey.NewTextHandler(&ed.buf().Lines[ed.win().Cursor], &ed.win().Col)
@@ -821,74 +1657,30 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 		ed.updateCursor()
 	}
 
+	// Helper to rebind TextHandler and update display after buffer changes
+	rebindAndRefresh := func() {
+		th.Value = &ed.buf().Lines[ed.win().Cursor]
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+
 	// Esc exits insert mode
-	insertRouter.Handle("<Esc>", func(_ riffkey.Match) {
-		ed.exitInsertMode(app)
-	})
+	insertRouter.Handle("<Esc>", func(_ riffkey.Match) { ed.exitInsertMode(app) })
 
 	// Enter creates a new line
-	insertRouter.Handle("<CR>", func(_ riffkey.Match) {
-		line := ed.buf().Lines[ed.win().Cursor]
-		before := line[:ed.win().Col]
-		after := line[ed.win().Col:]
-		ed.buf().Lines[ed.win().Cursor] = before
-
-		// Insert new line after
-		newLines := make([]string, len(ed.buf().Lines)+1)
-		copy(newLines[:ed.win().Cursor+1], ed.buf().Lines[:ed.win().Cursor+1])
-		newLines[ed.win().Cursor+1] = after
-		copy(newLines[ed.win().Cursor+2:], ed.buf().Lines[ed.win().Cursor+1:])
-		ed.buf().Lines = newLines
-		ed.win().Cursor++
-		ed.win().Col = 0
-
-		// Rebind TextHandler to new line
-		th.Value = &ed.buf().Lines[ed.win().Cursor]
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	insertRouter.Handle("<CR>", func(_ riffkey.Match) { ed.InsertNewline(); rebindAndRefresh() })
 
 	// C-u: delete from cursor to start of line
-	insertRouter.Handle("<C-u>", func(_ riffkey.Match) {
-		line := ed.buf().Lines[ed.win().Cursor]
-		ed.buf().Lines[ed.win().Cursor] = line[ed.win().Col:]
-		ed.win().Col = 0
-		th.Value = &ed.buf().Lines[ed.win().Cursor]
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	insertRouter.Handle("<C-u>", func(_ riffkey.Match) { ed.DeleteToLineStart(); rebindAndRefresh() })
 
 	// C-k: delete from cursor to end of line
-	insertRouter.Handle("<C-k>", func(_ riffkey.Match) {
-		line := ed.buf().Lines[ed.win().Cursor]
-		ed.buf().Lines[ed.win().Cursor] = line[:ed.win().Col]
-		th.Value = &ed.buf().Lines[ed.win().Cursor]
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	insertRouter.Handle("<C-k>", func(_ riffkey.Match) { ed.DeleteToLineEnd(); rebindAndRefresh() })
 
 	// C-t: indent line (add tab at start)
-	insertRouter.Handle("<C-t>", func(_ riffkey.Match) {
-		ed.buf().Lines[ed.win().Cursor] = "\t" + ed.buf().Lines[ed.win().Cursor]
-		ed.win().Col++
-		th.Value = &ed.buf().Lines[ed.win().Cursor]
-		ed.updateDisplay()
-		ed.updateCursor()
-	})
+	insertRouter.Handle("<C-t>", func(_ riffkey.Match) { ed.IndentLine(); rebindAndRefresh() })
 
 	// C-d: unindent line (remove leading whitespace)
-	insertRouter.Handle("<C-d>", func(_ riffkey.Match) {
-		line := ed.buf().Lines[ed.win().Cursor]
-		if len(line) > 0 && (line[0] == '\t' || line[0] == ' ') {
-			ed.buf().Lines[ed.win().Cursor] = line[1:]
-			if ed.win().Col > 0 {
-				ed.win().Col--
-			}
-			th.Value = &ed.buf().Lines[ed.win().Cursor]
-			ed.updateDisplay()
-			ed.updateCursor()
-		}
-	})
+	insertRouter.Handle("<C-d>", func(_ riffkey.Match) { ed.UnindentLine(); rebindAndRefresh() })
 
 	// C-o: execute one normal mode command then return to insert
 	insertRouter.Handle("<C-o>", func(_ riffkey.Match) {
@@ -896,71 +1688,19 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 		ed.StatusLine = "-- (insert) --"
 		ed.updateDisplay()
 
-		// Create a one-shot normal mode router
-		oneShot := riffkey.NewRouter().Name("insert-normal")
+		// Clone normal mode router with after-hook to return to insert
+		oneShot := app.Router().Clone().Name("insert-normal").OnAfter(func() {
+			th.Value = &ed.buf().Lines[ed.win().Cursor] // Rebind in case line changed
+			ed.Mode = "INSERT"
+			ed.StatusLine = "-- INSERT --"
+			app.Pop()
+		})
 
-		// Copy key normal mode bindings but return to insert after
-		oneShot.Handle("h", func(_ riffkey.Match) {
-			ed.moveLeft(1)
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("l", func(_ riffkey.Match) {
-			ed.moveRight(1)
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("j", func(_ riffkey.Match) {
-			ed.moveDown(1)
-			th.Value = &ed.buf().Lines[ed.win().Cursor]
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("k", func(_ riffkey.Match) {
-			ed.moveUp(1)
-			th.Value = &ed.buf().Lines[ed.win().Cursor]
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("w", func(_ riffkey.Match) {
-			ed.wordForward()
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("b", func(_ riffkey.Match) {
-			ed.wordBackward()
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("0", func(_ riffkey.Match) {
-			ed.moveToCol(0)
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("$", func(_ riffkey.Match) {
-			ed.moveToCol(len(ed.buf().Lines[ed.win().Cursor]))
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.Handle("<Esc>", func(_ riffkey.Match) {
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-		})
-		oneShot.HandleUnmatched(func(_ riffkey.Key) bool {
-			ed.Mode = "INSERT"
-			ed.StatusLine = "-- INSERT --"
-			app.Pop()
-			return true
-		})
+		// Esc just returns to insert (empty handler, after-middleware handles cleanup)
+		oneShot.Handle("<Esc>", func(_ riffkey.Match) {})
+
+		// Unknown keys return to insert without doing anything
+		oneShot.HandleUnmatched(func(_ riffkey.Key) bool { return true })
 
 		app.Push(oneShot)
 	})
@@ -974,7 +1714,7 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 
 func (ed *Editor) exitInsertMode(app *tui.App) {
 	ed.Mode = "NORMAL"
-	ed.StatusLine = "hjkl:move  w/b/e:word  ciw/daw/yi\":text-obj  p:paste  q:quit"
+	ed.StatusLine = ""
 
 	// Adjust cursor if at end of line (vim behavior)
 	if ed.win().Col > 0 && ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) {
@@ -1073,54 +1813,6 @@ func (ed *Editor) refresh() {
 	ed.updateCursor()
 }
 
-// moveTo sets cursor to absolute position, clamping to valid range
-func (ed *Editor) moveTo(line, col int) {
-	oldLine := ed.win().Cursor
-	ed.win().Cursor = max(0, min(line, len(ed.buf().Lines)-1))
-	ed.win().Col = max(0, min(col, len(ed.buf().Lines[ed.win().Cursor])-1))
-	ed.ensureCursorVisible()
-	ed.updateCursorHighlight(oldLine)
-	ed.updateCursor()
-}
-
-// moveToCol sets column only, clamping to valid range
-func (ed *Editor) moveToCol(col int) {
-	ed.win().Col = max(0, min(col, len(ed.buf().Lines[ed.win().Cursor])-1))
-	ed.updateCursor()
-}
-
-// moveDown moves cursor down by count lines
-func (ed *Editor) moveDown(count int) {
-	oldLine := ed.win().Cursor
-	ed.win().Cursor = min(ed.win().Cursor+count, len(ed.buf().Lines)-1)
-	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-	ed.ensureCursorVisible()
-	ed.updateCursorHighlight(oldLine)
-	ed.updateCursor()
-}
-
-// moveUp moves cursor up by count lines
-func (ed *Editor) moveUp(count int) {
-	oldLine := ed.win().Cursor
-	ed.win().Cursor = max(ed.win().Cursor-count, 0)
-	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-	ed.ensureCursorVisible()
-	ed.updateCursorHighlight(oldLine)
-	ed.updateCursor()
-}
-
-// moveLeft moves cursor left by count columns
-func (ed *Editor) moveLeft(count int) {
-	ed.win().Col = max(0, ed.win().Col-count)
-	ed.updateCursor()
-}
-
-// moveRight moves cursor right by count columns
-func (ed *Editor) moveRight(count int) {
-	ed.win().Col = min(ed.win().Col+count, len(ed.buf().Lines[ed.win().Cursor])-1)
-	ed.updateCursor()
-}
-
 // scrollCursorTo positions the viewport so cursor is at the given screen row
 func (ed *Editor) scrollCursorTo(screenRow int) {
 	// Calculate new topLine so cursor appears at screenRow
@@ -1140,21 +1832,6 @@ func (ed *Editor) scrollCursorTo(screenRow int) {
 
 	ed.win().topLine = newTop
 	ed.updateDisplay()
-	ed.updateCursor()
-}
-
-// moveToFirstNonBlank moves cursor to first non-whitespace character on line
-func (ed *Editor) moveToFirstNonBlank() {
-	line := ed.buf().Lines[ed.win().Cursor]
-	for i, ch := range line {
-		if ch != ' ' && ch != '\t' {
-			ed.win().Col = i
-			ed.updateCursor()
-			return
-		}
-	}
-	// If all whitespace, go to start
-	ed.win().Col = 0
 	ed.updateCursor()
 }
 
@@ -2163,24 +2840,65 @@ func buildView(ed *Editor) any {
 	// Build the window tree
 	windowTree := buildNodeView(ed.root, ed.focusedWindow)
 
-	// Wrap in Col to add global status line at bottom
+	// Wrap in Col to add wildmenu and status line at bottom
 	return tui.Col{Children: []any{
 		windowTree,
+		// Wildmenu appears above status line when active
+		tui.IfNode{
+			Cond: &ed.cmdCompletionActive,
+			Then: tui.RichText{Spans: &ed.cmdWildmenuSpans},
+		},
 		tui.Text{Content: &ed.StatusLine},
 	}}
 }
 
-// Text object functions return (start, end) range - end is exclusive
+// TextObjectFunc return (start, end) range - end is exclusive
 type TextObjectFunc func(line string, col int) (start, end int)
 
-// Multi-line text object functions return line and column ranges
-type MultiLineTextObjectFunc func(ed *Editor) (startLine, startCol, endLine, endCol int)
+// MultiLineTextObjectFunc returns a Range for multi-line text objects
+type MultiLineTextObjectFunc func(ed *Editor) Range
 
-// Operator functions act on a range within a single line
+// OperatorFunc 's act on a range within a single line
 type OperatorFunc func(ed *Editor, app *tui.App, start, end int)
 
-// Multi-line operator functions act on a range across lines
-type MultiLineOperatorFunc func(ed *Editor, app *tui.App, startLine, startCol, endLine, endCol int)
+// MultiLineOperatorFunc functions act on a Range across lines
+type MultiLineOperatorFunc func(ed *Editor, app *tui.App, r Range)
+
+// Shared text object definitions - used by both normal mode operators and visual mode
+type mlTextObjectDef struct {
+	key string
+	fn  MultiLineTextObjectFunc
+}
+
+type wordTextObjectDef struct {
+	key string
+	fn  TextObjectFunc
+}
+
+// These are initialized in init() because they reference Editor methods
+var (
+	mlTextObjectDefs   []mlTextObjectDef
+	wordTextObjectDefs []wordTextObjectDef
+)
+
+func initTextObjectDefs() {
+	mlTextObjectDefs = []mlTextObjectDef{
+		{"ip", toInnerParagraphML}, {"ap", toAParagraphML},
+		{"is", toInnerSentenceML}, {"as", toASentenceML},
+		{"i(", toInnerParenML}, {"a(", toAParenML},
+		{"i)", toInnerParenML}, {"a)", toAParenML},
+		{"i[", toInnerBracketML}, {"a[", toABracketML},
+		{"i]", toInnerBracketML}, {"a]", toABracketML},
+		{"i{", toInnerBraceML}, {"a{", toABraceML},
+		{"i}", toInnerBraceML}, {"a}", toABraceML},
+		{"i<", toInnerAngleML}, {"a<", toAAngleML},
+		{"i>", toInnerAngleML}, {"a>", toAAngleML},
+	}
+	wordTextObjectDefs = []wordTextObjectDef{
+		{"iw", toInnerWord}, {"aw", toAWord},
+		{"iW", toInnerWORD}, {"aW", toAWORD},
+	}
+}
 
 // registerOperatorTextObjects sets up all operator+textobject combinations
 func registerOperatorTextObjects(app *tui.App, ed *Editor) {
@@ -2354,7 +3072,7 @@ func toAQuoteChar(line string, col int, quote byte) (int, int) {
 func toInnerDoubleQuote(line string, col int) (int, int) { return toInnerQuoteChar(line, col, '"') }
 func toADoubleQuote(line string, col int) (int, int)     { return toAQuoteChar(line, col, '"') }
 func toInnerSingleQuote(line string, col int) (int, int) { return toInnerQuoteChar(line, col, '\'') }
-func toASingleQuote(line string, col int) (int, int) { return toAQuoteChar(line, col, '\'') }
+func toASingleQuote(line string, col int) (int, int)     { return toAQuoteChar(line, col, '\'') }
 
 func isSentenceEnd(c byte) bool {
 	return c == '.' || c == '!' || c == '?'
@@ -2372,149 +3090,57 @@ func registerParagraphTextObjects(app *tui.App, ed *Editor) {
 		{"y", mlOpYank},
 	}
 
-	// Multi-line text objects
-	mlTextObjects := []struct {
-		key string
-		fn  MultiLineTextObjectFunc
-	}{
-		{"ip", toInnerParagraphML},
-		{"ap", toAParagraphML},
-		{"is", toInnerSentenceML},
-		{"as", toASentenceML},
-		// Brackets - multi-line versions
-		{"i(", toInnerParenML},
-		{"a(", toAParenML},
-		{"i)", toInnerParenML},
-		{"a)", toAParenML},
-		{"i[", toInnerBracketML},
-		{"a[", toABracketML},
-		{"i]", toInnerBracketML},
-		{"a]", toABracketML},
-		{"i{", toInnerBraceML},
-		{"a{", toABraceML},
-		{"i}", toInnerBraceML},
-		{"a}", toABraceML},
-		{"i<", toInnerAngleML},
-		{"a<", toAAngleML},
-		{"i>", toInnerAngleML},
-		{"a>", toAAngleML},
-	}
-
-	// Register all text object combinations
+	// Register all text object combinations (uses shared mlTextObjectDefs)
 	for _, op := range mlOperators {
-		for _, obj := range mlTextObjects {
+		for _, obj := range mlTextObjectDefs {
 			pattern := op.key + obj.key
-			opFn, objFn := op.fn, obj.fn // capture for closure
+			opFn, objFn := op.fn, obj.fn
 			app.Handle(pattern, func(_ riffkey.Match) {
-				startLine, startCol, endLine, endCol := objFn(ed)
-				if startLine >= 0 {
-					opFn(ed, app, startLine, startCol, endLine, endCol)
+				r := objFn(ed)
+				if r.Start.Line >= 0 {
+					opFn(ed, app, r)
 				}
 			})
 		}
 	}
 
-	// Motion functions for operator + motion (dj, yk, cw, etc.)
-	// All motions return (startLine, startCol, endLine, endCol) and reuse mlOperators
+	// Motion methods for operator + motion (dj, yk, cw, etc.)
+	// Uses named Motion* methods on Editor for readability and extensibility
+	type motionFunc func(count int) Range
 	mlMotions := []struct {
 		key string
-		fn  func(ed *Editor, count int) (startLine, startCol, endLine, endCol int)
+		fn  motionFunc
 	}{
-		// Linewise motions (full lines: col 0 to end)
-		{"j", func(ed *Editor, count int) (int, int, int, int) {
-			endLine := min(ed.win().Cursor+count, len(ed.buf().Lines)-1)
-			return ed.win().Cursor, 0, endLine, len(ed.buf().Lines[endLine])
-		}},
-		{"k", func(ed *Editor, count int) (int, int, int, int) {
-			startLine := max(ed.win().Cursor-count, 0)
-			return startLine, 0, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
-		}},
-		{"gg", func(ed *Editor, count int) (int, int, int, int) {
-			return 0, 0, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
-		}},
-		{"G", func(ed *Editor, count int) (int, int, int, int) {
-			endLine := len(ed.buf().Lines) - 1
-			return ed.win().Cursor, 0, endLine, len(ed.buf().Lines[endLine])
-		}},
+		// Linewise motions
+		{"j", func(count int) Range { return ed.MotionDown(count) }},
+		{"k", func(count int) Range { return ed.MotionUp(count) }},
+		{"gg", func(_ int) Range { return ed.MotionToStart() }},
+		{"G", func(_ int) Range { return ed.MotionToEnd() }},
 		// Characterwise motions
-		{"w", func(ed *Editor, count int) (int, int, int, int) {
-			startLine, startCol := ed.win().Cursor, ed.win().Col
-			for range count {
-				ed.wordForward()
-			}
-			endLine, endCol := ed.win().Cursor, ed.win().Col
-			ed.win().Cursor, ed.win().Col = startLine, startCol
-			return startLine, startCol, endLine, endCol
-		}},
-		{"b", func(ed *Editor, count int) (int, int, int, int) {
-			endLine, endCol := ed.win().Cursor, ed.win().Col
-			for range count {
-				ed.wordBackward()
-			}
-			startLine, startCol := ed.win().Cursor, ed.win().Col
-			ed.win().Cursor, ed.win().Col = endLine, endCol
-			return startLine, startCol, endLine, endCol
-		}},
-		{"e", func(ed *Editor, count int) (int, int, int, int) {
-			startLine, startCol := ed.win().Cursor, ed.win().Col
-			for range count {
-				ed.wordEnd()
-			}
-			endLine, endCol := ed.win().Cursor, ed.win().Col+1
-			ed.win().Cursor, ed.win().Col = startLine, startCol
-			return startLine, startCol, endLine, endCol
-		}},
-		{"$", func(ed *Editor, count int) (int, int, int, int) {
-			return ed.win().Cursor, ed.win().Col, ed.win().Cursor, len(ed.buf().Lines[ed.win().Cursor])
-		}},
-		{"0", func(ed *Editor, count int) (int, int, int, int) {
-			return ed.win().Cursor, 0, ed.win().Cursor, ed.win().Col
-		}},
+		{"w", func(count int) Range { return ed.MotionWordForward(count) }},
+		{"b", func(count int) Range { return ed.MotionWordBackward(count) }},
+		{"e", func(count int) Range { return ed.MotionWordEnd(count) }},
+		{"$", func(_ int) Range { return ed.MotionToLineEnd() }},
+		{"0", func(_ int) Range { return ed.MotionToLineStart() }},
 	}
 
-	// Register operator + motion combinations (reuses mlOperators)
+	// Register operator + motion combinations
 	for _, op := range mlOperators {
 		for _, mot := range mlMotions {
 			pattern := op.key + mot.key
 			opFn, motFn := op.fn, mot.fn
 			app.Handle(pattern, func(m riffkey.Match) {
-				startLine, startCol, endLine, endCol := motFn(ed, m.Count)
-				opFn(ed, app, startLine, startCol, endLine, endCol)
+				r := motFn(m.Count)
+				opFn(ed, app, r)
 			})
 		}
 	}
 
-	// cc - change whole line
-	app.Handle("cc", func(_ riffkey.Match) {
-		ed.saveUndo()
-		ed.buf().Lines[ed.win().Cursor] = ""
-		ed.win().Col = 0
-		ed.updateDisplay()
-		ed.enterInsertMode(app)
-	})
-
-	// S - same as cc
-	app.Handle("S", func(_ riffkey.Match) {
-		ed.saveUndo()
-		ed.buf().Lines[ed.win().Cursor] = ""
-		ed.win().Col = 0
-		ed.updateDisplay()
-		ed.enterInsertMode(app)
-	})
-
-	// yy - yank whole line
-	app.Handle("yy", func(_ riffkey.Match) {
-		yankRegister = ed.buf().Lines[ed.win().Cursor]
-		ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
-		ed.updateDisplay()
-	})
-
-	// Y - same as yy
-	app.Handle("Y", func(_ riffkey.Match) {
-		yankRegister = ed.buf().Lines[ed.win().Cursor]
-		ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
-		ed.updateDisplay()
-	})
+	// Line operations
+	app.Handle("cc", func(_ riffkey.Match) { ed.ChangeLine(app) })
+	app.Handle("S", func(_ riffkey.Match) { ed.ChangeLine(app) })
+	app.Handle("yy", func(_ riffkey.Match) { ed.YankLine() })
+	app.Handle("Y", func(_ riffkey.Match) { ed.YankLine() })
 }
 
 // findInnerParagraph returns the line range of the current paragraph (non-blank lines)
@@ -2552,40 +3178,43 @@ func (ed *Editor) findAParagraph() (startLine, endLine int) {
 }
 
 // Multi-line operators
-func mlOpDelete(ed *Editor, app *tui.App, startLine, startCol, endLine, endCol int) {
+func mlOpDelete(ed *Editor, app *tui.App, r Range) {
 	ed.saveUndo()
 
 	// Extract the text being deleted for yank register
-	yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
+	yankRegister = ed.extractRange(r)
 
 	// Delete the range
-	ed.deleteRange(startLine, startCol, endLine, endCol)
+	ed.deleteRange(r)
 
 	ed.updateDisplay()
 	ed.updateCursor()
 }
 
-func mlOpChange(ed *Editor, app *tui.App, startLine, startCol, endLine, endCol int) {
+func mlOpChange(ed *Editor, app *tui.App, r Range) {
 	ed.saveUndo()
 
 	// Extract for yank register
-	yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
+	yankRegister = ed.extractRange(r)
 
 	// Delete the range
-	ed.deleteRange(startLine, startCol, endLine, endCol)
+	ed.deleteRange(r)
 
 	ed.updateDisplay()
 	ed.enterInsertMode(app)
 }
 
-func mlOpYank(ed *Editor, app *tui.App, startLine, startCol, endLine, endCol int) {
-	yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
+func mlOpYank(ed *Editor, app *tui.App, r Range) {
+	yankRegister = ed.extractRange(r)
 	ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
 	ed.updateDisplay()
 }
 
-// extractRange extracts text from a multi-line range
-func (ed *Editor) extractRange(startLine, startCol, endLine, endCol int) string {
+// extractRange extracts text from a Range
+func (ed *Editor) extractRange(r Range) string {
+	startLine, startCol := r.Start.Line, r.Start.Col
+	endLine, endCol := r.End.Line, r.End.Col
+
 	if startLine == endLine {
 		// Same line
 		line := ed.buf().Lines[startLine]
@@ -2619,8 +3248,11 @@ func (ed *Editor) extractRange(startLine, startCol, endLine, endCol int) string 
 	return strings.Join(parts, "\n")
 }
 
-// deleteRange deletes text from a multi-line range
-func (ed *Editor) deleteRange(startLine, startCol, endLine, endCol int) {
+// deleteRange deletes text from a Range
+func (ed *Editor) deleteRange(r Range) {
+	startLine, startCol := r.Start.Line, r.Start.Col
+	endLine, endCol := r.End.Line, r.End.Col
+
 	if startLine == endLine {
 		// Same line - simple case
 		line := ed.buf().Lines[startLine]
@@ -2666,35 +3298,40 @@ func (ed *Editor) deleteRange(startLine, startCol, endLine, endCol int) {
 // Multi-line text object functions
 
 // toInnerParagraphML returns the range of the inner paragraph
-func toInnerParagraphML(ed *Editor) (startLine, startCol, endLine, endCol int) {
+func toInnerParagraphML(ed *Editor) Range {
 	start, end := ed.findInnerParagraph()
-	// For paragraph, we delete whole lines (col 0 to end of last line)
-	return start, 0, end, len(ed.buf().Lines[end])
+	return Range{
+		Start: Pos{Line: start, Col: 0},
+		End:   Pos{Line: end, Col: len(ed.buf().Lines[end])},
+	}
 }
 
 // toAParagraphML returns the range including trailing blank lines
-func toAParagraphML(ed *Editor) (startLine, startCol, endLine, endCol int) {
+func toAParagraphML(ed *Editor) Range {
 	start, end := ed.findAParagraph()
-	return start, 0, end, len(ed.buf().Lines[end])
+	return Range{
+		Start: Pos{Line: start, Col: 0},
+		End:   Pos{Line: end, Col: len(ed.buf().Lines[end])},
+	}
 }
 
 // toInnerSentenceML finds the current sentence boundaries across lines
-func toInnerSentenceML(ed *Editor) (startLine, startCol, endLine, endCol int) {
+func toInnerSentenceML(ed *Editor) Range {
 	return ed.findSentenceBounds(false)
 }
 
 // toASentenceML finds the sentence including trailing whitespace
-func toASentenceML(ed *Editor) (startLine, startCol, endLine, endCol int) {
+func toASentenceML(ed *Editor) Range {
 	return ed.findSentenceBounds(true)
 }
 
 // findSentenceBounds finds sentence boundaries across lines
-func (ed *Editor) findSentenceBounds(includeTrailing bool) (startLine, startCol, endLine, endCol int) {
+func (ed *Editor) findSentenceBounds(includeTrailing bool) Range {
 	// Start from cursor position
-	startLine = ed.win().Cursor
-	startCol = ed.win().Col
-	endLine = ed.win().Cursor
-	endCol = ed.win().Col
+	startLine := ed.win().Cursor
+	startCol := ed.win().Col
+	endLine := ed.win().Cursor
+	endCol := ed.win().Col
 
 	// Search backward for sentence start (after previous sentence end or start of paragraph)
 	for {
@@ -2785,47 +3422,53 @@ foundEnd:
 		}
 	}
 
-	return startLine, startCol, endLine, endCol
+	return Range{
+		Start: Pos{Line: startLine, Col: startCol},
+		End:   Pos{Line: endLine, Col: endCol},
+	}
 }
 
 // Multi-line bracket/brace/paren text objects
 
+// InvalidRange returns a Range with -1 values to indicate "not found"
+var InvalidRange = Range{Start: Pos{Line: -1, Col: -1}, End: Pos{Line: -1, Col: -1}}
+
 // findPairBoundsML finds matching bracket pairs across multiple lines.
 // If cursor is inside a pair, uses that. Otherwise searches forward for next pair.
-func (ed *Editor) findPairBoundsML(open, close byte, inner bool) (startLine, startCol, endLine, endCol int) {
+func (ed *Editor) findPairBoundsML(open, close byte, inner bool) Range {
 	// Try to find a pair containing the cursor, or search forward for next pair
-	startLine, startCol, endLine, endCol = ed.findPairContaining(open, close)
-	if startLine < 0 {
+	r := ed.findPairContaining(open, close)
+	if r.Start.Line < 0 {
 		// Not inside a pair - search forward for next opening bracket
-		startLine, startCol, endLine, endCol = ed.findNextPair(open, close)
+		r = ed.findNextPair(open, close)
 	}
-	if startLine < 0 {
-		return -1, -1, -1, -1
+	if r.Start.Line < 0 {
+		return InvalidRange
 	}
 
 	if inner {
 		// Exclude the brackets themselves
-		startCol++
+		r.Start.Col++
 		// If startCol goes past end of line, move to next line
-		if startCol >= len(ed.buf().Lines[startLine]) && startLine < endLine {
-			startLine++
-			startCol = 0
+		if r.Start.Col >= len(ed.buf().Lines[r.Start.Line]) && r.Start.Line < r.End.Line {
+			r.Start.Line++
+			r.Start.Col = 0
 		}
 		// endCol already points at closing bracket, so we don't include it
 	} else {
 		// Include both brackets
-		endCol++
+		r.End.Col++
 	}
 
-	return startLine, startCol, endLine, endCol
+	return r
 }
 
 // findPairContaining searches backward for an opening bracket and forward for its match.
-// Returns the bracket positions if cursor is inside a pair, or -1,-1,-1,-1 if not.
-func (ed *Editor) findPairContaining(open, close byte) (startLine, startCol, endLine, endCol int) {
+// Returns the bracket positions if cursor is inside a pair, or InvalidRange if not.
+func (ed *Editor) findPairContaining(open, close byte) Range {
 	// Search backward for opening bracket
-	startLine = ed.win().Cursor
-	startCol = ed.win().Col
+	startLine := ed.win().Cursor
+	startCol := ed.win().Col
 	depth := 0
 
 	for {
@@ -2838,9 +3481,12 @@ func (ed *Editor) findPairContaining(open, close byte) (startLine, startCol, end
 				} else if ch == open {
 					if depth == 0 {
 						// Found opening bracket - now verify there's a matching close after cursor
-						endLine, endCol = ed.findMatchingClose(open, close, startLine, startCol)
+						endLine, endCol := ed.findMatchingClose(open, close, startLine, startCol)
 						if endLine >= 0 {
-							return startLine, startCol, endLine, endCol
+							return Range{
+								Start: Pos{Line: startLine, Col: startCol},
+								End:   Pos{Line: endLine, Col: endCol},
+							}
 						}
 						// No matching close, keep searching backward
 					}
@@ -2853,7 +3499,7 @@ func (ed *Editor) findPairContaining(open, close byte) (startLine, startCol, end
 			startLine--
 			startCol = len(ed.buf().Lines[startLine]) - 1
 		} else {
-			return -1, -1, -1, -1
+			return InvalidRange
 		}
 	}
 }
@@ -2888,18 +3534,21 @@ func (ed *Editor) findMatchingClose(open, close byte, fromLine, fromCol int) (en
 }
 
 // findNextPair searches forward for the next opening bracket and its matching close.
-func (ed *Editor) findNextPair(open, close byte) (startLine, startCol, endLine, endCol int) {
-	startLine = ed.win().Cursor
-	startCol = ed.win().Col + 1 // Start after cursor
+func (ed *Editor) findNextPair(open, close byte) Range {
+	startLine := ed.win().Cursor
+	startCol := ed.win().Col + 1 // Start after cursor
 
 	for {
 		line := ed.buf().Lines[startLine]
 		for startCol < len(line) {
 			if line[startCol] == open {
 				// Found opening bracket - find its match
-				endLine, endCol = ed.findMatchingClose(open, close, startLine, startCol)
+				endLine, endCol := ed.findMatchingClose(open, close, startLine, startCol)
 				if endLine >= 0 {
-					return startLine, startCol, endLine, endCol
+					return Range{
+						Start: Pos{Line: startLine, Col: startCol},
+						End:   Pos{Line: endLine, Col: endCol},
+					}
 				}
 			}
 			startCol++
@@ -2908,42 +3557,26 @@ func (ed *Editor) findNextPair(open, close byte) (startLine, startCol, endLine, 
 			startLine++
 			startCol = 0
 		} else {
-			return -1, -1, -1, -1
+			return InvalidRange
 		}
 	}
 }
 
 // Paren text objects
-func toInnerParenML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('(', ')', true)
-}
-func toAParenML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('(', ')', false)
-}
+func toInnerParenML(ed *Editor) Range   { return ed.findPairBoundsML('(', ')', true) }
+func toAParenML(ed *Editor) Range       { return ed.findPairBoundsML('(', ')', false) }
 
 // Bracket text objects
-func toInnerBracketML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('[', ']', true)
-}
-func toABracketML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('[', ']', false)
-}
+func toInnerBracketML(ed *Editor) Range { return ed.findPairBoundsML('[', ']', true) }
+func toABracketML(ed *Editor) Range     { return ed.findPairBoundsML('[', ']', false) }
 
 // Brace text objects
-func toInnerBraceML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('{', '}', true)
-}
-func toABraceML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('{', '}', false)
-}
+func toInnerBraceML(ed *Editor) Range   { return ed.findPairBoundsML('{', '}', true) }
+func toABraceML(ed *Editor) Range       { return ed.findPairBoundsML('{', '}', false) }
 
 // Angle bracket text objects
-func toInnerAngleML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('<', '>', true)
-}
-func toAAngleML(ed *Editor) (startLine, startCol, endLine, endCol int) {
-	return ed.findPairBoundsML('<', '>', false)
-}
+func toInnerAngleML(ed *Editor) Range   { return ed.findPairBoundsML('<', '>', true) }
+func toAAngleML(ed *Editor) Range       { return ed.findPairBoundsML('<', '>', false) }
 
 // Word motion helper
 func isWordChar(r byte) bool {
@@ -3157,271 +3790,59 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 	ed.win().visualStartCol = ed.win().Col
 	ed.win().visualLineMode = lineMode
 	if lineMode {
-		ed.StatusLine = "-- VISUAL LINE --  hjkl:select  d/y:operate  Esc:cancel"
+		ed.StatusLine = "-- VISUAL LINE --"
 	} else {
-		ed.StatusLine = "-- VISUAL --  hjkl:select  d/y:operate  Esc:cancel"
+		ed.StatusLine = "-- VISUAL --"
 	}
 	ed.updateDisplay()
 
-	// Create visual mode router
 	visualRouter := riffkey.NewRouter().Name("visual")
 
-	// Movement keys update selection
-	// Visual mode needs full refresh for multi-line selection highlighting
-	visualRouter.Handle("j", func(m riffkey.Match) {
-		ed.win().Cursor = min(ed.win().Cursor+m.Count, len(ed.buf().Lines)-1)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.ensureCursorVisible()
-		ed.refresh()
-	})
-	visualRouter.Handle("k", func(m riffkey.Match) {
-		ed.win().Cursor = max(ed.win().Cursor-m.Count, 0)
-		ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
-		ed.ensureCursorVisible()
-		ed.refresh()
-	})
-	visualRouter.Handle("h", func(m riffkey.Match) {
-		ed.win().Col = max(0, ed.win().Col-m.Count)
-		ed.refresh()
-	})
-	visualRouter.Handle("l", func(m riffkey.Match) {
-		ed.win().Col = min(ed.win().Col+m.Count, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
-		ed.refresh()
-	})
-	visualRouter.Handle("gg", func(_ riffkey.Match) {
-		ed.win().Cursor = 0
-		ed.win().Col = 0
-		ed.ensureCursorVisible()
-		ed.refresh()
-	})
-	visualRouter.Handle("G", func(_ riffkey.Match) {
-		ed.win().Cursor = len(ed.buf().Lines) - 1
-		ed.win().Col = len(ed.buf().Lines[ed.win().Cursor])
-		ed.ensureCursorVisible()
-		ed.refresh()
-	})
-	visualRouter.Handle("0", func(_ riffkey.Match) {
-		ed.win().Col = 0
-		ed.refresh()
-	})
-	visualRouter.Handle("$", func(_ riffkey.Match) {
-		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
-		ed.refresh()
-	})
+	// Movement - same action methods as normal mode!
+	// Middleware handles visual selection highlighting via refresh()
+	visualRouter.Handle("j", func(m riffkey.Match) { ed.Down(m.Count) })
+	visualRouter.Handle("k", func(m riffkey.Match) { ed.Up(m.Count) })
+	visualRouter.Handle("h", func(m riffkey.Match) { ed.Left(m.Count) })
+	visualRouter.Handle("l", func(m riffkey.Match) { ed.Right(m.Count) })
+	visualRouter.Handle("gg", func(_ riffkey.Match) { ed.BufferStart() })
+	visualRouter.Handle("G", func(_ riffkey.Match) { ed.BufferEnd() })
+	visualRouter.Handle("0", func(_ riffkey.Match) { ed.LineStart() })
+	visualRouter.Handle("$", func(_ riffkey.Match) { ed.LineEnd() })
+	visualRouter.Handle("^", func(_ riffkey.Match) { ed.FirstNonBlank() })
+	visualRouter.Handle("w", func(m riffkey.Match) { ed.NextWordStart(m.Count) })
+	visualRouter.Handle("b", func(m riffkey.Match) { ed.PrevWordStart(m.Count) })
+	visualRouter.Handle("e", func(m riffkey.Match) { ed.NextWordEnd(m.Count) })
 
-	visualRouter.Handle("w", func(m riffkey.Match) {
-		for range m.Count {
-			ed.wordForward()
-		}
-		ed.refresh()
-	})
-	visualRouter.Handle("b", func(m riffkey.Match) {
-		for range m.Count {
-			ed.wordBackward()
-		}
-		ed.refresh()
-	})
-	visualRouter.Handle("e", func(m riffkey.Match) {
-		for range m.Count {
-			ed.wordEnd()
-		}
-		ed.refresh()
-	})
+	// Selection manipulation
+	visualRouter.Handle("o", func(_ riffkey.Match) { ed.SwapVisualEnds() })
+	visualRouter.Handle("O", func(_ riffkey.Match) { ed.SwapVisualEnds() })
 
-	// o/O swaps cursor to other end of selection
-	visualRouter.Handle("o", func(_ riffkey.Match) {
-		ed.win().Cursor, ed.win().visualStart = ed.win().visualStart, ed.win().Cursor
-		ed.win().Col, ed.win().visualStartCol = ed.win().visualStartCol, ed.win().Col
-		ed.refresh()
-	})
-	visualRouter.Handle("O", func(_ riffkey.Match) {
-		ed.win().Cursor, ed.win().visualStart = ed.win().visualStart, ed.win().Cursor
-		ed.win().Col, ed.win().visualStartCol = ed.win().visualStartCol, ed.win().Col
-		ed.refresh()
-	})
+	// Operators
+	visualRouter.Handle("d", func(_ riffkey.Match) { ed.VisualDelete(app) })
+	visualRouter.Handle("c", func(_ riffkey.Match) { ed.VisualChange(app) })
+	visualRouter.Handle("y", func(_ riffkey.Match) { ed.VisualYank(app) })
 
-	// d deletes selection
-	visualRouter.Handle("d", func(_ riffkey.Match) {
-		ed.saveUndo()
-		if ed.win().visualLineMode {
-			// Delete entire lines
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			if endLine-startLine+1 >= len(ed.buf().Lines) {
-				ed.buf().Lines = []string{""}
-				ed.win().Cursor = 0
-			} else {
-				ed.buf().Lines = append(ed.buf().Lines[:startLine], ed.buf().Lines[endLine+1:]...)
-				ed.win().Cursor = min(startLine, len(ed.buf().Lines)-1)
-			}
-			ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
-		} else {
-			// Character mode - can span multiple lines
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			var startCol, endCol int
-			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
-				startCol = ed.win().visualStartCol
-				endCol = ed.win().Col + 1
-			} else {
-				startCol = ed.win().Col
-				endCol = ed.win().visualStartCol + 1
-			}
-			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
-			ed.deleteRange(startLine, startCol, endLine, endCol)
-		}
-		ed.exitVisualMode(app)
-	})
-
-	// c changes selection (delete and enter insert mode)
-	visualRouter.Handle("c", func(_ riffkey.Match) {
-		ed.saveUndo()
-		if ed.win().visualLineMode {
-			// Change entire lines - delete and insert on first line
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			yankRegister = ed.extractRange(startLine, 0, endLine, len(ed.buf().Lines[endLine]))
-			if endLine-startLine+1 >= len(ed.buf().Lines) {
-				ed.buf().Lines = []string{""}
-				ed.win().Cursor = 0
-			} else {
-				ed.buf().Lines = append(ed.buf().Lines[:startLine], ed.buf().Lines[endLine+1:]...)
-				ed.win().Cursor = min(startLine, len(ed.buf().Lines)-1)
-			}
-			// Insert a blank line to type on
-			newLines := make([]string, len(ed.buf().Lines)+1)
-			copy(newLines[:ed.win().Cursor], ed.buf().Lines[:ed.win().Cursor])
-			newLines[ed.win().Cursor] = ""
-			copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
-			ed.buf().Lines = newLines
-			ed.win().Col = 0
-		} else {
-			// Character mode - delete selection
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			var startCol, endCol int
-			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
-				startCol = ed.win().visualStartCol
-				endCol = ed.win().Col + 1
-			} else {
-				startCol = ed.win().Col
-				endCol = ed.win().visualStartCol + 1
-			}
-			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
-			ed.deleteRange(startLine, startCol, endLine, endCol)
-		}
-		ed.Mode = "NORMAL" // Clear visual mode state
-		app.Pop()          // Pop visual router
-		ed.updateDisplay()
-		ed.enterInsertMode(app)
-	})
-
-	// y yanks selection
-	visualRouter.Handle("y", func(_ riffkey.Match) {
-		if ed.win().visualLineMode {
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			var yanked string
-			for i := startLine; i <= endLine; i++ {
-				yanked += ed.buf().Lines[i]
-				if i < endLine {
-					yanked += "\n"
-				}
-			}
-			yankRegister = yanked
-			ed.StatusLine = fmt.Sprintf("Yanked %d lines", endLine-startLine+1)
-		} else {
-			// Character mode - can span multiple lines
-			startLine := min(ed.win().visualStart, ed.win().Cursor)
-			endLine := max(ed.win().visualStart, ed.win().Cursor)
-			var startCol, endCol int
-			if ed.win().visualStart < ed.win().Cursor || (ed.win().visualStart == ed.win().Cursor && ed.win().visualStartCol <= ed.win().Col) {
-				startCol = ed.win().visualStartCol
-				endCol = ed.win().Col + 1
-			} else {
-				startCol = ed.win().Col
-				endCol = ed.win().visualStartCol + 1
-			}
-			yankRegister = ed.extractRange(startLine, startCol, endLine, endCol)
-			ed.StatusLine = fmt.Sprintf("Yanked %d chars", len(yankRegister))
-		}
-		ed.exitVisualMode(app)
-	})
-
-	// Text objects expand selection in visual mode
-	visualTextObjects := []struct {
-		key string
-		fn  MultiLineTextObjectFunc
-	}{
-		{"ip", toInnerParagraphML},
-		{"ap", toAParagraphML},
-		{"is", toInnerSentenceML},
-		{"as", toASentenceML},
-		{"i(", toInnerParenML},
-		{"a(", toAParenML},
-		{"i)", toInnerParenML},
-		{"a)", toAParenML},
-		{"i[", toInnerBracketML},
-		{"a[", toABracketML},
-		{"i]", toInnerBracketML},
-		{"a]", toABracketML},
-		{"i{", toInnerBraceML},
-		{"a{", toABraceML},
-		{"i}", toInnerBraceML},
-		{"a}", toABraceML},
-		{"i<", toInnerAngleML},
-		{"a<", toAAngleML},
-		{"i>", toInnerAngleML},
-		{"a>", toAAngleML},
-	}
-
-	for _, obj := range visualTextObjects {
-		objFn := obj.fn // capture for closure
+	// Text objects expand selection (uses shared definitions)
+	for _, obj := range mlTextObjectDefs {
+		objFn := obj.fn
 		visualRouter.Handle(obj.key, func(_ riffkey.Match) {
-			startLine, startCol, endLine, endCol := objFn(ed)
-			if startLine >= 0 {
-				// Expand visual selection to cover the text object
-				ed.win().visualStart = startLine
-				ed.win().visualStartCol = startCol
-				ed.win().Cursor = endLine
-				ed.win().Col = max(0, endCol-1) // endCol is exclusive, cursor should be on last char
-				ed.win().visualLineMode = false
-				ed.updateDisplay()
-				ed.updateCursor()
-			}
+			ed.VisualExpandToTextObject(objFn(ed))
 		})
 	}
-
-	// Word text objects (single-line)
-	visualWordObjects := []struct {
-		key string
-		fn  TextObjectFunc
-	}{
-		{"iw", toInnerWord},
-		{"aw", toAWord},
-		{"iW", toInnerWORD},
-		{"aW", toAWORD},
-	}
-
-	for _, obj := range visualWordObjects {
+	for _, obj := range wordTextObjectDefs {
 		objFn := obj.fn
 		visualRouter.Handle(obj.key, func(_ riffkey.Match) {
 			line := ed.buf().Lines[ed.win().Cursor]
-			start, end := objFn(line, ed.win().Col)
-			if start < end {
-				ed.win().visualStart = ed.win().Cursor
-				ed.win().visualStartCol = start
-				ed.win().Col = end - 1
-				ed.win().visualLineMode = false
-				ed.updateDisplay()
-				ed.updateCursor()
-			}
+			ed.VisualExpandToWordObject(objFn(line, ed.win().Col))
 		})
 	}
 
-	// Escape exits visual mode
-	visualRouter.Handle("<Esc>", func(_ riffkey.Match) {
-		ed.exitVisualMode(app)
+	// Exit
+	visualRouter.Handle("<Esc>", func(_ riffkey.Match) { ed.exitVisualMode(app) })
+
+	// Visual mode hook: refresh() for selection highlighting instead of updateDisplay()
+	visualRouter.AddOnAfter(func() {
+		ed.refresh()
 	})
 
 	app.Push(visualRouter)
@@ -3429,7 +3850,7 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 
 func (ed *Editor) exitVisualMode(app *tui.App) {
 	ed.Mode = "NORMAL"
-	ed.StatusLine = "hjkl:move  w/b/e:word  ciw/daw/yi\":text-obj  p:paste  q:quit"
+	ed.StatusLine = ""
 	ed.updateDisplay()
 	app.Pop()
 }
@@ -3444,44 +3865,37 @@ func (ed *Editor) enterCommandMode(app *tui.App, prompt string) {
 
 	// Move cursor to command line
 	app.ShowCursor(tui.CursorBar)
-	size := app.Size()
-	app.SetCursor(1, size.Height-1) // After the prompt
+	ed.updateCmdLineCursor()
 
-	// Create command line router
-	cmdRouter := riffkey.NewRouter().Name("cmdline")
+	// Create command line router (NoCounts so digits work in commands)
+	cmdRouter := riffkey.NewRouter().Name("cmdline").NoCounts()
 
-	// Enter executes the command
 	cmdRouter.Handle("<CR>", func(_ riffkey.Match) {
 		cmd := ed.cmdLineInput
 		ed.exitCommandMode(app)
 		ed.executeCommand(app, ed.cmdLinePrompt, cmd)
 	})
+	cmdRouter.Handle("<Esc>", func(_ riffkey.Match) { ed.exitCommandMode(app) })
+	cmdRouter.Handle("<BS>", func(_ riffkey.Match) { ed.CmdLineBackspace() })
+	cmdRouter.Handle("<Space>", func(_ riffkey.Match) { ed.CmdLineAppend(' ') })
 
-	// Escape cancels
-	cmdRouter.Handle("<Esc>", func(_ riffkey.Match) {
-		ed.exitCommandMode(app)
-	})
-
-	// Backspace deletes last char
-	cmdRouter.Handle("<BS>", func(_ riffkey.Match) {
-		if len(ed.cmdLineInput) > 0 {
-			ed.cmdLineInput = ed.cmdLineInput[:len(ed.cmdLineInput)-1]
-			ed.StatusLine = ed.cmdLinePrompt + ed.cmdLineInput
+	// Tab completion for : commands
+	cmdRouter.Handle("<Tab>", func(_ riffkey.Match) {
+		if prompt == ":" {
+			ed.completeNext()
 			ed.updateDisplay()
-			// Update cursor position
-			app.SetCursor(1+len(ed.cmdLineInput), size.Height-1)
+		}
+	})
+	cmdRouter.Handle("<S-Tab>", func(_ riffkey.Match) {
+		if prompt == ":" {
+			ed.completePrev()
+			ed.updateDisplay()
 		}
 	})
 
-	// Handle regular character input
 	cmdRouter.HandleUnmatched(func(k riffkey.Key) bool {
 		if k.Rune != 0 && k.Mod == riffkey.ModNone {
-			ed.cmdLineInput += string(k.Rune)
-			ed.StatusLine = ed.cmdLinePrompt + ed.cmdLineInput
-			ed.updateDisplay()
-			// Update cursor position
-			size := app.Size()
-			app.SetCursor(1+len(ed.cmdLineInput), size.Height-1)
+			ed.CmdLineAppend(k.Rune)
 			return true
 		}
 		return false
@@ -3490,8 +3904,46 @@ func (ed *Editor) enterCommandMode(app *tui.App, prompt string) {
 	app.Push(cmdRouter)
 }
 
+// =============================================================================
+// Command Line Actions
+// =============================================================================
+
+// CmdLineAppend adds a character to the command line input
+func (ed *Editor) CmdLineAppend(ch rune) {
+	ed.cmdLineInput += string(ch)
+	ed.StatusLine = ed.cmdLinePrompt + ed.cmdLineInput
+	// Update completions for : commands
+	if ed.cmdLinePrompt == ":" {
+		ed.updateCompletions()
+	}
+	ed.updateDisplay()
+	ed.updateCmdLineCursor()
+}
+
+// CmdLineBackspace removes the last character from command line input
+func (ed *Editor) CmdLineBackspace() {
+	if len(ed.cmdLineInput) > 0 {
+		ed.cmdLineInput = ed.cmdLineInput[:len(ed.cmdLineInput)-1]
+		ed.StatusLine = ed.cmdLinePrompt + ed.cmdLineInput
+		// Update completions for : commands
+		if ed.cmdLinePrompt == ":" {
+			ed.updateCompletions()
+		}
+		ed.updateDisplay()
+		ed.updateCmdLineCursor()
+	}
+}
+
+// updateCmdLineCursor positions the cursor at the end of command line input
+func (ed *Editor) updateCmdLineCursor() {
+	size := ed.app.Size()
+	ed.app.SetCursor(1+len(ed.cmdLineInput), size.Height-1)
+}
+
 func (ed *Editor) exitCommandMode(app *tui.App) {
 	ed.cmdLineActive = false
+	ed.cmdCompletionActive = false
+	ed.cmdMatches = nil
 	ed.StatusLine = ""
 	app.ShowCursor(tui.CursorBlock)
 	ed.updateDisplay()
@@ -3511,57 +3963,75 @@ func (ed *Editor) executeCommand(app *tui.App, prompt, cmd string) {
 }
 
 func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
+	// Store for @: repeat
+	if cmd != "" {
+		ed.lastColonCmd = cmd
+	}
+
+	// Handle quit commands separately (they exit, no display update needed)
 	switch cmd {
 	case "q", "quit":
 		if !ed.root.IsLeaf() {
-			// Close current window if there are multiple
 			ed.closeWindow()
 		} else {
 			app.Stop()
+			return
 		}
 	case "qa", "qall":
 		app.Stop()
+		return
+	}
+
+	// All other commands update display and cursor at the end
+	defer func() {
+		ed.updateDisplay()
+		ed.updateCursor()
+	}()
+
+	switch cmd {
 	case "w", "write":
 		ed.StatusLine = "E37: No write since last change (use :w! to override)"
-		ed.updateDisplay()
 	case "wq", "x":
 		ed.StatusLine = "E37: No write since last change (use :wq! to override)"
-		ed.updateDisplay()
 	case "sp", "split":
-		// Horizontal split
 		ed.splitHorizontal()
 	case "vs", "vsplit":
-		// Vertical split
 		ed.splitVertical()
 	case "close":
 		ed.closeWindow()
 	case "only", "on":
 		ed.closeOtherWindows()
 	case "noh", "nohlsearch":
-		// Clear search highlighting
 		ed.searchPattern = ""
-		ed.updateDisplay()
 	default:
-		// Try to parse as line number
-		if lineNum := 0; len(cmd) > 0 {
-			for _, c := range cmd {
-				if c >= '0' && c <= '9' {
-					lineNum = lineNum*10 + int(c-'0')
-				} else {
-					lineNum = -1
-					break
-				}
+		// Try to parse as line number first
+		lineNum := 0
+		isNumber := len(cmd) > 0
+		for _, c := range cmd {
+			if c >= '0' && c <= '9' {
+				lineNum = lineNum*10 + int(c-'0')
+			} else {
+				isNumber = false
+				break
 			}
-			if lineNum > 0 && lineNum <= len(ed.buf().Lines) {
-				ed.win().Cursor = lineNum - 1
-				ed.win().Col = 0
-				ed.updateDisplay()
-				ed.updateCursor()
+		}
+		if isNumber && lineNum > 0 {
+			lineNum = min(lineNum, len(ed.buf().Lines))
+			ed.GotoLine(lineNum)
+			return
+		}
+
+		// Try reflection-based command dispatch
+		parts := strings.Fields(cmd)
+		if len(parts) > 0 {
+			cmdName := parts[0]
+			args := parts[1:]
+			if err := ed.ExecCommand(cmdName, args); err == nil {
 				return
 			}
 		}
+
 		ed.StatusLine = fmt.Sprintf("E492: Not an editor command: %s", cmd)
-		ed.updateDisplay()
 	}
 }
 
@@ -3650,56 +4120,62 @@ func (ed *Editor) searchNext(direction int) {
 
 // f/F/t/T implementation - find character on line
 func registerFindChar(app *tui.App, ed *Editor) {
-	for _, findType := range []struct {
-		key     string
-		forward bool
-		till    bool
-	}{
-		{"f", true, false},
-		{"F", false, false},
-		{"t", true, true},
-		{"T", false, true},
-	} {
-		key := findType.key
-		forward := findType.forward
-		till := findType.till
+	app.Handle("f", func(_ riffkey.Match) { ed.promptForChar(app, ed.FindChar) })
+	app.Handle("F", func(_ riffkey.Match) { ed.promptForChar(app, ed.FindCharBack) })
+	app.Handle("t", func(_ riffkey.Match) { ed.promptForChar(app, ed.TillChar) })
+	app.Handle("T", func(_ riffkey.Match) { ed.promptForChar(app, ed.TillCharBack) })
+	app.Handle(";", func(_ riffkey.Match) { ed.RepeatFind() })
+	app.Handle(",", func(_ riffkey.Match) { ed.RepeatFindReverse() })
+}
 
-		app.Handle(key, func(_ riffkey.Match) {
-			// Next key press will be the target character
-			findRouter := riffkey.NewRouter().Name("find-char")
-			findRouter.HandleUnmatched(func(k riffkey.Key) bool {
-				if k.Rune != 0 && k.Mod == riffkey.ModNone {
-					ed.lastFindChar = k.Rune
-					ed.lastFindDir = 1
-					if !forward {
-						ed.lastFindDir = -1
-					}
-					ed.lastFindTill = till
-					ed.doFindChar(forward, till, k.Rune)
-				}
-				app.Pop()
-				return true
-			})
-			findRouter.Handle("<Esc>", func(_ riffkey.Match) {
-				app.Pop()
-			})
-			app.Push(findRouter)
-		})
+// =============================================================================
+// Find Char Actions - f/F/t/T and repeat with ;/,
+// =============================================================================
+
+// FindChar finds the next occurrence of ch on the line (f)
+func (ed *Editor) FindChar(ch rune) {
+	ed.lastFindChar = ch
+	ed.lastFindDir = 1
+	ed.lastFindTill = false
+	ed.doFindChar(true, false, ch)
+}
+
+// FindCharBack finds the previous occurrence of ch on the line (F)
+func (ed *Editor) FindCharBack(ch rune) {
+	ed.lastFindChar = ch
+	ed.lastFindDir = -1
+	ed.lastFindTill = false
+	ed.doFindChar(false, false, ch)
+}
+
+// TillChar moves to just before the next occurrence of ch (t)
+func (ed *Editor) TillChar(ch rune) {
+	ed.lastFindChar = ch
+	ed.lastFindDir = 1
+	ed.lastFindTill = true
+	ed.doFindChar(true, true, ch)
+}
+
+// TillCharBack moves to just after the previous occurrence of ch (T)
+func (ed *Editor) TillCharBack(ch rune) {
+	ed.lastFindChar = ch
+	ed.lastFindDir = -1
+	ed.lastFindTill = true
+	ed.doFindChar(false, true, ch)
+}
+
+// RepeatFind repeats the last f/F/t/T command (;)
+func (ed *Editor) RepeatFind() {
+	if ed.lastFindChar != 0 {
+		ed.doFindChar(ed.lastFindDir == 1, ed.lastFindTill, ed.lastFindChar)
 	}
+}
 
-	// ; repeats last f/F/t/T
-	app.Handle(";", func(_ riffkey.Match) {
-		if ed.lastFindChar != 0 {
-			ed.doFindChar(ed.lastFindDir == 1, ed.lastFindTill, ed.lastFindChar)
-		}
-	})
-
-	// , repeats last f/F/t/T in opposite direction
-	app.Handle(",", func(_ riffkey.Match) {
-		if ed.lastFindChar != 0 {
-			ed.doFindChar(ed.lastFindDir != 1, ed.lastFindTill, ed.lastFindChar)
-		}
-	})
+// RepeatFindReverse repeats the last f/F/t/T in opposite direction (,)
+func (ed *Editor) RepeatFindReverse() {
+	if ed.lastFindChar != 0 {
+		ed.doFindChar(ed.lastFindDir != 1, ed.lastFindTill, ed.lastFindChar)
+	}
 }
 
 func (ed *Editor) doFindChar(forward, till bool, ch rune) {
