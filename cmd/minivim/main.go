@@ -1644,7 +1644,19 @@ func main() {
 
 	app.SetView(buildView(ed))
 
-	// Register fuzzy finder as a pushable overlay view
+	// Handle terminal resize
+	app.OnResize(func(width, height int) {
+		// Recalculate viewport for main editor area (excluding status line)
+		contentHeight := max(1, height-headerRows-footerRows)
+		// Recalculate all window viewports in the split tree
+		ed.recalculateViewports(ed.root, width, contentHeight)
+		// Rebuild the view with new dimensions
+		app.SetView(buildView(ed))
+		// Update all windows
+		ed.updateAllWindows()
+	})
+
+	// Register fuzzy finder as a pushable overlay view (V2 for SelectionList support)
 	app.View("fuzzy", buildFuzzyView(ed)).
 		Handle("<BS>", func(_ riffkey.Match) { ed.fuzzyBackspace() }).
 		Handle("<Up>", func(_ riffkey.Match) { ed.fuzzyUp() }).
@@ -2834,6 +2846,8 @@ func (ed *Editor) initWindowLayer(w *Window, width int) {
 	w.contentLayer = tui.NewLayer()
 	// Layer holds ALL lines plus some buffer for scrolling
 	w.contentLayer.EnsureSize(width, len(w.buffer.Lines)+w.viewportHeight)
+	// Set viewport dimensions BEFORE rendering so ScrollTo works correctly
+	w.contentLayer.SetViewport(width, w.viewportHeight)
 	w.renderedMin = -1
 	w.renderedMax = -1
 	ed.ensureWindowRendered(w)

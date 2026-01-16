@@ -56,7 +56,7 @@ func BenchmarkStress100Items(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	buf.Clear()
 	serial.Execute(buf, 80, 120)
@@ -94,7 +94,7 @@ func BenchmarkStressWideProgress(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	buf.Clear()
 	serial.Execute(buf, 120, 30)
@@ -136,7 +136,7 @@ func BenchmarkStressDenseGrid(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	buf.Clear()
 	serial.Execute(buf, 100, 50)
@@ -189,7 +189,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	buf.Clear()
 	serial.Execute(buf, 120, 80)
@@ -221,7 +221,7 @@ func BenchmarkStressTextHeavy(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	buf.Clear()
 	serial.Execute(buf, 100, 60)
@@ -276,7 +276,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	// Warm up
 	buf := pool.Current()
@@ -329,7 +329,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	// Warm up
 	serial.Execute(buf, 120, 80)
@@ -360,7 +360,7 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	// Warm up
 	buf := pool.Current()
@@ -391,7 +391,7 @@ func BenchmarkSyncClear100Items(b *testing.B) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 
 	// Warm up
 	serial.Execute(buf, 80, 120)

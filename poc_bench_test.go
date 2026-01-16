@@ -77,15 +77,10 @@ func TestSimpleForEach(t *testing.T) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 	buf := NewBuffer(100, 50)
 	buf.Clear()
 	serial.Execute(buf, 100, 50)
-
-	// Should have 11 nodes: 1 title + 10 progress bars
-	if len(serial.nodes) != 11 {
-		t.Errorf("Expected 11 nodes, got %d", len(serial.nodes))
-	}
 
 	// Row 1 should have progress bar characters (█, partial blocks, or space with BG)
 	cell := buf.Get(0, 1)
@@ -125,14 +120,9 @@ func TestNestedForEach(t *testing.T) {
 		},
 	}
 
-	serial := BuildSerial(ui)
+	serial := Build(ui)
 	buf.Clear()
 	serial.Execute(buf, 100, 50)
-
-	// Should have 101 nodes: 1 title + 100 progress bars
-	if len(serial.nodes) != 101 {
-		t.Errorf("Expected 101 nodes, got %d", len(serial.nodes))
-	}
 
 	// Row 1 should have progress bar characters (10 bars * 8 chars = 80 chars)
 	// Progress bars use █, partial blocks (▏▎▍▌▋▊▉), or spaces with BG color

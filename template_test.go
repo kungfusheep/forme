@@ -6,7 +6,7 @@ import (
 
 func TestV2BasicCol(t *testing.T) {
 	// Simple vertical layout
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Line 1"},
 		Text{Content: "Line 2"},
 		Text{Content: "Line 3"},
@@ -29,7 +29,7 @@ func TestV2BasicCol(t *testing.T) {
 
 func TestV2BasicRow(t *testing.T) {
 	// Simple horizontal layout
-	tmpl := V2Build(Row{Children: []any{
+	tmpl := Build(Row{Children: []any{
 		Text{Content: "A"},
 		Text{Content: "B"},
 		Text{Content: "C"},
@@ -47,7 +47,7 @@ func TestV2BasicRow(t *testing.T) {
 
 func TestV2RowWithGap(t *testing.T) {
 	// Row with gap between children
-	tmpl := V2Build(Row{Gap: 2, Children: []any{
+	tmpl := Build(Row{Gap: 2, Children: []any{
 		Text{Content: "A"},
 		Text{Content: "B"},
 	}})
@@ -64,7 +64,7 @@ func TestV2RowWithGap(t *testing.T) {
 
 func TestV2NestedContainers(t *testing.T) {
 	// Col containing Row
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		Row{Children: []any{
 			Text{Content: "Left"},
@@ -91,7 +91,7 @@ func TestV2DynamicText(t *testing.T) {
 	// Text with pointer binding
 	title := "Dynamic Title"
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: &title},
 	}})
 
@@ -115,7 +115,7 @@ func TestV2DynamicText(t *testing.T) {
 func TestV2Progress(t *testing.T) {
 	pct := 50
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Progress{Value: &pct, BarWidth: 10},
 	}})
 
@@ -131,7 +131,7 @@ func TestV2Progress(t *testing.T) {
 }
 
 func TestV2Border(t *testing.T) {
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Inside"},
 	}}.Border(BorderSingle))
 
@@ -151,7 +151,7 @@ func TestV2Border(t *testing.T) {
 }
 
 func TestV2ColWithGap(t *testing.T) {
-	tmpl := V2Build(Col{Gap: 1, Children: []any{
+	tmpl := Build(Col{Gap: 1, Children: []any{
 		Text{Content: "A"},
 		Text{Content: "B"},
 		Text{Content: "C"},
@@ -181,7 +181,7 @@ func TestV2ColWithGap(t *testing.T) {
 func TestV2IfTrue(t *testing.T) {
 	showDetails := true
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		IfNode{
 			Cond: &showDetails,
@@ -207,7 +207,7 @@ func TestV2IfTrue(t *testing.T) {
 func TestV2IfFalse(t *testing.T) {
 	showDetails := false
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		IfNode{
 			Cond: &showDetails,
@@ -231,7 +231,7 @@ func TestV2IfFalse(t *testing.T) {
 func TestV2IfDynamic(t *testing.T) {
 	showDetails := true
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		IfNode{
 			Cond: &showDetails,
@@ -273,7 +273,7 @@ func TestV2ForEach(t *testing.T) {
 		{Name: "Item 3"},
 	}
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "List:"},
 		ForEachNode{
 			Items: &items,
@@ -307,7 +307,7 @@ func TestV2ForEach(t *testing.T) {
 func TestV2ForEachEmpty(t *testing.T) {
 	items := []testItem{}
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "List:"},
 		ForEachNode{
 			Items: &items,
@@ -336,7 +336,7 @@ func TestV2ForEachDynamic(t *testing.T) {
 		{Name: "B"},
 	}
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		ForEachNode{
 			Items: &items,
 			Render: func(item *testItem) any {
@@ -397,7 +397,7 @@ func TestV2CustomComponent(t *testing.T) {
 	fps := "60.0"
 	frame := "1234"
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		StatusBar{Items: []StatusItem{
 			{Label: "FPS", Value: &fps},
@@ -460,7 +460,7 @@ func TestV2NestedCustomComponent(t *testing.T) {
 
 	// Direct test with StatusBar nested in Row
 	fps := "60"
-	tmpl := V2Build(Row{Gap: 2, Children: []any{
+	tmpl := Build(Row{Gap: 2, Children: []any{
 		Text{Content: "Stats:"},
 		StatusBar{Items: []StatusItem{
 			{Label: "FPS", Value: &fps},
@@ -521,7 +521,7 @@ func (s Sparkline) Render(buf *Buffer, x, y, w, h int) {
 func TestV2CustomRenderer(t *testing.T) {
 	values := []float64{1, 3, 5, 7, 5, 3, 1, 2, 4, 6}
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "CPU:"},
 		Sparkline{Values: &values, Width: 10},
 	}})
@@ -555,7 +555,7 @@ func TestV2CustomRenderer(t *testing.T) {
 func TestV2RendererInRow(t *testing.T) {
 	values := []float64{1, 2, 3, 4, 5}
 
-	tmpl := V2Build(Row{Gap: 1, Children: []any{
+	tmpl := Build(Row{Gap: 1, Children: []any{
 		Text{Content: "CPU:"},
 		Sparkline{Values: &values, Width: 5},
 		Text{Content: "MEM:"},
@@ -626,7 +626,7 @@ func Grid(cols, cellW, cellH int) LayoutFunc {
 
 func TestV2CustomLayout(t *testing.T) {
 	// Create a 3-column grid layout using Box
-	tmpl := V2Build(Box{
+	tmpl := Build(Box{
 		Layout: Grid(3, 10, 1),
 		Children: []any{
 			Text{Content: "A"},
@@ -668,7 +668,7 @@ func TestV2CustomLayout(t *testing.T) {
 
 func TestV2CustomLayoutNested(t *testing.T) {
 	// Grid inside a Col
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		Box{
 			Layout: Grid(2, 15, 1),
@@ -713,7 +713,7 @@ func TestV2CustomLayoutNested(t *testing.T) {
 
 func TestV2BoxInlineLayout(t *testing.T) {
 	// Test with inline layout function
-	tmpl := V2Build(Box{
+	tmpl := Build(Box{
 		Layout: func(children []ChildSize, w, h int) []Rect {
 			// Simple: stack horizontally with 5-char spacing
 			rects := make([]Rect, len(children))
@@ -754,7 +754,7 @@ func TestV2ConditionInsideForEach(t *testing.T) {
 		{Name: "C", Selected: false},
 	}
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		ForEach(&items, func(item *Item) any {
 			return Row{Children: []any{
 				If(&item.Selected).Eq(true).Then(
@@ -810,7 +810,7 @@ func TestV2ConditionNodeBuilder(t *testing.T) {
 	showGraph := true
 	showProcs := false
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		If(&showGraph).Eq(true).Then(
 			Text{Content: "Graph visible"},
@@ -862,7 +862,7 @@ func TestV2FlexGrow(t *testing.T) {
 	// Screen is 20 high, header is 1 line, footer is 1 line
 	// Middle section with Grow(1) should expand to fill remaining 18 lines
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		Col{Children: []any{
 			Text{Content: "Content"},
@@ -897,7 +897,7 @@ func TestV2FlexGrowMultiple(t *testing.T) {
 	// flex1 should get 10 * 1/3 ≈ 3 lines
 	// flex2 should get 10 * 2/3 ≈ 6 lines (total with content = header at some offset)
 
-	tmpl := V2Build(Col{Children: []any{
+	tmpl := Build(Col{Children: []any{
 		Text{Content: "Header"},
 		Col{Children: []any{Text{Content: "A"}}}.Grow(1),
 		Col{Children: []any{Text{Content: "B"}}}.Grow(2),
@@ -935,7 +935,7 @@ func TestV2FlexGrowHorizontal(t *testing.T) {
 	// Row width is 40, "Left" is 4 chars, "Right" is 5 chars
 	// Middle with Grow(1) should expand to fill remaining 31 chars
 
-	tmpl := V2Build(Row{Children: []any{
+	tmpl := Build(Row{Children: []any{
 		Text{Content: "Left"},
 		Col{Children: []any{
 			Text{Content: "X"},
@@ -962,7 +962,7 @@ func TestV2FlexGrowHorizontalMultiple(t *testing.T) {
 	// Row width is 30, no fixed children
 	// A with Grow(1) gets 1/3, B with Grow(2) gets 2/3
 
-	tmpl := V2Build(Row{Children: []any{
+	tmpl := Build(Row{Children: []any{
 		Col{Children: []any{Text{Content: "A"}}}.Grow(1),
 		Col{Children: []any{Text{Content: "B"}}}.Grow(2),
 	}})

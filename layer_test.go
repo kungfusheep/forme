@@ -24,7 +24,7 @@ func TestLayerBlit(t *testing.T) {
 			Text{Content: "Footer"},
 		}}
 
-		tmpl := BuildSerial(view)
+		tmpl := Build(view)
 		tmpl.Execute(screen, 20, 10)
 
 		// Verify header at line 0
@@ -86,7 +86,7 @@ func TestLayerBlit(t *testing.T) {
 			Text{Content: "=BOT="},
 		}}
 
-		tmpl := BuildSerial(view)
+		tmpl := Build(view)
 		tmpl.Execute(screen, 20, 15)
 
 		expected := []struct {
@@ -136,7 +136,7 @@ func TestLayerBlit(t *testing.T) {
 			LayerView{Layer: layer2, ViewHeight: 3},
 		}}
 
-		tmpl := BuildSerial(view)
+		tmpl := Build(view)
 
 		// Initial render - both at scroll 0
 		tmpl.Execute(screen, 20, 10)
@@ -192,7 +192,7 @@ func TestLayerBlit(t *testing.T) {
 			Text{Content: "After"},
 		}}
 
-		tmpl := BuildSerial(view)
+		tmpl := Build(view)
 		screen.Clear()
 		tmpl.Execute(screen, 20, 5)
 
@@ -213,7 +213,7 @@ func TestLayerScrollBounds(t *testing.T) {
 		layer := NewLayer()
 		buf := NewBuffer(10, 20) // 20 lines of content
 		layer.SetBuffer(buf)
-		layer.setViewport(10, 5) // 5 line viewport
+		layer.SetViewport(10, 5) // 5 line viewport
 
 		// MaxScroll should be 20 - 5 = 15
 		if got := layer.MaxScroll(); got != 15 {
@@ -237,7 +237,7 @@ func TestLayerScrollBounds(t *testing.T) {
 		layer := NewLayer()
 		buf := NewBuffer(10, 100)
 		layer.SetBuffer(buf)
-		layer.setViewport(10, 10)
+		layer.SetViewport(10, 10)
 
 		layer.PageDown()
 		if got := layer.ScrollY(); got != 10 {

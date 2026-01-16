@@ -65,7 +65,7 @@ func main() {
 		},
 	}
 
-	serial := tui.BuildSerial(ui)
+	serial := tui.Build(ui)
 
 	// Setup buffers
 	var pool *tui.BufferPool
