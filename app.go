@@ -28,13 +28,15 @@ type App struct {
 	reader *riffkey.Reader
 
 	// SerialTemplate + BufferPool (for SetView single-view mode)
-	template *SerialTemplate
-	pool     *BufferPool
+	template   *SerialTemplate
+	v2template *V2Template
+	pool       *BufferPool
 
 	// Multi-view routing
 	viewTemplates map[string]*SerialTemplate
 	viewRouters   map[string]*riffkey.Router
 	currentView   string
+	viewStack     []string // pushed views (for modal overlays)
 
 	// State
 	running    bool
@@ -84,6 +86,17 @@ func NewApp() (*App, error) {
 //	)
 func (a *App) SetView(view any) *App {
 	a.template = BuildSerial(view)
+	// Create buffer pool for async clearing
+	size := a.screen.Size()
+	a.pool = NewBufferPool(size.Width, size.Height)
+	return a
+}
+
+// SetV2View sets a V2 template view for rendering.
+// Use this for V2 features like Box layouts, custom Renderer, etc.
+func (a *App) SetV2View(view any) *App {
+	a.v2template = V2Build(view)
+	a.template = nil // clear old template
 	// Create buffer pool for async clearing
 	size := a.screen.Size()
 	a.pool = NewBufferPool(size.Width, size.Height)
@@ -155,18 +168,34 @@ func (a *App) Back() {
 }
 
 // PushView pushes a view as a modal overlay.
-// The modal's handlers take precedence until Pop() is called.
+// The modal's handlers take precedence until PopView() is called.
+// The pushed view becomes the active rendered view until popped.
 func (a *App) PushView(name string) {
 	if router, ok := a.viewRouters[name]; ok {
+		a.viewStack = append(a.viewStack, name)
 		a.input.Push(router)
 		a.RequestRender()
 	}
 }
 
 // PopView removes the top modal overlay.
+// Returns to the previous view in the stack.
 func (a *App) PopView() {
+	if len(a.viewStack) > 0 {
+		a.viewStack = a.viewStack[:len(a.viewStack)-1]
+	}
 	a.input.Pop()
 	a.RequestRender()
+}
+
+// ViewRouter returns the router for a named view, if it exists.
+// Useful for advanced configuration like HandleUnmatched.
+func (a *App) ViewRouter(name string) (*riffkey.Router, bool) {
+	if a.viewRouters == nil {
+		return nil, false
+	}
+	router, ok := a.viewRouters[name]
+	return router, ok
 }
 
 // Screen returns the screen.
@@ -235,6 +264,13 @@ func (a *App) RequestRender() {
 	}
 }
 
+// RenderNow performs a render immediately without channel coordination.
+// Use this from dedicated update goroutines to avoid scheduler overhead.
+// The render is mutex-protected so it's safe to call concurrently.
+func (a *App) RenderNow() {
+	a.render()
+}
+
 // render performs the actual render if needed.
 func (a *App) render() {
 	a.renderMu.Lock()
@@ -245,22 +281,34 @@ func (a *App) render() {
 		t0 = time.Now()
 	}
 
-	// Fast path: use SerialTemplate + BufferPool
-	// Check for multi-view mode first, then single-view mode
+	// Fast path: use SerialTemplate or V2Template + BufferPool
+	// Priority: view stack (pushed modals) > currentView > single-view template
 	var tmpl *SerialTemplate
-	if a.currentView != "" && a.viewTemplates != nil {
+	if len(a.viewStack) > 0 && a.viewTemplates != nil {
+		// Use topmost pushed view
+		topView := a.viewStack[len(a.viewStack)-1]
+		tmpl = a.viewTemplates[topView]
+	} else if a.currentView != "" && a.viewTemplates != nil {
 		tmpl = a.viewTemplates[a.currentView]
 	} else if a.template != nil {
 		tmpl = a.template
 	}
 
-	if tmpl == nil || a.pool == nil {
-		return // No view set
+	if a.pool == nil {
+		return // No pool
 	}
 
 	size := a.screen.Size()
 	buf := a.pool.Current()
-	tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+
+	// Use V2Template if set, otherwise SerialTemplate
+	if a.v2template != nil {
+		a.v2template.Execute(buf, int16(size.Width), int16(size.Height))
+	} else if tmpl != nil {
+		tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+	} else {
+		return // No view set
+	}
 
 	if DebugTiming {
 		t1 = time.Now()
@@ -271,17 +319,12 @@ func (a *App) render() {
 
 	// Copy to screen's back buffer for flush
 	a.copyToScreen(buf)
-	a.screen.Flush()
-	a.pool.Swap() // Queue async clear
+	a.screen.Flush() // Builds buffer but doesn't write
+	a.pool.Swap()    // Queue async clear
 
-	// Position and show/hide cursor after render
-	if a.cursorVisible {
-		a.screen.SetCursorShape(a.cursorShape)
-		a.screen.MoveCursor(a.cursorX, a.cursorY)
-		a.screen.ShowCursor()
-	} else {
-		a.screen.HideCursor()
-	}
+	// Add cursor ops to same buffer - one syscall for everything
+	a.screen.BufferCursor(a.cursorX, a.cursorY, a.cursorVisible, a.cursorShape)
+	a.screen.FlushBuffer() // Single syscall for content + cursor
 
 	if DebugTiming {
 		lastFlushTime = time.Since(t1)
@@ -301,6 +344,24 @@ func TimingString() string {
 		lastLayoutTime.Round(time.Microsecond),
 		lastRenderTime.Round(time.Microsecond),
 		lastFlushTime.Round(time.Microsecond))
+}
+
+// Timings holds timing data for the last frame.
+type Timings struct {
+	BuildUs  float64 // Build time in microseconds
+	LayoutUs float64 // Layout time in microseconds
+	RenderUs float64 // Render time in microseconds
+	FlushUs  float64 // Flush time in microseconds
+}
+
+// GetTimings returns the timing data for the last frame.
+func GetTimings() Timings {
+	return Timings{
+		BuildUs:  float64(lastBuildTime.Microseconds()),
+		LayoutUs: float64(lastLayoutTime.Microseconds()),
+		RenderUs: float64(lastRenderTime.Microseconds()),
+		FlushUs:  float64(lastFlushTime.Microseconds()),
+	}
 }
 
 // Run starts the application. Blocks until Stop is called.
@@ -385,7 +446,11 @@ func (a *App) Stop() {
 
 // handleResize watches for terminal resize events.
 func (a *App) handleResize() {
-	for range a.screen.ResizeChan() {
+	for size := range a.screen.ResizeChan() {
+		// Resize the buffer pool to match new terminal dimensions
+		if a.pool != nil {
+			a.pool.Resize(size.Width, size.Height)
+		}
 		a.RequestRender()
 	}
 }

@@ -371,14 +371,14 @@ func buildView() any {
 		cpuCol1[i] = tui.Row{Children: []any{
 			tui.Text{Content: &state.CPUCores[i].Label},
 			tui.Text{Content: " "},
-			tui.Progress{Value: &state.CPUCores[i].Usage, Width: 20},
+			tui.Progress{Value: &state.CPUCores[i].Usage, BarWidth: 20},
 			tui.Text{Content: " "},
 			tui.Text{Content: &state.CPUCores[i].UsageStr},
 		}}
 		cpuCol2[i] = tui.Row{Children: []any{
 			tui.Text{Content: &state.CPUCores[i+numCPUs/2].Label},
 			tui.Text{Content: " "},
-			tui.Progress{Value: &state.CPUCores[i+numCPUs/2].Usage, Width: 20},
+			tui.Progress{Value: &state.CPUCores[i+numCPUs/2].Usage, BarWidth: 20},
 			tui.Text{Content: " "},
 			tui.Text{Content: &state.CPUCores[i+numCPUs/2].UsageStr},
 		}}
@@ -392,12 +392,12 @@ func buildView() any {
 		workerRows[i] = tui.Row{Gap: 4, Children: []any{
 			tui.Row{Children: []any{
 				tui.Text{Content: fmt.Sprintf("W%02d ", w1.ID)},
-				tui.Progress{Value: &w1.Progress, Width: 12},
+				tui.Progress{Value: &w1.Progress, BarWidth: 12},
 				tui.Text{Content: fmt.Sprintf(" %s", w1.Status)},
 			}},
 			tui.Row{Children: []any{
 				tui.Text{Content: fmt.Sprintf("W%02d ", w2.ID)},
-				tui.Progress{Value: &w2.Progress, Width: 12},
+				tui.Progress{Value: &w2.Progress, BarWidth: 12},
 				tui.Text{Content: fmt.Sprintf(" %s", w2.Status)},
 			}},
 		}}
@@ -415,7 +415,7 @@ func buildView() any {
 			}},
 		}},
 		tui.Row{Gap: 4, Children: []any{
-			tui.Text{Content: &state.FPSText, Style: tui.DStyle{FG: tui.ColorPtr(tui.Green)}},
+			tui.Text{Content: &state.FPSText, Style: tui.Style{FG: tui.Green}},
 			tui.Text{Content: &state.TimeText},
 			tui.Text{Content: &state.Uptime},
 		}},
@@ -435,12 +435,12 @@ func buildView() any {
 			tui.Col{Children: cpuCol2},
 			// Temps in the CPU panel
 			tui.Col{Children: []any{
-				tui.Text{Content: &state.CPUTemp, Style: tui.DStyle{FG: tui.ColorPtr(tui.Yellow)}},
-				tui.Text{Content: &state.GPUTemp, Style: tui.DStyle{FG: tui.ColorPtr(tui.Yellow)}},
-				tui.Text{Content: &state.SysTemp, Style: tui.DStyle{FG: tui.ColorPtr(tui.Yellow)}},
+				tui.Text{Content: &state.CPUTemp, Style: tui.Style{FG: tui.Yellow}},
+				tui.Text{Content: &state.GPUTemp, Style: tui.Style{FG: tui.Yellow}},
+				tui.Text{Content: &state.SysTemp, Style: tui.Style{FG: tui.Yellow}},
 				tui.Text{Content: &state.FanSpeed},
 				tui.Text{},
-				tui.Text{Content: "Load Average:", Bold: true},
+				tui.Text{Content: "Load Average:", Style: tui.Style{Attr: tui.AttrBold}},
 				tui.Text{Content: &state.Load1},
 				tui.Text{Content: &state.Load5},
 				tui.Text{Content: &state.Load15},
@@ -462,13 +462,13 @@ func buildView() any {
 				}},
 				tui.Row{Children: []any{
 					tui.Text{Content: "RAM:  "},
-					tui.Progress{Value: &state.MemProgress, Width: 25},
+					tui.Progress{Value: &state.MemProgress, BarWidth: 25},
 					tui.Text{Content: " "},
 					tui.Text{Content: &state.MemText},
 				}},
 				tui.Row{Children: []any{
 					tui.Text{Content: "Swap: "},
-					tui.Progress{Value: &state.SwapProgress, Width: 25},
+					tui.Progress{Value: &state.SwapProgress, BarWidth: 25},
 					tui.Text{Content: " "},
 					tui.Text{Content: &state.SwapText},
 				}},
@@ -562,7 +562,7 @@ func buildView() any {
 			{Text: "Live System Logs", Style: tui.Style{FG: tui.BrightWhite, Attr: tui.AttrBold}},
 			{Text: " ────────────────────────────────────────────────────────────────────────────────────────────────┐", Style: tui.Style{FG: tui.White}},
 		}},
-		tui.LayerView{Layer: logLayer, Height: logViewHeight},
+		tui.LayerView{Layer: logLayer, ViewHeight: logViewHeight},
 		tui.RichText{Spans: []tui.Span{
 			{Text: "└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘", Style: tui.Style{FG: tui.White}},
 		}},

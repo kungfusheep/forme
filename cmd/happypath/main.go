@@ -40,11 +40,11 @@ func main() {
 	// Set the view - batteries included!
 	app.SetView(
 		tui.Col{Children: []any{
-			tui.Text{Content: "Happy Path.emo", Bold: true},
+			tui.Text{Content: "Happy Path.emo", Style: tui.Style{Attr: tui.AttrBold}},
 			tui.Text{},
 			tui.Text{Content: "Press j/k to change values, q to quit"},
 			tui.Text{},
-			tui.Progress{Value: &state.Progress, Width: 40},
+			tui.Progress{Value: &state.Progress, BarWidth: 40},
 			tui.If(&boolFlag).Eq(true).Then(tui.Text{Content: "Counter would be here"}),
 			tui.Text{},
 			tui.Row{Gap: 2, Children: []any{

@@ -114,7 +114,7 @@ func main() {
 				return tui.Row{Children: []any{
 					tui.Text{Content: &core.Name},
 					tui.Text{Content: ": "},
-					tui.Progress{Value: &core.Load, Width: 50},
+					tui.Progress{Value: &core.Load, BarWidth: 50},
 				}}
 			}),
 			tui.Text{Content: ""},
@@ -123,9 +123,9 @@ func main() {
 				return tui.Row{Children: []any{
 					tui.Text{Content: &proc.Name},
 					tui.Text{Content: " CPU:"},
-					tui.Progress{Value: &proc.CPU, Width: 25},
+					tui.Progress{Value: &proc.CPU, BarWidth: 25},
 					tui.Text{Content: " MEM:"},
-					tui.Progress{Value: &proc.Mem, Width: 25},
+					tui.Progress{Value: &proc.Mem, BarWidth: 25},
 				}}
 			}),
 		},

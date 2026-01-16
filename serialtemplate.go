@@ -2,6 +2,7 @@ package tui
 
 import (
 	"reflect"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -13,6 +14,14 @@ type SerialTemplate struct {
 	maxLevel int
 	nodes    []SerialNode    // pre-allocated node storage
 	ctxStack []layoutContext // pre-allocated layout context stack (reused each frame)
+	geom     []opGeom        // computed geometry per op (reused each frame)
+}
+
+// opGeom stores computed layout geometry for an op during execute
+type opGeom struct {
+	X, Y, W, H   int16 // computed position and size
+	contentH     int16 // content height before flex grow
+	borderOffset int8  // 1 if bordered, 0 otherwise
 }
 
 // SerialNode is minimal runtime node data
@@ -31,6 +40,9 @@ type SerialNode struct {
 
 	// Layer reference (for blit during render)
 	Layer *Layer
+
+	// Custom component render function
+	CustomRender func(buf *Buffer, x, y, w, h int16)
 
 	// Styling
 	Bold bool
@@ -54,14 +66,21 @@ type SerialOp struct {
 	BoolPtr *bool
 
 	// Layout hints
-	Width int16
-	IsRow bool
-	Gap   int8
-	Bold  bool
-	Style DStyle
+	Width        int16
+	Height       int16       // explicit height
+	PercentWidth float32     // fraction of parent width
+	FlexGrow     float32     // share of remaining space
+	Border       BorderStyle // border for containers
+	Title        string      // title for bordered containers
+	BorderFG     *Color      // border foreground color
+	IsRow        bool
+	Gap          int8
+	Bold         bool
+	Style        Style
 
 	// ForEach
 	SlicePtr unsafe.Pointer
+	SliceOff uintptr // offset from elemBase for nested ForEach
 	ElemSize uintptr
 	IterTmpl *SerialTemplate // sub-template for each element
 
@@ -94,6 +113,19 @@ type SerialOp struct {
 	SelectedPtr      *int           // pointer to selected index
 	Marker           string         // selection marker
 	MarkerWidth      int16          // cached marker width
+
+	// Leader
+	LeaderLabelStr string   // static label
+	LeaderLabelPtr *string  // label pointer
+	LeaderValueStr string   // static value
+	LeaderValuePtr *string  // value pointer
+	LeaderWidth    int16    // total width (0 = fill available)
+	LeaderFill     rune     // fill character
+	LeaderStyle    Style    // styling
+
+	// Custom component
+	CustomMeasure func(availW int16) (w, h int16)
+	CustomRender  func(buf *Buffer, x, y, w, h int16)
 }
 
 // Op kinds - each encodes both WHAT and HOW to access values
@@ -110,6 +142,7 @@ const (
 	SerialOpContainerEnd
 
 	SerialOpForEach
+	SerialOpForEachOffset // for nested ForEach within parent element
 
 	SerialOpIf
 	SerialOpElse
@@ -125,6 +158,11 @@ const (
 	SerialOpSwitch
 
 	SerialOpSelectionList
+
+	SerialOpLeaderStatic // both Label and Value are static strings
+	SerialOpLeaderPtr    // at least one is a pointer
+
+	SerialOpCustom // user-defined component (function pointer path)
 )
 
 // BuildSerial compiles a declarative UI into a SerialTemplate
@@ -185,15 +223,15 @@ func (t *SerialTemplate) compile(node any, parentIdx int16, level int, elemBase 
 	case Progress:
 		return t.compileProgress(v, parentIdx, level, elemBase, elemSize)
 	case Row:
-		return t.compileContainer(v.Gap, v.Children, parentIdx, level, true, elemBase, elemSize)
+		return t.compileContainer(v.flex, v.Gap, v.Children, v.border, v.Title, v.borderFG, parentIdx, level, true, elemBase, elemSize)
 	case Col:
-		return t.compileContainer(v.Gap, v.Children, parentIdx, level, false, elemBase, elemSize)
+		return t.compileContainer(v.flex, v.Gap, v.Children, v.border, v.Title, v.borderFG, parentIdx, level, false, elemBase, elemSize)
 	case IfNode:
 		return t.compileIf(v, parentIdx, level, elemBase, elemSize)
 	case ElseNode:
 		return t.compileElse(v, parentIdx, level, elemBase, elemSize)
 	case ForEachNode:
-		return t.compileForEach(v, parentIdx, level)
+		return t.compileForEach(v, parentIdx, level, elemBase, elemSize)
 	case SelectionList:
 		return t.compileSelectionList(&v, parentIdx, level)
 	case *SelectionList:
@@ -202,6 +240,10 @@ func (t *SerialTemplate) compile(node any, parentIdx int16, level int, elemBase 
 		return t.compileRichText(v, parentIdx, level, elemBase, elemSize)
 	case LayerView:
 		return t.compileLayer(v, parentIdx, level)
+	case Leader:
+		return t.compileLeader(v, parentIdx, level, elemBase, elemSize)
+	case Custom:
+		return t.compileCustom(v, parentIdx, level)
 	default:
 		// Check for ConditionNode (generic If conditions)
 		if cond, ok := node.(ConditionNode); ok {
@@ -219,7 +261,7 @@ func (t *SerialTemplate) compile(node any, parentIdx int16, level int, elemBase 
 func (t *SerialTemplate) compileText(v Text, parentIdx int16, level int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := SerialOp{
 		Parent: parentIdx,
-		Bold:   v.Bold || v.Style.Bold,
+		Bold:   v.Style.Attr&AttrBold != 0,
 		Style:  v.Style,
 	}
 
@@ -258,7 +300,7 @@ func (t *SerialTemplate) compileText(v Text, parentIdx int16, level int, elemBas
 }
 
 func (t *SerialTemplate) compileProgress(v Progress, parentIdx int16, level int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	width := v.Width
+	width := v.BarWidth
 	if width == 0 {
 		width = 20
 	}
@@ -300,12 +342,19 @@ func (t *SerialTemplate) compileProgress(v Progress, parentIdx int16, level int,
 	return t.addOp(op, level)
 }
 
-func (t *SerialTemplate) compileContainer(gap int8, children []any, parentIdx int16, level int, isRow bool, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *SerialTemplate) compileContainer(f flex, gap int8, children []any, border BorderStyle, title string, borderFG *Color, parentIdx int16, level int, isRow bool, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	startIdx := t.addOp(SerialOp{
-		Kind:   SerialOpContainerStart,
-		Parent: parentIdx,
-		IsRow:  isRow,
-		Gap:    gap,
+		Kind:         SerialOpContainerStart,
+		Parent:       parentIdx,
+		IsRow:        isRow,
+		Gap:          gap,
+		PercentWidth: f.percentWidth,
+		Width:        f.width,
+		Height:       f.height,
+		FlexGrow:     f.flexGrow,
+		Border:       border,
+		Title:        title,
+		BorderFG:     borderFG,
 	}, level)
 
 	for _, child := range children {
@@ -411,8 +460,63 @@ func (t *SerialTemplate) compileLayer(v LayerView, parentIdx int16, level int) i
 		Kind:        SerialOpLayer,
 		Parent:      parentIdx,
 		LayerPtr:    v.Layer,
-		LayerHeight: v.Height,
-		LayerWidth:  v.Width,
+		LayerHeight: v.ViewHeight,
+		LayerWidth:  v.ViewWidth,
+	}
+	return t.addOp(op, level)
+}
+
+func (t *SerialTemplate) compileLeader(v Leader, parentIdx int16, level int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := SerialOp{
+		Parent:      parentIdx,
+		LeaderWidth: v.Width,
+		LeaderFill:  v.Fill,
+		LeaderStyle: v.Style,
+	}
+
+	// Default fill character
+	if op.LeaderFill == 0 {
+		op.LeaderFill = '.'
+	}
+
+	// Determine if static or pointer-based
+	labelIsPtr := false
+	valueIsPtr := false
+
+	// Handle Label
+	switch val := v.Label.(type) {
+	case string:
+		op.LeaderLabelStr = val
+	case *string:
+		op.LeaderLabelPtr = val
+		labelIsPtr = true
+	}
+
+	// Handle Value
+	switch val := v.Value.(type) {
+	case string:
+		op.LeaderValueStr = val
+	case *string:
+		op.LeaderValuePtr = val
+		valueIsPtr = true
+	}
+
+	// Set kind based on whether we have any pointers
+	if labelIsPtr || valueIsPtr {
+		op.Kind = SerialOpLeaderPtr
+	} else {
+		op.Kind = SerialOpLeaderStatic
+	}
+
+	return t.addOp(op, level)
+}
+
+func (t *SerialTemplate) compileCustom(v Custom, parentIdx int16, level int) int16 {
+	op := SerialOp{
+		Kind:          SerialOpCustom,
+		Parent:        parentIdx,
+		CustomMeasure: v.Measure,
+		CustomRender:  v.Render,
 	}
 	return t.addOp(op, level)
 }
@@ -511,7 +615,7 @@ func (t *SerialTemplate) compileSwitch(sw SwitchNodeInterface, parentIdx int16, 
 	return t.addOp(op, level)
 }
 
-func (t *SerialTemplate) compileForEach(v ForEachNode, parentIdx int16, level int) int16 {
+func (t *SerialTemplate) compileForEach(v ForEachNode, parentIdx int16, level int, parentElemBase unsafe.Pointer, parentElemSize uintptr) int16 {
 	// Analyze slice
 	sliceRV := reflect.ValueOf(v.Items)
 	if sliceRV.Kind() != reflect.Ptr {
@@ -554,10 +658,20 @@ func (t *SerialTemplate) compileForEach(v ForEachNode, parentIdx int16, level in
 	iterTmpl.byLevel = iterTmpl.byLevel[:iterTmpl.maxLevel+1]
 	iterTmpl.nodes = make([]SerialNode, 0, len(iterTmpl.ops))
 
+	// Determine if this is a nested ForEach (slice ptr is within parent element)
+	opKind := uint8(SerialOpForEach)
+	var sliceOff uintptr
+	if parentElemBase != nil && isWithinRange(slicePtr, parentElemBase, parentElemSize) {
+		opKind = SerialOpForEachOffset
+		sliceOff = uintptr(slicePtr) - uintptr(parentElemBase)
+		slicePtr = nil // don't store absolute pointer for offset-based
+	}
+
 	op := SerialOp{
-		Kind:     SerialOpForEach,
+		Kind:     opKind,
 		Parent:   parentIdx,
 		SlicePtr: slicePtr,
+		SliceOff: sliceOff,
 		ElemSize: elemSize,
 		IterTmpl: iterTmpl,
 	}
@@ -656,7 +770,9 @@ func (t *SerialTemplate) measureOp(opIdx int16, elemBase unsafe.Pointer, ifSatis
 	case SerialOpContainerEnd:
 		t.measureContainerEnd(op)
 	case SerialOpForEach:
-		t.measureForEach(op)
+		t.measureForEach(op, nil)
+	case SerialOpForEachOffset:
+		t.measureForEach(op, elemBase)
 	case SerialOpIf:
 		t.measureIf(op, ifSatisfied)
 	case SerialOpElse:
@@ -675,6 +791,12 @@ func (t *SerialTemplate) measureOp(opIdx int16, elemBase unsafe.Pointer, ifSatis
 		t.measureSwitch(op)
 	case SerialOpSelectionList:
 		t.measureSelectionList(op)
+	case SerialOpLeaderStatic:
+		t.measureLeaderStatic(op)
+	case SerialOpLeaderPtr:
+		t.measureLeaderPtr(op)
+	case SerialOpCustom:
+		t.measureCustom(op)
 	}
 }
 
@@ -682,7 +804,7 @@ func (t *SerialTemplate) measureTextStatic(op *SerialOp) {
 	t.nodes = append(t.nodes, SerialNode{
 		Kind: op.Kind,
 		Text: op.StaticStr,
-		W:    int16(len(op.StaticStr)),
+		W:    int16(utf8.RuneCountInString(op.StaticStr)),
 		H:    1,
 		Bold: op.Bold,
 	})
@@ -693,7 +815,7 @@ func (t *SerialTemplate) measureTextPtr(op *SerialOp) {
 	t.nodes = append(t.nodes, SerialNode{
 		Kind: op.Kind,
 		Text: text,
-		W:    int16(len(text)),
+		W:    int16(utf8.RuneCountInString(text)),
 		H:    1,
 		Bold: op.Bold,
 	})
@@ -704,7 +826,7 @@ func (t *SerialTemplate) measureTextOffset(op *SerialOp, elemBase unsafe.Pointer
 	t.nodes = append(t.nodes, SerialNode{
 		Kind: op.Kind,
 		Text: text,
-		W:    int16(len(text)),
+		W:    int16(utf8.RuneCountInString(text)),
 		H:    1,
 		Bold: op.Bold,
 	})
@@ -750,8 +872,19 @@ func (t *SerialTemplate) measureContainerEnd(op *SerialOp) {
 	// Actual measurement happens in layout phase
 }
 
-func (t *SerialTemplate) measureForEach(op *SerialOp) {
-	sliceHdr := *(*sliceHeader)(op.SlicePtr)
+func (t *SerialTemplate) measureForEach(op *SerialOp, elemBase unsafe.Pointer) {
+	// For offset-based ForEach (nested within parent element), compute actual slice ptr
+	var slicePtr unsafe.Pointer
+	if op.Kind == SerialOpForEachOffset {
+		if elemBase == nil {
+			return // Can't resolve offset without elemBase
+		}
+		slicePtr = unsafe.Add(elemBase, op.SliceOff)
+	} else {
+		slicePtr = op.SlicePtr
+	}
+
+	sliceHdr := *(*sliceHeader)(slicePtr)
 	if sliceHdr.Len == 0 || op.IterTmpl == nil {
 		return
 	}
@@ -1012,7 +1145,7 @@ func (t *SerialTemplate) measureElse(op *SerialOp, ifSatisfied *bool) {
 func (t *SerialTemplate) measureRichTextStatic(op *SerialOp) {
 	w := int16(0)
 	for _, span := range op.Spans {
-		w += int16(len(span.Text))
+		w += int16(utf8.RuneCountInString(span.Text))
 	}
 	t.nodes = append(t.nodes, SerialNode{
 		Kind:  SerialOpRichTextStatic,
@@ -1026,7 +1159,7 @@ func (t *SerialTemplate) measureRichTextPtr(op *SerialOp) {
 	spans := *op.SpansPtr
 	w := int16(0)
 	for _, span := range spans {
-		w += int16(len(span.Text))
+		w += int16(utf8.RuneCountInString(span.Text))
 	}
 	t.nodes = append(t.nodes, SerialNode{
 		Kind:  SerialOpRichTextPtr,
@@ -1040,13 +1173,91 @@ func (t *SerialTemplate) measureRichTextOffset(op *SerialOp, elemBase unsafe.Poi
 	spans := *(*[]Span)(unsafe.Add(elemBase, op.SpansOff))
 	w := int16(0)
 	for _, span := range spans {
-		w += int16(len(span.Text))
+		w += int16(utf8.RuneCountInString(span.Text))
 	}
 	t.nodes = append(t.nodes, SerialNode{
 		Kind:  SerialOpRichTextOffset,
 		Spans: spans,
 		W:     w,
 		H:     1,
+	})
+}
+
+func (t *SerialTemplate) measureLeaderStatic(op *SerialOp) {
+	// For static leader, compute text at measure time
+	label := op.LeaderLabelStr
+	value := op.LeaderValueStr
+	width := int(op.LeaderWidth)
+	if width == 0 {
+		width = utf8.RuneCountInString(label) + utf8.RuneCountInString(value) + 3 // minimum with some dots
+	}
+
+	// Compute fill
+	fillCount := width - utf8.RuneCountInString(label) - utf8.RuneCountInString(value)
+	if fillCount < 1 {
+		fillCount = 1
+	}
+	fill := string(op.LeaderFill)
+	fillStr := ""
+	for i := 0; i < fillCount; i++ {
+		fillStr += fill
+	}
+
+	text := label + fillStr + value
+	t.nodes = append(t.nodes, SerialNode{
+		Kind: op.Kind,
+		Text: text,
+		W:    int16(utf8.RuneCountInString(text)),
+		H:    1,
+	})
+}
+
+func (t *SerialTemplate) measureLeaderPtr(op *SerialOp) {
+	// Get current values from pointers
+	label := op.LeaderLabelStr
+	if op.LeaderLabelPtr != nil {
+		label = *op.LeaderLabelPtr
+	}
+	value := op.LeaderValueStr
+	if op.LeaderValuePtr != nil {
+		value = *op.LeaderValuePtr
+	}
+
+	width := int(op.LeaderWidth)
+	if width == 0 {
+		width = utf8.RuneCountInString(label) + utf8.RuneCountInString(value) + 3 // minimum with some dots
+	}
+
+	// Compute fill
+	fillCount := width - utf8.RuneCountInString(label) - utf8.RuneCountInString(value)
+	if fillCount < 1 {
+		fillCount = 1
+	}
+	fill := string(op.LeaderFill)
+	fillStr := ""
+	for i := 0; i < fillCount; i++ {
+		fillStr += fill
+	}
+
+	text := label + fillStr + value
+	t.nodes = append(t.nodes, SerialNode{
+		Kind: op.Kind,
+		Text: text,
+		W:    int16(utf8.RuneCountInString(text)),
+		H:    1,
+	})
+}
+
+func (t *SerialTemplate) measureCustom(op *SerialOp) {
+	var w, h int16 = 1, 1
+	if op.CustomMeasure != nil {
+		w, h = op.CustomMeasure(0) // TODO: pass available width from context
+	}
+	t.nodes = append(t.nodes, SerialNode{
+		Kind:         op.Kind,
+		W:            w,
+		H:            h,
+		CustomRender: op.CustomRender,
 	})
 }
 
@@ -1141,20 +1352,329 @@ type layoutContext struct {
 	maxH       int16 // max child height (for calculating row height)
 	maxW       int16 // max child width (for calculating col width)
 	firstChild bool  // true if no children added yet (for gap handling)
+	availW     int16 // available width for children (for PercentWidth)
+	availH     int16 // available height for children (for FlexGrow)
+	opIdx      int16 // index of ContainerStart op (for geometry tracking)
 }
 
 // Execute measures and renders the template to the buffer.
 func (t *SerialTemplate) Execute(buf *Buffer, w, h int16) {
-	t.execute(buf, w, h, false)
+	t.executeThreePhase(buf, w, h, false)
 }
 
 // ExecutePadded renders with padded writes, allowing caller to skip Clear().
 // Only safe when UI structure is stable (no shrinking content).
 func (t *SerialTemplate) ExecutePadded(buf *Buffer, w, h int16) {
-	t.execute(buf, w, h, true)
+	t.executeThreePhase(buf, w, h, true)
 }
 
-func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
+// executeThreePhase implements proper three-phase layout:
+// 1. Update (top→down): distribute widths based on PercentWidth
+// 2. Layout (bottom→up): calculate heights, handle FlexGrow
+// 3. Draw: render nodes to buffer
+func (t *SerialTemplate) executeThreePhase(buf *Buffer, w, h int16, padded bool) {
+	// Ensure geometry slice is large enough
+	if cap(t.geom) < len(t.ops) {
+		t.geom = make([]opGeom, len(t.ops))
+	}
+	t.geom = t.geom[:len(t.ops)]
+
+	// Initialize root geometry
+	// Find first container (if any) or set implicit root
+	if len(t.ops) > 0 {
+		for i := range t.geom {
+			t.geom[i] = opGeom{} // reset
+		}
+	}
+
+	// Phase 1: Update (top→down) - distribute widths and set sizes
+	t.phaseUpdate(w)
+
+	// Phase 2: Layout (bottom→up) - calculate heights
+	t.phaseLayout(h)
+
+	// Phase 3: Measure leaf nodes and render
+	t.phaseDraw(buf, w, h, padded)
+}
+
+// phaseUpdate distributes widths AND sets sizes for ALL ops (top-down)
+// This is where measurement happens - most sizes are static or derived from parent
+func (t *SerialTemplate) phaseUpdate(rootW int16) {
+	// Process ops by level, top to bottom
+	for level := 0; level <= t.maxLevel; level++ {
+		for _, opIdx := range t.byLevel[level] {
+			op := &t.ops[opIdx]
+
+			switch op.Kind {
+			case SerialOpContainerStart:
+				// Determine this container's width
+				var containerW int16
+				if op.Width > 0 {
+					containerW = op.Width
+				} else if op.PercentWidth > 0 {
+					parentW := rootW
+					if op.Parent >= 0 {
+						parentW = t.geom[op.Parent].W
+					}
+					containerW = int16(float32(parentW) * op.PercentWidth)
+				} else {
+					parentW := rootW
+					if op.Parent >= 0 {
+						parentW = t.geom[op.Parent].W
+					}
+					containerW = parentW
+				}
+
+				// Account for border
+				borderOffset := int8(0)
+				if op.Border.Horizontal != 0 {
+					borderOffset = 1
+					containerW -= 2
+				}
+
+				t.geom[opIdx].W = containerW
+				t.geom[opIdx].borderOffset = borderOffset
+				// Height set later by phaseLayout (depends on children)
+
+			case SerialOpTextStatic, SerialOpTextPtr, SerialOpTextOffset,
+				SerialOpProgressStatic, SerialOpProgressPtr, SerialOpProgressOffset,
+				SerialOpRichTextStatic, SerialOpRichTextPtr, SerialOpRichTextOffset,
+				SerialOpLeaderStatic, SerialOpLeaderPtr,
+				SerialOpIf, SerialOpElse, SerialOpCondition, SerialOpSwitch,
+				SerialOpSelectionList:
+				// Leaf nodes are 1 line
+				t.geom[opIdx].H = 1
+
+			case SerialOpLayer:
+				// Layer has explicit or content-based height
+				h := op.LayerHeight
+				if h == 0 {
+					h = 1
+				}
+				t.geom[opIdx].H = h
+
+			case SerialOpCustom:
+				// Custom components measure themselves
+				if op.CustomMeasure != nil {
+					_, h := op.CustomMeasure(rootW)
+					t.geom[opIdx].H = h
+				} else {
+					t.geom[opIdx].H = 1
+				}
+
+			case SerialOpForEach, SerialOpForEachOffset:
+				// ForEach: height = slice length × iteration height
+				var slicePtr unsafe.Pointer
+				if op.Kind == SerialOpForEach {
+					slicePtr = op.SlicePtr
+				}
+				if slicePtr != nil && op.IterTmpl != nil {
+					sliceHdr := *(*sliceHeader)(slicePtr)
+					iterH := t.calculateIterTemplateHeight(op.IterTmpl)
+					t.geom[opIdx].H = int16(sliceHdr.Len) * iterH
+				} else {
+					t.geom[opIdx].H = 0
+				}
+			}
+		}
+	}
+}
+
+// phaseLayout calculates container heights bottom-up by summing children
+func (t *SerialTemplate) phaseLayout(rootH int16) {
+	// Process ops by level, bottom to top
+	for level := t.maxLevel; level >= 0; level-- {
+		for _, opIdx := range t.byLevel[level] {
+			op := &t.ops[opIdx]
+
+			// Only containers need layout - all other ops have heights set in phaseUpdate
+			if op.Kind != SerialOpContainerStart {
+				continue
+			}
+
+			// Calculate content height from children
+			contentH := t.calculateContentHeight(opIdx, op)
+			t.geom[opIdx].contentH = contentH
+
+			// Determine final height
+			var containerH int16
+			if op.Height > 0 {
+				// Explicit height - this IS the total height (including borders if any)
+				containerH = op.Height
+			} else if op.FlexGrow > 0 && op.Parent >= 0 {
+				// Will be set by parent during flex distribution
+				containerH = contentH
+				// Account for border
+				if op.Border.Horizontal != 0 {
+					containerH += 2 // top and bottom border
+				}
+			} else {
+				// Height from content
+				containerH = contentH
+				// Account for border
+				if op.Border.Horizontal != 0 {
+					containerH += 2 // top and bottom border
+				}
+			}
+
+			t.geom[opIdx].H = containerH
+		}
+	}
+
+	// Second pass: distribute FlexGrow space
+	for level := 0; level <= t.maxLevel; level++ {
+		for _, opIdx := range t.byLevel[level] {
+			op := &t.ops[opIdx]
+
+			if op.Kind != SerialOpContainerStart || op.IsRow {
+				continue // Only vertical containers can distribute flex
+			}
+
+			t.distributeFlexGrow(opIdx, op, rootH)
+		}
+	}
+}
+
+// calculateContentHeight calculates content height for a container
+// Simply sums t.geom[i].H for all children - no type-switching needed
+// because phaseUpdate already set sizes for all ops
+func (t *SerialTemplate) calculateContentHeight(opIdx int16, op *SerialOp) int16 {
+	var totalH int16
+	var maxH int16
+	childCount := 0
+
+	// Find children (ops with Parent == opIdx)
+	for i, childOp := range t.ops {
+		if childOp.Parent != opIdx || childOp.Kind == SerialOpContainerEnd {
+			continue
+		}
+
+		// All ops already have their H set in phaseUpdate
+		childH := t.geom[i].H
+
+		childCount++
+		if op.IsRow {
+			if childH > maxH {
+				maxH = childH
+			}
+		} else {
+			totalH += childH
+		}
+	}
+
+	// Add gaps for vertical layout
+	if childCount > 1 && op.Gap > 0 && !op.IsRow {
+		totalH += int16(op.Gap) * int16(childCount-1)
+	}
+
+	if op.IsRow {
+		return maxH
+	}
+	return totalH
+}
+
+// calculateIterTemplateHeight calculates the height of one ForEach iteration
+func (t *SerialTemplate) calculateIterTemplateHeight(iterTmpl *SerialTemplate) int16 {
+	if iterTmpl == nil || len(iterTmpl.ops) == 0 {
+		return 1
+	}
+
+	// Simple calculation: count leaf nodes accounting for Row containers
+	var totalH int16
+	var rowDepth int
+
+	for _, op := range iterTmpl.ops {
+		switch op.Kind {
+		case SerialOpContainerStart:
+			if op.IsRow {
+				rowDepth++
+			}
+		case SerialOpContainerEnd:
+			if rowDepth > 0 {
+				rowDepth--
+				if rowDepth == 0 {
+					// Row ended, count as 1 line
+					totalH++
+				}
+			}
+		case SerialOpTextStatic, SerialOpTextPtr, SerialOpTextOffset,
+			SerialOpProgressStatic, SerialOpProgressPtr, SerialOpProgressOffset,
+			SerialOpRichTextStatic, SerialOpRichTextPtr, SerialOpRichTextOffset,
+			SerialOpLeaderStatic, SerialOpLeaderPtr, SerialOpCustom:
+			if rowDepth == 0 {
+				// Not in a row, each element is 1 line
+				totalH++
+			}
+			// Elements inside rows don't add height
+		}
+	}
+
+	if totalH == 0 {
+		return 1
+	}
+	return totalH
+}
+
+// distributeFlexGrow distributes remaining space to flex children
+func (t *SerialTemplate) distributeFlexGrow(opIdx int16, op *SerialOp, rootH int16) {
+	// Calculate available height
+	availH := rootH
+	if op.Parent >= 0 {
+		parentGeom := t.geom[op.Parent]
+		availH = parentGeom.H
+		if t.ops[op.Parent].Border.Horizontal != 0 {
+			availH -= 2 // Account for parent border
+		}
+	}
+
+	// Calculate used height and total flex grow
+	var usedH int16
+	var totalFlex float32
+	var flexChildren []int16
+
+	for i, childOp := range t.ops {
+		if childOp.Parent != opIdx || childOp.Kind == SerialOpContainerEnd {
+			continue
+		}
+
+		if childOp.Kind == SerialOpContainerStart {
+			if childOp.FlexGrow > 0 {
+				totalFlex += childOp.FlexGrow
+				flexChildren = append(flexChildren, int16(i))
+				usedH += t.geom[i].contentH // Use content height, not final height
+			} else {
+				usedH += t.geom[i].H
+			}
+		} else {
+			usedH += 1 // Leaf nodes are 1 line
+		}
+	}
+
+	// Add gaps to used height
+	childCount := 0
+	for _, childOp := range t.ops {
+		if childOp.Parent == opIdx && childOp.Kind != SerialOpContainerEnd {
+			childCount++
+		}
+	}
+	if childCount > 1 && op.Gap > 0 {
+		usedH += int16(op.Gap) * int16(childCount-1)
+	}
+
+	// Distribute remaining space
+	remaining := availH - usedH
+	if remaining > 0 && totalFlex > 0 {
+		for _, childIdx := range flexChildren {
+			childOp := &t.ops[childIdx]
+			flexShare := childOp.FlexGrow / totalFlex
+			extraH := int16(float32(remaining) * flexShare)
+			t.geom[childIdx].H = t.geom[childIdx].contentH + extraH
+		}
+	}
+}
+
+// phaseDraw measures leaf nodes, positions everything, and renders
+func (t *SerialTemplate) phaseDraw(buf *Buffer, w, h int16, padded bool) {
 	t.nodes = t.nodes[:0]
 
 	// Reuse pre-allocated layout context stack
@@ -1162,27 +1682,60 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 		t.ctxStack = make([]layoutContext, 0, 16)
 	}
 	t.ctxStack = t.ctxStack[:1]
-	t.ctxStack[0] = layoutContext{x: 0, y: 0, isRow: false, firstChild: true}
+	t.ctxStack[0] = layoutContext{x: 0, y: 0, isRow: false, firstChild: true, availW: w, availH: h, opIdx: -1}
 
 	ifSatisfied := false
 
-	// Process ops in document order for correct layout
+	// Process ops in document order for positioning
 	for i := range t.ops {
 		op := &t.ops[i]
 
 		switch op.Kind {
 		case SerialOpContainerStart:
-			// Get current context
 			ctx := t.ctxStack[len(t.ctxStack)-1]
+
+			// Draw border if present
+			if op.Border.Horizontal != 0 {
+				// Calculate container position
+				containerX := ctx.x
+				containerY := ctx.y
+				containerW := t.geom[i].W + 2 // Add back border width
+				containerH := t.geom[i].H
+
+				// Draw border
+				borderStyle := DefaultStyle()
+				if op.BorderFG != nil {
+					borderStyle.FG = *op.BorderFG
+				}
+				buf.DrawBorder(int(containerX), int(containerY), int(containerW), int(containerH), op.Border, borderStyle)
+
+				// Draw title if present
+				if op.Title != "" {
+					titleStr := "─ " + op.Title + " "
+					buf.WriteStringFast(int(containerX)+1, int(containerY), titleStr, borderStyle, int(w))
+				}
+			}
+
+			// Calculate content area position
+			contentX := ctx.x
+			contentY := ctx.y
+			if op.Border.Horizontal != 0 {
+				contentX++
+				contentY++
+			}
+
 			// Push new context for this container
 			t.ctxStack = append(t.ctxStack, layoutContext{
-				x:          ctx.x,
-				y:          ctx.y,
-				startX:     ctx.x,
-				startY:     ctx.y,
+				x:          contentX,
+				y:          contentY,
+				startX:     contentX,
+				startY:     contentY,
 				isRow:      op.IsRow,
 				gap:        op.Gap,
 				firstChild: true,
+				availW:     t.geom[i].W,
+				availH:     t.geom[i].H,
+				opIdx:      int16(i),
 			})
 
 		case SerialOpContainerEnd:
@@ -1190,24 +1743,19 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 			childCtx := t.ctxStack[len(t.ctxStack)-1]
 			t.ctxStack = t.ctxStack[:len(t.ctxStack)-1]
 
-			// Calculate container dimensions
-			var containerW, containerH int16
-			if childCtx.isRow {
-				containerW = childCtx.x - childCtx.startX
-				containerH = childCtx.maxH
-				if containerH == 0 {
-					containerH = 1 // minimum height
-				}
-			} else {
-				containerW = childCtx.maxW
-				containerH = childCtx.y - childCtx.startY
+			// Get container dimensions from computed geometry
+			containerW := t.geom[childCtx.opIdx].W
+			containerH := t.geom[childCtx.opIdx].H
+
+			// Account for border in parent positioning
+			if childCtx.opIdx >= 0 && t.ops[childCtx.opIdx].Border.Horizontal != 0 {
+				containerW += 2
 			}
 
 			// Update parent context
 			if len(t.ctxStack) > 0 {
 				parentIdx := len(t.ctxStack) - 1
 				if t.ctxStack[parentIdx].isRow {
-					// Add gap before this container if not first child
 					if !t.ctxStack[parentIdx].firstChild && t.ctxStack[parentIdx].gap > 0 {
 						t.ctxStack[parentIdx].x += int16(t.ctxStack[parentIdx].gap)
 					}
@@ -1216,7 +1764,6 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 						t.ctxStack[parentIdx].maxH = containerH
 					}
 				} else {
-					// Add gap before this container if not first child
 					if !t.ctxStack[parentIdx].firstChild && t.ctxStack[parentIdx].gap > 0 {
 						t.ctxStack[parentIdx].y += int16(t.ctxStack[parentIdx].gap)
 					}
@@ -1228,7 +1775,7 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 				t.ctxStack[parentIdx].firstChild = false
 			}
 
-		case SerialOpForEach:
+		case SerialOpForEach, SerialOpForEachOffset:
 			// ForEach nodes are already positioned internally - just add offset
 			nodeStart := len(t.nodes)
 			t.measureOp(int16(i), nil, &ifSatisfied)
@@ -1236,7 +1783,6 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 			if len(t.ctxStack) > 0 && nodeStart < len(t.nodes) {
 				ctxIdx := len(t.ctxStack) - 1
 
-				// Add gap before ForEach if not first child
 				if !t.ctxStack[ctxIdx].firstChild && t.ctxStack[ctxIdx].gap > 0 {
 					if t.ctxStack[ctxIdx].isRow {
 						t.ctxStack[ctxIdx].x += int16(t.ctxStack[ctxIdx].gap)
@@ -1245,14 +1791,11 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 					}
 				}
 
-				// Find total bounds of ForEach output
 				var maxW, maxH int16
 				for j := nodeStart; j < len(t.nodes); j++ {
 					node := &t.nodes[j]
-					// Add context offset to each node's position
 					node.X += t.ctxStack[ctxIdx].x
 					node.Y += t.ctxStack[ctxIdx].y
-					// Track max extent
 					if node.X+node.W > maxW {
 						maxW = node.X + node.W - t.ctxStack[ctxIdx].x
 					}
@@ -1261,7 +1804,6 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 					}
 				}
 
-				// Update context based on total ForEach size
 				if t.ctxStack[ctxIdx].isRow {
 					t.ctxStack[ctxIdx].x += maxW
 					if maxH > t.ctxStack[ctxIdx].maxH {
@@ -1287,7 +1829,6 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 				for j := nodeStart; j < len(t.nodes); j++ {
 					node := &t.nodes[j]
 
-					// Add gap before this node if not first child
 					if !t.ctxStack[ctxIdx].firstChild && t.ctxStack[ctxIdx].gap > 0 {
 						if t.ctxStack[ctxIdx].isRow {
 							t.ctxStack[ctxIdx].x += int16(t.ctxStack[ctxIdx].gap)
@@ -1296,11 +1837,9 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 						}
 					}
 
-					// Position node
 					node.X = t.ctxStack[ctxIdx].x
 					node.Y = t.ctxStack[ctxIdx].y
 
-					// Advance position
 					if t.ctxStack[ctxIdx].isRow {
 						t.ctxStack[ctxIdx].x += node.W
 						if node.H > t.ctxStack[ctxIdx].maxH {
@@ -1318,7 +1857,7 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 		}
 	}
 
-	// Render
+	// Render all nodes
 	for i := range t.nodes {
 		node := &t.nodes[i]
 		switch {
@@ -1338,7 +1877,6 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 			buf.WriteSpans(int(node.X), int(node.Y), node.Spans, int(w))
 		case node.Kind == SerialOpLayer:
 			if node.Layer != nil {
-				// Use node.W if explicitly set, otherwise fill available width
 				layerW := w
 				if node.W > 0 {
 					layerW = node.W
@@ -1346,6 +1884,18 @@ func (t *SerialTemplate) execute(buf *Buffer, w, h int16, padded bool) {
 				node.Layer.setViewport(int(layerW), int(node.H))
 				node.Layer.blit(buf, int(node.X), int(node.Y), int(layerW), int(node.H))
 			}
+		case node.Kind == SerialOpLeaderStatic || node.Kind == SerialOpLeaderPtr:
+			style := Style{}
+			if padded {
+				buf.WriteStringPadded(int(node.X), int(node.Y), node.Text, style, int(w))
+			} else {
+				buf.WriteStringFast(int(node.X), int(node.Y), node.Text, style, int(w))
+			}
+		case node.Kind == SerialOpCustom:
+			if node.CustomRender != nil {
+				node.CustomRender(buf, node.X, node.Y, node.W, node.H)
+			}
 		}
 	}
 }
+

@@ -20,7 +20,7 @@ func TestLayerBlit(t *testing.T) {
 		// Build view with layer at position
 		view := Col{Children: []any{
 			Text{Content: "Header"},
-			LayerView{Layer: layer, Height: 3},
+			LayerView{Layer: layer, ViewHeight: 3},
 			Text{Content: "Footer"},
 		}}
 
@@ -78,11 +78,11 @@ func TestLayerBlit(t *testing.T) {
 
 		view := Col{Children: []any{
 			Text{Content: "=TOP="},
-			LayerView{Layer: layer1, Height: 2},
+			LayerView{Layer: layer1, ViewHeight: 2},
 			Text{Content: "=MID1="},
-			LayerView{Layer: layer2, Height: 2},
+			LayerView{Layer: layer2, ViewHeight: 2},
 			Text{Content: "=MID2="},
-			LayerView{Layer: layer3, Height: 2},
+			LayerView{Layer: layer3, ViewHeight: 2},
 			Text{Content: "=BOT="},
 		}}
 
@@ -131,9 +131,9 @@ func TestLayerBlit(t *testing.T) {
 		screen := NewBuffer(20, 10)
 
 		view := Col{Children: []any{
-			LayerView{Layer: layer1, Height: 3},
+			LayerView{Layer: layer1, ViewHeight: 3},
 			Text{Content: "---"},
-			LayerView{Layer: layer2, Height: 3},
+			LayerView{Layer: layer2, ViewHeight: 3},
 		}}
 
 		tmpl := BuildSerial(view)
@@ -188,7 +188,7 @@ func TestLayerBlit(t *testing.T) {
 
 		view := Col{Children: []any{
 			Text{Content: "Before"},
-			LayerView{Layer: layer, Height: 2},
+			LayerView{Layer: layer, ViewHeight: 2},
 			Text{Content: "After"},
 		}}
 

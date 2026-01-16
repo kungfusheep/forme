@@ -580,7 +580,7 @@ func TestConditionInsideForEach(t *testing.T) {
 			ForEach(&items, func(item *Item) any {
 				// Use If to conditionally style each item based on its Selected field
 				return If(&item.Selected).Eq(true).
-					Then(Text{Content: &item.Name, Style: DStyle{Bold: true}}).
+					Then(Text{Content: &item.Name, Style: Style{Attr: AttrBold}}).
 					Else(Text{Content: &item.Name})
 			}),
 		}}
@@ -635,8 +635,8 @@ func TestConditionInsideForEach(t *testing.T) {
 			ForEach(&items, func(item *Item) any {
 				// Both branches use Text with same pointer, just different styles
 				return If(&item.IsActive).Eq(true).
-					Then(Text{Content: &item.Text, Style: DStyle{Bold: true}}).
-					Else(Text{Content: &item.Text, Style: DStyle{Dim: true}})
+					Then(Text{Content: &item.Text, Style: Style{Attr: AttrBold}}).
+					Else(Text{Content: &item.Text, Style: Style{Attr: AttrDim}})
 			}),
 		}}
 

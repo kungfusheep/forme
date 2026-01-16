@@ -1,11 +1,17 @@
 package tui
 
+import "fmt"
+
 // Buffer is a 2D grid of cells representing a drawable surface.
 type Buffer struct {
 	cells     []Cell
 	width     int
 	height    int
 	dirtyMaxY int // highest row written to (for partial clear)
+
+	// Row-level dirty tracking for efficient flush
+	dirtyRows []bool
+	allDirty  bool // true after Clear() - all rows need checking
 }
 
 // emptyBufferCache is a pre-filled buffer of empty cells for fast clearing via copy()
@@ -19,9 +25,11 @@ func NewBuffer(width, height int) *Buffer {
 		cells[i] = empty
 	}
 	return &Buffer{
-		cells:  cells,
-		width:  width,
-		height: height,
+		cells:     cells,
+		width:     width,
+		height:    height,
+		dirtyRows: make([]bool, height),
+		allDirty:  true, // new buffer needs full flush
 	}
 }
 
@@ -80,6 +88,7 @@ func (b *Buffer) Set(x, y int, c Cell) {
 	if y > b.dirtyMaxY {
 		b.dirtyMaxY = y
 	}
+	b.dirtyRows[y] = true
 }
 
 // SetFast sets a cell without border merging. Use for text/progress where
@@ -92,9 +101,15 @@ func (b *Buffer) SetFast(x, y int, c Cell) {
 	if y > b.dirtyMaxY {
 		b.dirtyMaxY = y
 	}
+	b.dirtyRows[y] = true
 }
 
+// Partial block characters for sub-character progress bar precision (1/8 to 8/8)
+var partialBlocks = [9]rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
+
 // WriteProgressBar writes a progress bar directly to the buffer.
+// Uses partial block characters for smooth sub-character precision.
+// Background color fills the empty space for seamless appearance.
 // Batch write - much faster than per-cell Set calls.
 func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	if y < 0 || y >= b.height {
@@ -103,16 +118,29 @@ func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	if y > b.dirtyMaxY {
 		b.dirtyMaxY = y
 	}
+	b.dirtyRows[y] = true
 
-	filled := int(float32(width) * ratio)
-	if filled > width {
-		filled = width
+	// Calculate fill in eighths for sub-character precision
+	totalEighths := int(ratio * float32(width) * 8)
+	if totalEighths < 0 {
+		totalEighths = 0
 	}
+	maxEighths := width * 8
+	if totalEighths > maxEighths {
+		totalEighths = maxEighths
+	}
+
+	fullBlocks := totalEighths / 8
+	partialEighths := totalEighths % 8
 
 	// Direct slice access - no bounds check per cell, no border merge
 	base := y * b.width
+
+	// Dark gray background for empty areas - partial blocks blend into this
+	emptyBG := Color{Mode: ColorRGB, R: 60, G: 60, B: 60}
 	filledCell := Cell{Rune: '█', Style: style}
-	emptyCell := Cell{Rune: '░', Style: style}
+	emptyCell := Cell{Rune: ' ', Style: Style{BG: emptyBG}}
+	partialStyle := Style{FG: style.FG, BG: emptyBG}
 
 	end := x + width
 	if end > b.width {
@@ -123,8 +151,11 @@ func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	}
 
 	for i := x; i < end; i++ {
-		if i-x < filled {
+		pos := i - x
+		if pos < fullBlocks {
 			b.cells[base+i] = filledCell
+		} else if pos == fullBlocks && partialEighths > 0 {
+			b.cells[base+i] = Cell{Rune: partialBlocks[partialEighths], Style: partialStyle}
 		} else {
 			b.cells[base+i] = emptyCell
 		}
@@ -140,6 +171,7 @@ func (b *Buffer) WriteStringFast(x, y int, s string, style Style, maxWidth int) 
 	if y > b.dirtyMaxY {
 		b.dirtyMaxY = y
 	}
+	b.dirtyRows[y] = true
 
 	base := y * b.width
 	written := 0
@@ -164,6 +196,7 @@ func (b *Buffer) WriteSpans(x, y int, spans []Span, maxWidth int) {
 	if y > b.dirtyMaxY {
 		b.dirtyMaxY = y
 	}
+	b.dirtyRows[y] = true
 
 	base := y * b.width
 	written := 0
@@ -223,6 +256,44 @@ func (b *Buffer) Clear() {
 	// Fast path: copy uses optimized memmove
 	copy(b.cells, emptyBufferCache[:size])
 	b.dirtyMaxY = 0
+	b.allDirty = true
+	// Clear individual row flags (allDirty takes precedence)
+	for i := range b.dirtyRows {
+		b.dirtyRows[i] = false
+	}
+}
+
+// RowDirty returns true if the given row has been modified since last ClearDirtyFlags.
+// If allDirty is set (after Clear/Resize), all rows are considered dirty.
+func (b *Buffer) RowDirty(y int) bool {
+	if b.allDirty {
+		return true
+	}
+	if y < 0 || y >= len(b.dirtyRows) {
+		return false
+	}
+	return b.dirtyRows[y]
+}
+
+// ClearDirtyFlags resets all row dirty flags after a flush.
+// Call this after Screen.Flush() to start tracking changes for next frame.
+func (b *Buffer) ClearDirtyFlags() {
+	b.allDirty = false
+	for i := range b.dirtyRows {
+		b.dirtyRows[i] = false
+	}
+}
+
+// MarkAllDirty forces all rows to be considered dirty.
+// Useful after external modifications or for testing.
+func (b *Buffer) MarkAllDirty() {
+	b.allDirty = true
+}
+
+// ResetDirtyMax resets the dirty tracking without clearing content.
+// Use when you know the template will overwrite all cells.
+func (b *Buffer) ResetDirtyMax() {
+	b.dirtyMaxY = -1
 }
 
 // ClearDirty clears only the rows that were written to since last clear.
@@ -248,6 +319,11 @@ func (b *Buffer) ClearDirty() {
 	}
 
 	copy(b.cells[:size], emptyBufferCache[:size])
+
+	// Mark cleared rows as dirty (content changed) and reset tracking
+	for y := 0; y <= b.dirtyMaxY && y < b.height; y++ {
+		b.dirtyRows[y] = true
+	}
 	b.dirtyMaxY = 0
 }
 
@@ -261,6 +337,7 @@ func (b *Buffer) ClearLine(y int) {
 	for x := 0; x < b.width; x++ {
 		b.cells[base+x] = empty
 	}
+	b.dirtyRows[y] = true
 }
 
 // FillRect fills a rectangular region with the given cell.
@@ -631,6 +708,101 @@ func (b *Buffer) GetLine(y int) string {
 	return ""
 }
 
+// GetLineStyled returns a line with embedded ANSI escape codes for styles.
+func (b *Buffer) GetLineStyled(y int) string {
+	if y < 0 || y >= b.height {
+		return ""
+	}
+	var line []byte
+	var lastStyle Style
+	defaultStyle := DefaultStyle()
+
+	for x := 0; x < b.width; x++ {
+		c := b.Get(x, y)
+		r := c.Rune
+		if r == 0 {
+			r = ' '
+		}
+
+		// Emit style change if needed
+		if !c.Style.Equal(lastStyle) {
+			line = append(line, b.styleToANSI(c.Style)...)
+			lastStyle = c.Style
+		}
+		line = append(line, string(r)...)
+	}
+
+	// Reset style at end
+	if !lastStyle.Equal(defaultStyle) {
+		line = append(line, "\x1b[0m"...)
+	}
+
+	return string(line)
+}
+
+// styleToANSI converts a Style to ANSI escape codes.
+func (b *Buffer) styleToANSI(style Style) string {
+	var codes []byte
+	codes = append(codes, "\x1b[0"...)
+
+	// Attributes
+	if style.Attr.Has(AttrBold) {
+		codes = append(codes, ";1"...)
+	}
+	if style.Attr.Has(AttrDim) {
+		codes = append(codes, ";2"...)
+	}
+	if style.Attr.Has(AttrItalic) {
+		codes = append(codes, ";3"...)
+	}
+	if style.Attr.Has(AttrUnderline) {
+		codes = append(codes, ";4"...)
+	}
+	if style.Attr.Has(AttrInverse) {
+		codes = append(codes, ";7"...)
+	}
+
+	// Foreground
+	codes = append(codes, b.colorToANSI(style.FG, true)...)
+
+	// Background
+	codes = append(codes, b.colorToANSI(style.BG, false)...)
+
+	codes = append(codes, 'm')
+	return string(codes)
+}
+
+// colorToANSI converts a Color to ANSI escape code fragment.
+func (b *Buffer) colorToANSI(c Color, fg bool) string {
+	switch c.Mode {
+	case ColorDefault:
+		if fg {
+			return ";39"
+		}
+		return ";49"
+	case Color16:
+		base := 30
+		if !fg {
+			base = 40
+		}
+		if c.Index >= 8 {
+			return fmt.Sprintf(";%d", base+60+int(c.Index-8))
+		}
+		return fmt.Sprintf(";%d", base+int(c.Index))
+	case Color256:
+		if fg {
+			return fmt.Sprintf(";38;5;%d", c.Index)
+		}
+		return fmt.Sprintf(";48;5;%d", c.Index)
+	case ColorRGB:
+		if fg {
+			return fmt.Sprintf(";38;2;%d;%d;%d", c.R, c.G, c.B)
+		}
+		return fmt.Sprintf(";48;2;%d;%d;%d", c.R, c.G, c.B)
+	}
+	return ""
+}
+
 // String returns the buffer contents as a string (for testing/debugging).
 // Each row is separated by a newline. Trailing spaces are preserved.
 func (b *Buffer) String() string {
@@ -740,6 +912,7 @@ func (b *Buffer) Blit(src *Buffer, srcX, srcY, dstX, dstY, width, height int) {
 		srcStart := (srcY+y)*src.width + srcX
 		dstStart := (dstY+y)*b.width + dstX
 		copy(b.cells[dstStart:dstStart+width], src.cells[srcStart:srcStart+width])
+		b.dirtyRows[dstY+y] = true
 	}
 
 	// Update dirty tracking
@@ -755,6 +928,8 @@ func (b *Buffer) CopyFrom(src *Buffer) {
 	if b.width == src.width && b.height == src.height {
 		copy(b.cells, src.cells)
 		b.dirtyMaxY = src.dirtyMaxY
+		// Mark all rows dirty since we did a full copy
+		b.allDirty = true
 	}
 }
 
@@ -790,4 +965,8 @@ func (b *Buffer) Resize(width, height int) {
 	b.cells = newCells
 	b.width = width
 	b.height = height
+
+	// Resize dirty tracking - mark all dirty after resize
+	b.dirtyRows = make([]bool, height)
+	b.allDirty = true
 }

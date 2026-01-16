@@ -5,9 +5,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -25,6 +28,16 @@ const (
 	renderBuffer = 30 // Lines to render above/below viewport for smooth scrolling
 )
 
+// VisualMode represents the type of visual selection
+type VisualMode int
+
+const (
+	VisualNone  VisualMode = iota // Not in visual mode
+	VisualChar                    // Character-wise (v)
+	VisualLine                    // Line-wise (V)
+	VisualBlock                   // Block-wise (Ctrl-V)
+)
+
 // Pos represents a position in a buffer
 type Pos struct {
 	Line int
@@ -37,6 +50,29 @@ type Range struct {
 	End   Pos
 }
 
+// GitSign represents a git change sign for a line
+type GitSign int
+
+const (
+	GitSignNone     GitSign = iota
+	GitSignAdded            // new line (not in HEAD)
+	GitSignModified         // modified line
+	GitSignRemoved          // line(s) deleted below this line
+)
+
+// DirEntry represents a file or directory in the file tree
+type DirEntry struct {
+	Name  string
+	IsDir bool
+}
+
+// FileTree holds the state for netrw-style file browsing
+type FileTree struct {
+	Path       string     // current directory path
+	Entries    []DirEntry // sorted list of entries
+	ShowHidden bool       // show dotfiles
+}
+
 // Buffer holds file content (can be shared across windows)
 type Buffer struct {
 	Lines     []string
@@ -44,6 +80,8 @@ type Buffer struct {
 	undoStack []EditorState
 	redoStack []EditorState
 	marks     map[rune]Pos // a-z marks (per-buffer)
+	gitSigns  []GitSign    // git change signs per line
+	fileTree  *FileTree    // non-nil if this is a netrw buffer
 }
 
 // Window is a view into a buffer
@@ -63,7 +101,7 @@ type Window struct {
 	// Visual mode selection (per-window)
 	visualStart    int
 	visualStartCol int
-	visualLineMode bool
+	visualMode     VisualMode
 
 	// Rendering
 	contentLayer *tui.Layer
@@ -168,6 +206,11 @@ type Editor struct {
 	Mode       string // "NORMAL", "INSERT", or "VISUAL"
 	StatusLine string // command/message line (bottom)
 
+	// Display options
+	relativeNumber bool // show relative line numbers (like vim's relativenumber)
+	cursorLine     bool // highlight the entire cursor line (like vim's cursorline)
+	showSignColumn bool // show git gutter signs column
+
 	// Search (global)
 	searchPattern   string
 	searchDirection int
@@ -198,6 +241,26 @@ type Editor struct {
 	macros         map[rune]riffkey.Macro
 	recordingMacro rune // which register we're recording to
 	lastMacro      rune // for @@
+
+	// Block insert mode (for visual block I/A)
+	blockInsertLines []int // lines to replicate text to
+	blockInsertCol   int   // column where insert started
+	blockInsertStart int   // original line length before insert
+
+	// Fuzzy finder (declarative overlay view)
+	fuzzy FuzzyState
+}
+
+// FuzzyState holds the state for the fuzzy finder overlay
+type FuzzyState struct {
+	Active     bool     // whether fuzzy finder is showing
+	Query      string   // current search query
+	AllItems   []string // all available items
+	Matches    []string // filtered matches
+	Selected   int      // selected index in matches
+	SourceDir  string   // directory being searched
+	PrevBuffer *Buffer  // buffer to restore on cancel
+	PrevCursor int      // cursor position to restore
 }
 
 // Helper methods to access current window/buffer
@@ -642,12 +705,17 @@ func (ed *Editor) OpenAbove() {
 
 // EnterVisual enters character-wise visual mode (v)
 func (ed *Editor) EnterVisual() {
-	ed.enterVisualMode(ed.app, false)
+	ed.enterVisualMode(ed.app, VisualChar)
 }
 
 // EnterVisualLine enters line-wise visual mode (V)
 func (ed *Editor) EnterVisualLine() {
-	ed.enterVisualMode(ed.app, true)
+	ed.enterVisualMode(ed.app, VisualLine)
+}
+
+// EnterVisualBlock enters block-wise visual mode (Ctrl-V)
+func (ed *Editor) EnterVisualBlock() {
+	ed.enterVisualMode(ed.app, VisualBlock)
 }
 
 // =============================================================================
@@ -1113,7 +1181,9 @@ func (ed *Editor) SwapVisualEnds() {
 func (ed *Editor) VisualDelete(app *tui.App) {
 	ed.saveUndo()
 	r := ed.VisualRange()
-	if ed.win().visualLineMode {
+
+	switch ed.win().visualMode {
+	case VisualLine:
 		if r.End.Line-r.Start.Line+1 >= len(ed.buf().Lines) {
 			ed.buf().Lines = []string{""}
 			ed.win().Cursor = 0
@@ -1122,7 +1192,17 @@ func (ed *Editor) VisualDelete(app *tui.App) {
 			ed.win().Cursor = min(r.Start.Line, len(ed.buf().Lines)-1)
 		}
 		ed.win().Col = min(ed.win().Col, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
-	} else {
+
+	case VisualBlock:
+		// Block mode: delete rectangular region (same columns on each line)
+		startCol := min(ed.win().visualStartCol, ed.win().Col)
+		endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
+		yankRegister = ed.extractBlock(r.Start.Line, r.End.Line, startCol, endCol)
+		ed.deleteBlock(r.Start.Line, r.End.Line, startCol, endCol)
+		ed.win().Cursor = r.Start.Line
+		ed.win().Col = min(startCol, max(0, len(ed.buf().Lines[ed.win().Cursor])-1))
+
+	default: // VisualChar
 		yankRegister = ed.extractRange(r)
 		ed.deleteRange(r)
 	}
@@ -1133,7 +1213,9 @@ func (ed *Editor) VisualDelete(app *tui.App) {
 func (ed *Editor) VisualChange(app *tui.App) {
 	ed.saveUndo()
 	r := ed.VisualRange()
-	if ed.win().visualLineMode {
+
+	switch ed.win().visualMode {
+	case VisualLine:
 		fullLineRange := Range{
 			Start: Pos{Line: r.Start.Line, Col: 0},
 			End:   Pos{Line: r.End.Line, Col: len(ed.buf().Lines[r.End.Line])},
@@ -1153,10 +1235,33 @@ func (ed *Editor) VisualChange(app *tui.App) {
 		copy(newLines[ed.win().Cursor+1:], ed.buf().Lines[ed.win().Cursor:])
 		ed.buf().Lines = newLines
 		ed.win().Col = 0
-	} else {
+
+	case VisualBlock:
+		// Block mode: delete rectangular region and enter block insert mode
+		startCol := min(ed.win().visualStartCol, ed.win().Col)
+		endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
+		yankRegister = ed.extractBlock(r.Start.Line, r.End.Line, startCol, endCol)
+		ed.deleteBlock(r.Start.Line, r.End.Line, startCol, endCol)
+
+		// Set up block insert for the changed region
+		ed.blockInsertLines = []int{}
+		for i := r.Start.Line; i <= r.End.Line; i++ {
+			ed.blockInsertLines = append(ed.blockInsertLines, i)
+		}
+		ed.blockInsertCol = startCol
+		ed.win().Cursor = r.Start.Line
+		ed.win().Col = startCol
+		ed.Mode = "NORMAL"
+		app.Pop()
+		ed.updateDisplay()
+		ed.enterBlockInsertMode(app)
+		return
+
+	default: // VisualChar
 		yankRegister = ed.extractRange(r)
 		ed.deleteRange(r)
 	}
+
 	ed.Mode = "NORMAL"
 	app.Pop()
 	ed.updateDisplay()
@@ -1166,7 +1271,9 @@ func (ed *Editor) VisualChange(app *tui.App) {
 // VisualYank yanks the visual selection (y)
 func (ed *Editor) VisualYank(app *tui.App) {
 	r := ed.VisualRange()
-	if ed.win().visualLineMode {
+
+	switch ed.win().visualMode {
+	case VisualLine:
 		var yanked string
 		for i := r.Start.Line; i <= r.End.Line; i++ {
 			yanked += ed.buf().Lines[i]
@@ -1176,10 +1283,18 @@ func (ed *Editor) VisualYank(app *tui.App) {
 		}
 		yankRegister = yanked
 		ed.StatusLine = fmt.Sprintf("Yanked %d lines", r.End.Line-r.Start.Line+1)
-	} else {
+
+	case VisualBlock:
+		startCol := min(ed.win().visualStartCol, ed.win().Col)
+		endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
+		yankRegister = ed.extractBlock(r.Start.Line, r.End.Line, startCol, endCol)
+		ed.StatusLine = fmt.Sprintf("Yanked block %dx%d", r.End.Line-r.Start.Line+1, endCol-startCol)
+
+	default: // VisualChar
 		yankRegister = ed.extractRange(r)
 		ed.StatusLine = fmt.Sprintf("Yanked %d chars", len(yankRegister))
 	}
+
 	ed.exitVisualMode(app)
 }
 
@@ -1190,7 +1305,7 @@ func (ed *Editor) VisualExpandToTextObject(r Range) {
 		ed.win().visualStartCol = r.Start.Col
 		ed.win().Cursor = r.End.Line
 		ed.win().Col = max(0, r.End.Col-1)
-		ed.win().visualLineMode = false
+		ed.win().visualMode = VisualChar
 		ed.updateDisplay()
 		ed.updateCursor()
 	}
@@ -1202,10 +1317,78 @@ func (ed *Editor) VisualExpandToWordObject(start, end int) {
 		ed.win().visualStart = ed.win().Cursor
 		ed.win().visualStartCol = start
 		ed.win().Col = end - 1
-		ed.win().visualLineMode = false
+		ed.win().visualMode = VisualChar
 		ed.updateDisplay()
 		ed.updateCursor()
 	}
+}
+
+// VisualBlockInsert inserts text at the start of each line in the block (I)
+// After exiting insert mode, the typed text is replicated to all lines
+func (ed *Editor) VisualBlockInsert(app *tui.App) {
+	if ed.win().visualMode != VisualBlock {
+		// Fall back to regular insert at line start for non-block modes
+		ed.exitVisualMode(app)
+		ed.LineStart()
+		ed.enterInsertMode(app)
+		return
+	}
+
+	// Save the block selection info before exiting visual mode
+	startLine := min(ed.win().visualStart, ed.win().Cursor)
+	endLine := max(ed.win().visualStart, ed.win().Cursor)
+	insertCol := min(ed.win().visualStartCol, ed.win().Col)
+
+	// Store for after insert mode completes
+	ed.blockInsertLines = []int{}
+	for i := startLine; i <= endLine; i++ {
+		ed.blockInsertLines = append(ed.blockInsertLines, i)
+	}
+	ed.blockInsertCol = insertCol
+	ed.blockInsertStart = len(ed.buf().Lines[startLine]) // Will track where insert started
+
+	ed.exitVisualMode(app)
+	ed.win().Cursor = startLine
+	ed.win().Col = insertCol
+	ed.updateDisplay()
+	ed.enterBlockInsertMode(app)
+}
+
+// VisualBlockAppend appends text at the end of each line in the block (A)
+// After exiting insert mode, the typed text is replicated to all lines
+func (ed *Editor) VisualBlockAppend(app *tui.App) {
+	if ed.win().visualMode != VisualBlock {
+		// Fall back to regular append at line end for non-block modes
+		ed.exitVisualMode(app)
+		ed.LineEnd()
+		ed.Append()
+		return
+	}
+
+	// Save the block selection info before exiting visual mode
+	startLine := min(ed.win().visualStart, ed.win().Cursor)
+	endLine := max(ed.win().visualStart, ed.win().Cursor)
+	appendCol := max(ed.win().visualStartCol, ed.win().Col) + 1
+
+	// Store for after insert mode completes
+	ed.blockInsertLines = []int{}
+	for i := startLine; i <= endLine; i++ {
+		ed.blockInsertLines = append(ed.blockInsertLines, i)
+	}
+	ed.blockInsertCol = appendCol
+	ed.blockInsertStart = len(ed.buf().Lines[startLine])
+
+	ed.exitVisualMode(app)
+	ed.win().Cursor = startLine
+	// Position cursor at the append column (may need padding)
+	line := ed.buf().Lines[startLine]
+	if appendCol > len(line) {
+		ed.win().Col = len(line)
+	} else {
+		ed.win().Col = appendCol
+	}
+	ed.updateDisplay()
+	ed.enterBlockInsertMode(app)
 }
 
 // =============================================================================
@@ -1434,11 +1617,14 @@ func main() {
 	root := &SplitNode{Window: win}
 
 	ed := &Editor{
-		root:          root,
-		focusedWindow: win,
-		Mode:          "NORMAL",
-		StatusLine:    "", // empty initially, used for messages
-		macros:        make(map[rune]riffkey.Macro),
+		root:           root,
+		focusedWindow:  win,
+		Mode:           "NORMAL",
+		StatusLine:     "", // empty initially, used for messages
+		relativeNumber: true,
+		cursorLine:     true,
+		showSignColumn: true,
+		macros:         make(map[rune]riffkey.Macro),
 	}
 
 	app, err := tui.NewApp()
@@ -1447,6 +1633,7 @@ func main() {
 	}
 	ed.app = app
 	ed.harvestCommands() // Build command list for completion
+	ed.refreshGitSigns() // Load initial git diff state
 
 	// Initialize viewport and layer
 	size := app.Size()
@@ -1456,6 +1643,35 @@ func main() {
 	ed.updateDisplay()
 
 	app.SetView(buildView(ed))
+
+	// Register fuzzy finder as a pushable overlay view
+	app.View("fuzzy", buildFuzzyView(ed)).
+		Handle("<BS>", func(_ riffkey.Match) { ed.fuzzyBackspace() }).
+		Handle("<Up>", func(_ riffkey.Match) { ed.fuzzyUp() }).
+		Handle("<C-p>", func(_ riffkey.Match) { ed.fuzzyUp() }).
+		Handle("<C-k>", func(_ riffkey.Match) { ed.fuzzyUp() }).
+		Handle("<Down>", func(_ riffkey.Match) { ed.fuzzyDown() }).
+		Handle("<C-n>", func(_ riffkey.Match) { ed.fuzzyDown() }).
+		Handle("<C-j>", func(_ riffkey.Match) { ed.fuzzyDown() }).
+		Handle("<CR>", func(_ riffkey.Match) { ed.fuzzySelect(app) }).
+		Handle("<Esc>", func(_ riffkey.Match) { ed.fuzzyCancel(app) }).
+		Handle("<C-c>", func(_ riffkey.Match) { ed.fuzzyCancel(app) })
+
+	// Handle text input for fuzzy finder - need to get the router for HandleUnmatched
+	if fuzzyRouter, ok := app.ViewRouter("fuzzy"); ok {
+		fuzzyRouter.NoCounts()
+		fuzzyRouter.HandleUnmatched(func(k riffkey.Key) bool {
+			if !ed.fuzzy.Active {
+				return false
+			}
+			if k.Rune != 0 && k.Mod == riffkey.ModNone {
+				ed.fuzzy.Query += string(k.Rune)
+				ed.fuzzyFilterMatches()
+				return true
+			}
+			return false
+		})
+	}
 
 	// Start with block cursor in normal mode
 	app.ShowCursor(tui.CursorBlock)
@@ -1475,6 +1691,30 @@ func main() {
 	app.Handle("w", func(m riffkey.Match) { ed.NextWordStart(m.Count) })
 	app.Handle("b", func(m riffkey.Match) { ed.PrevWordStart(m.Count) })
 	app.Handle("e", func(m riffkey.Match) { ed.NextWordEnd(m.Count) })
+
+	// Netrw (file explorer) keybindings
+	app.Handle("<CR>", func(_ riffkey.Match) {
+		if ed.isNetrw() {
+			ed.netrwEnter(app)
+		}
+	})
+	app.Handle("-", func(_ riffkey.Match) {
+		if ed.isNetrw() {
+			ed.netrwUp()
+		} else {
+			// Normal mode: go up one line and to first non-blank
+			ed.Up(1)
+			ed.FirstNonBlank()
+		}
+	})
+	app.Handle("gh", func(_ riffkey.Match) {
+		if ed.isNetrw() {
+			ed.netrwToggleHidden()
+		}
+	})
+
+	// Fuzzy finder (Ctrl-P like VSCode/Sublime)
+	app.Handle("<C-p>", func(_ riffkey.Match) { ed.openFuzzyFinder(app) })
 
 	app.Handle("i", func(_ riffkey.Match) { ed.EnterInsert() })
 	app.Handle("a", func(_ riffkey.Match) { ed.Append() })
@@ -1524,6 +1764,7 @@ func main() {
 	// Visual mode
 	app.Handle("v", func(_ riffkey.Match) { ed.EnterVisual() })
 	app.Handle("V", func(_ riffkey.Match) { ed.EnterVisualLine() })
+	app.Handle("<C-v>", func(_ riffkey.Match) { ed.EnterVisualBlock() })
 
 	// Join lines (J)
 	app.Handle("J", func(_ riffkey.Match) { ed.JoinLines() })
@@ -1727,6 +1968,111 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 	ed.updateDisplay()
 	ed.updateCursor()
 	app.Pop() // Back to normal mode router
+}
+
+// enterBlockInsertMode is like insert mode but replicates text to all block lines on exit
+func (ed *Editor) enterBlockInsertMode(app *tui.App) {
+	ed.Mode = "INSERT"
+	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
+	ed.StatusLine = "-- INSERT (block) --"
+	ed.updateDisplay()
+
+	// Track the first line's content before and during insert
+	firstLine := ed.blockInsertLines[0]
+	originalContent := ed.buf().Lines[firstLine]
+	insertStartCol := ed.blockInsertCol
+
+	// Switch to bar cursor
+	app.ShowCursor(tui.CursorBar)
+	ed.updateCursor()
+
+	// Create insert mode router
+	insertRouter := riffkey.NewRouter().Name("block-insert").NoCounts()
+
+	// TextHandler for the first line
+	th := riffkey.NewTextHandler(&ed.buf().Lines[firstLine], &ed.win().Col)
+	th.OnChange = func(_ string) {
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+
+	rebindAndRefresh := func() {
+		th.Value = &ed.buf().Lines[ed.win().Cursor]
+		ed.updateDisplay()
+		ed.updateCursor()
+	}
+
+	// Esc exits and replicates to all lines
+	insertRouter.Handle("<Esc>", func(_ riffkey.Match) {
+		ed.exitBlockInsertMode(app, originalContent, insertStartCol)
+	})
+
+	// Enter creates new line (exits block mode for simplicity)
+	insertRouter.Handle("<CR>", func(_ riffkey.Match) {
+		ed.InsertNewline()
+		rebindAndRefresh()
+		// Exit block mode - newlines don't make sense in block insert
+		ed.blockInsertLines = nil
+	})
+
+	// Standard insert mode bindings
+	insertRouter.Handle("<C-u>", func(_ riffkey.Match) { ed.DeleteToLineStart(); rebindAndRefresh() })
+	insertRouter.Handle("<C-k>", func(_ riffkey.Match) { ed.DeleteToLineEnd(); rebindAndRefresh() })
+
+	insertRouter.HandleUnmatched(th.HandleKey)
+	app.Push(insertRouter)
+}
+
+func (ed *Editor) exitBlockInsertMode(app *tui.App, originalContent string, insertStartCol int) {
+	// Calculate what was inserted by comparing first line to original
+	if len(ed.blockInsertLines) > 1 {
+		firstLine := ed.blockInsertLines[0]
+		newContent := ed.buf().Lines[firstLine]
+
+		// Find the inserted text (text that was added at insertStartCol)
+		var insertedText string
+		if len(newContent) > len(originalContent) {
+			// Determine what was inserted
+			if insertStartCol <= len(originalContent) {
+				// Text was inserted in the middle or at insertStartCol
+				insertedLen := len(newContent) - len(originalContent)
+				if insertStartCol+insertedLen <= len(newContent) {
+					insertedText = newContent[insertStartCol : insertStartCol+insertedLen]
+				}
+			}
+		}
+
+		// Replicate to other lines if we have text to insert
+		if insertedText != "" {
+			for _, lineIdx := range ed.blockInsertLines[1:] {
+				if lineIdx < len(ed.buf().Lines) {
+					line := ed.buf().Lines[lineIdx]
+					// Pad with spaces if line is shorter than insert column
+					for len(line) < insertStartCol {
+						line += " "
+					}
+					// Insert the text at the same column
+					ed.buf().Lines[lineIdx] = line[:insertStartCol] + insertedText + line[insertStartCol:]
+				}
+			}
+		}
+	}
+
+	// Clear block insert state
+	ed.blockInsertLines = nil
+
+	// Standard exit insert mode
+	ed.Mode = "NORMAL"
+	ed.StatusLine = ""
+
+	if ed.win().Col > 0 && ed.win().Col >= len(ed.buf().Lines[ed.win().Cursor]) {
+		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
+	}
+
+	app.ShowCursor(tui.CursorBlock)
+	ed.updateDisplay()
+	ed.updateCursor()
+	app.Pop()
 }
 
 func (ed *Editor) updateCursor() {
@@ -2030,11 +2376,146 @@ func (ed *Editor) ensureCursorVisible() {
 // Style constants for vim-like appearance
 var (
 	lineNumStyle       = tui.Style{Attr: tui.AttrDim}
-	cursorLineNumStyle = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 3}} // Yellow for current line number
-	tildeStyle         = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 4}} // Blue for ~ lines
-	statusBarStyle     = tui.Style{Attr: tui.AttrInverse}                      // Inverse video like vim
-	searchHighlight    = tui.Style{BG: tui.Color{Mode: tui.Color16, Index: 3}} // Yellow background for search matches
+	cursorLineNumStyle = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow for current line number
+	cursorLineStyle    = tui.Style{BG: tui.Color{Mode: tui.Color256, Index: 236}}                              // Subtle dark gray background for cursorline
+	tildeStyle         = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 4}}                                 // Blue for ~ lines
+	statusBarStyle     = tui.Style{Attr: tui.AttrInverse}                                                      // Inverse video like vim
+	searchHighlight    = tui.Style{BG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow background for search matches
+	gitAddedStyle      = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 2}}                                 // Green for added lines
+	gitModifiedStyle   = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow for modified lines
+	gitRemovedStyle    = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 1}}                                 // Red for removed lines
 )
+
+// refreshGitSigns updates the git change signs for a buffer by running git diff
+func (ed *Editor) refreshGitSigns() {
+	buf := ed.buf()
+	if buf.FileName == "" {
+		return
+	}
+
+	// Initialize signs array to correct size
+	buf.gitSigns = make([]GitSign, len(buf.Lines))
+
+	// Check if we're in a git repo by finding .git directory
+	dir := filepath.Dir(buf.FileName)
+	if dir == "" {
+		dir = "."
+	}
+
+	// Try to get git root
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--git-dir")
+	if err := cmd.Run(); err != nil {
+		// Not in a git repo
+		return
+	}
+
+	// Get the diff between HEAD and working directory for this file
+	// Use --no-ext-diff to avoid custom diff tools
+	cmd = exec.Command("git", "-C", dir, "diff", "--no-ext-diff", "--no-color", "-U0", "HEAD", "--", buf.FileName)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		// File might be untracked - try checking with git status
+		cmd = exec.Command("git", "-C", dir, "status", "--porcelain", buf.FileName)
+		var statusOut bytes.Buffer
+		cmd.Stdout = &statusOut
+		if err := cmd.Run(); err == nil {
+			status := strings.TrimSpace(statusOut.String())
+			if strings.HasPrefix(status, "??") || strings.HasPrefix(status, "A ") {
+				// Untracked or newly added file - mark all lines as added
+				for i := range buf.gitSigns {
+					buf.gitSigns[i] = GitSignAdded
+				}
+			}
+		}
+		return
+	}
+
+	// Parse unified diff output
+	// Format: @@ -oldstart,oldcount +newstart,newcount @@
+	lines := strings.Split(out.String(), "\n")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "@@") {
+			continue
+		}
+
+		// Parse hunk header: @@ -oldstart,oldcount +newstart,newcount @@
+		// Examples: @@ -1,3 +1,5 @@ or @@ -1 +1,2 @@ or @@ -0,0 +1,10 @@
+		parts := strings.Split(line, " ")
+		if len(parts) < 3 {
+			continue
+		}
+
+		// Parse old range (-oldstart,oldcount)
+		oldPart := strings.TrimPrefix(parts[1], "-")
+		_, oldCount := parseRange(oldPart)
+
+		// Parse new range (+newstart,newcount)
+		newPart := strings.TrimPrefix(parts[2], "+")
+		newStart, newCount := parseRange(newPart)
+
+		// Determine the type of change
+		if oldCount == 0 {
+			// Pure addition - no lines removed, just added
+			for i := newStart; i < newStart+newCount && i <= len(buf.gitSigns); i++ {
+				if i > 0 && i <= len(buf.gitSigns) {
+					buf.gitSigns[i-1] = GitSignAdded
+				}
+			}
+		} else if newCount == 0 {
+			// Pure deletion - lines removed
+			// Mark the line before the deletion (or first line if at start)
+			deletionMarker := newStart
+			if deletionMarker > 0 && deletionMarker <= len(buf.gitSigns) {
+				buf.gitSigns[deletionMarker-1] = GitSignRemoved
+			} else if len(buf.gitSigns) > 0 {
+				buf.gitSigns[0] = GitSignRemoved
+			}
+		} else {
+			// Modification - some lines changed
+			for i := newStart; i < newStart+newCount && i <= len(buf.gitSigns); i++ {
+				if i > 0 && i <= len(buf.gitSigns) {
+					buf.gitSigns[i-1] = GitSignModified
+				}
+			}
+		}
+	}
+}
+
+// parseRange parses "start,count" or "start" from diff output
+func parseRange(s string) (start, count int) {
+	parts := strings.Split(s, ",")
+	start, _ = strconv.Atoi(parts[0])
+	if len(parts) > 1 {
+		count, _ = strconv.Atoi(parts[1])
+	} else {
+		count = 1
+	}
+	return
+}
+
+// getGitSignForLine returns the sign character and style for a line
+func (ed *Editor) getGitSignForLine(lineIdx int) (string, tui.Style) {
+	return ed.getGitSignForLineBuffer(ed.buf(), lineIdx)
+}
+
+// getGitSignForLineBuffer returns the sign character and style for a line in a specific buffer
+func (ed *Editor) getGitSignForLineBuffer(buf *Buffer, lineIdx int) (string, tui.Style) {
+	if lineIdx >= len(buf.gitSigns) {
+		return " ", tui.Style{}
+	}
+
+	switch buf.gitSigns[lineIdx] {
+	case GitSignAdded:
+		return "│", gitAddedStyle // Green vertical bar for added
+	case GitSignModified:
+		return "│", gitModifiedStyle // Yellow vertical bar for modified
+	case GitSignRemoved:
+		return "▁", gitRemovedStyle // Red underscore for deleted below
+	default:
+		return " ", tui.Style{}
+	}
+}
 
 // highlightSearchMatches splits a line into spans with search matches highlighted
 func (ed *Editor) highlightSearchMatches(line string) []tui.Span {
@@ -2073,6 +2554,21 @@ func (ed *Editor) highlightSearchMatches(line string) []tui.Span {
 	return spans
 }
 
+// applyCursorLineStyle applies the cursorline background to spans
+func (ed *Editor) applyCursorLineStyle(spans []tui.Span) []tui.Span {
+	result := make([]tui.Span, len(spans))
+	for i, span := range spans {
+		// Merge cursorline background with existing style
+		// Keep foreground and attributes, add cursorline background if no background set
+		newStyle := span.Style
+		if newStyle.BG.Mode == 0 { // No background set
+			newStyle.BG = cursorLineStyle.BG
+		}
+		result[i] = tui.Span{Text: span.Text, Style: newStyle}
+	}
+	return result
+}
+
 // updateStatusBar builds the vim-style status bar
 func (ed *Editor) updateStatusBar() {
 	// Use stored viewport width if set, otherwise full screen width
@@ -2082,7 +2578,11 @@ func (ed *Editor) updateStatusBar() {
 	}
 
 	// Left side: filename (and debug stats if enabled)
-	left := " " + ed.buf().FileName
+	filename := ed.buf().FileName
+	if ed.isNetrw() {
+		filename = "[netrw] " + filename
+	}
+	left := " " + filename
 	if ed.win().debugMode {
 		avgLines := 0
 		if ed.win().totalRenders > 0 {
@@ -2179,6 +2679,10 @@ func (ed *Editor) ensureWindowRendered(w *Window) {
 	// Calculate line number width based on total lines
 	maxLineNum := len(w.buffer.Lines)
 	w.lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+	// Add sign column width if enabled (2 chars: sign + space)
+	if ed.showSignColumn {
+		w.lineNumWidth += 2
+	}
 
 	// Calculate desired render range (visible + buffer)
 	wantMin := max(0, w.topLine-renderBuffer)
@@ -2226,7 +2730,13 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 		return
 	}
 
-	lineNumFmt := fmt.Sprintf("%%%dd ", w.lineNumWidth-1)
+	// Calculate format widths
+	signWidth := 0
+	if ed.showSignColumn {
+		signWidth = 2 // sign char + space
+	}
+	lineNumOnlyWidth := w.lineNumWidth - signWidth
+	lineNumFmt := fmt.Sprintf("%%%dd ", lineNumOnlyWidth-1)
 	tildeFmt := fmt.Sprintf("%%%ds ", w.lineNumWidth-1)
 
 	var spans []tui.Span
@@ -2234,8 +2744,24 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 	if lineIdx < len(w.buffer.Lines) {
 		// Content line
 		line := w.buffer.Lines[lineIdx]
-		lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
 		isCursorLine := lineIdx == w.Cursor
+
+		// Add sign column if enabled
+		if ed.showSignColumn {
+			sign, signStyle := ed.getGitSignForLineBuffer(w.buffer, lineIdx)
+			spans = append(spans, tui.Span{Text: sign + " ", Style: signStyle})
+		}
+
+		// Calculate displayed line number (absolute or relative)
+		var displayNum int
+		if ed.relativeNumber && !isCursorLine {
+			// Relative: show distance from cursor
+			displayNum = abs(lineIdx - w.Cursor)
+		} else {
+			// Absolute: show actual line number (1-indexed)
+			displayNum = lineIdx + 1
+		}
+		lineNum := fmt.Sprintf(lineNumFmt, displayNum)
 
 		numStyle := lineNumStyle
 		if isCursorLine {
@@ -2244,11 +2770,17 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 
 		// For the focused window in visual mode, use visual spans
 		if ed.Mode == "VISUAL" && ed.win() == w {
-			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, ed.getVisualSpans(lineIdx, line)...)
+			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, ed.getVisualSpans(lineIdx, line)...)
 		} else {
 			// Use search highlighting
 			contentSpans := ed.highlightSearchMatches(line)
-			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, contentSpans...)
+			// Apply cursorline background if enabled and this is the cursor line
+			if ed.cursorLine && isCursorLine {
+				contentSpans = ed.applyCursorLineStyle(contentSpans)
+			}
+			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, contentSpans...)
 		}
 	} else {
 		// Tilde line (beyond EOF)
@@ -2398,6 +2930,89 @@ func (ed *Editor) splitVertical() {
 	newWindowNode.Parent = currentNode
 
 	// Refresh display
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.StatusLine = ""
+}
+
+// splitHorizontalWithBuffer creates a horizontal split with a specific buffer
+func (ed *Editor) splitHorizontalWithBuffer(buf *Buffer) {
+	currentNode := ed.root.FindWindow(ed.focusedWindow)
+	if currentNode == nil {
+		return
+	}
+
+	totalHeight := ed.focusedWindow.viewportHeight
+	halfHeight := max(1, totalHeight/2)
+	ed.focusedWindow.viewportHeight = halfHeight
+
+	newWin := &Window{
+		buffer:         buf,
+		Cursor:         0,
+		Col:            0,
+		topLine:        0,
+		viewportHeight: totalHeight - halfHeight,
+		viewportWidth:  ed.focusedWindow.viewportWidth,
+		renderedMin:    -1,
+		renderedMax:    -1,
+	}
+
+	ed.initWindowLayer(newWin, newWin.viewportWidth)
+
+	newWindowNode := &SplitNode{Window: newWin}
+	currentWindowNode := &SplitNode{Window: ed.focusedWindow}
+
+	currentNode.Direction = SplitHorizontal
+	currentNode.Window = nil
+	currentNode.Children = [2]*SplitNode{currentWindowNode, newWindowNode}
+	currentWindowNode.Parent = currentNode
+	newWindowNode.Parent = currentNode
+
+	// Focus the new window
+	ed.focusedWindow = newWin
+
+	ed.app.SetView(buildView(ed))
+	ed.updateAllWindows()
+	ed.StatusLine = ""
+}
+
+// splitVerticalWithBuffer creates a vertical split with a specific buffer
+func (ed *Editor) splitVerticalWithBuffer(buf *Buffer) {
+	currentNode := ed.root.FindWindow(ed.focusedWindow)
+	if currentNode == nil {
+		return
+	}
+
+	totalWidth := ed.focusedWindow.viewportWidth
+	halfWidth := max(1, totalWidth/2-1)
+	ed.focusedWindow.viewportWidth = halfWidth
+
+	newWin := &Window{
+		buffer:         buf,
+		Cursor:         0,
+		Col:            0,
+		topLine:        0,
+		viewportHeight: ed.focusedWindow.viewportHeight,
+		viewportWidth:  totalWidth - halfWidth - 1,
+		renderedMin:    -1,
+		renderedMax:    -1,
+	}
+
+	ed.initWindowLayer(ed.focusedWindow, halfWidth)
+	ed.initWindowLayer(newWin, newWin.viewportWidth)
+
+	newWindowNode := &SplitNode{Window: newWin}
+	currentWindowNode := &SplitNode{Window: ed.focusedWindow}
+
+	currentNode.Direction = SplitVertical
+	currentNode.Window = nil
+	currentNode.Children = [2]*SplitNode{currentWindowNode, newWindowNode}
+	currentWindowNode.Parent = currentNode
+	newWindowNode.Parent = currentNode
+
+	// Focus the new window
+	ed.focusedWindow = newWin
+
 	ed.app.SetView(buildView(ed))
 	ed.updateAllWindows()
 	ed.StatusLine = ""
@@ -2597,6 +3212,10 @@ func (ed *Editor) ensureRendered() {
 	// Calculate line number width based on total lines
 	maxLineNum := len(ed.buf().Lines)
 	ed.win().lineNumWidth = len(fmt.Sprintf("%d", maxLineNum)) + 1
+	// Add sign column width if enabled (2 chars: sign + space)
+	if ed.showSignColumn {
+		ed.win().lineNumWidth += 2
+	}
 
 	// Calculate desired render range (visible + buffer)
 	wantMin := max(0, ed.win().topLine-renderBuffer)
@@ -2653,7 +3272,13 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 		return
 	}
 
-	lineNumFmt := fmt.Sprintf("%%%dd ", ed.win().lineNumWidth-1)
+	// Calculate format widths
+	signWidth := 0
+	if ed.showSignColumn {
+		signWidth = 2 // sign char + space
+	}
+	lineNumOnlyWidth := ed.win().lineNumWidth - signWidth
+	lineNumFmt := fmt.Sprintf("%%%dd ", lineNumOnlyWidth-1)
 	tildeFmt := fmt.Sprintf("%%%ds ", ed.win().lineNumWidth-1)
 
 	var spans []tui.Span
@@ -2667,8 +3292,24 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 			line = ""
 		}
 
-		lineNum := fmt.Sprintf(lineNumFmt, lineIdx+1)
 		isCursorLine := lineIdx == ed.win().Cursor
+
+		// Add sign column if enabled
+		if ed.showSignColumn {
+			sign, signStyle := ed.getGitSignForLine(lineIdx)
+			spans = append(spans, tui.Span{Text: sign + " ", Style: signStyle})
+		}
+
+		// Calculate displayed line number (absolute or relative)
+		var displayNum int
+		if ed.relativeNumber && !isCursorLine {
+			// Relative: show distance from cursor
+			displayNum = abs(lineIdx - ed.win().Cursor)
+		} else {
+			// Absolute: show actual line number (1-indexed)
+			displayNum = lineIdx + 1
+		}
+		lineNum := fmt.Sprintf(lineNumFmt, displayNum)
 
 		numStyle := lineNumStyle
 		if isCursorLine {
@@ -2677,10 +3318,16 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 
 		if ed.Mode == "VISUAL" {
 			// Visual mode needs offset-adjusted highlighting
-			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, ed.getVisualSpans(lineIdx, line)...)
+			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, ed.getVisualSpans(lineIdx, line)...)
 		} else {
 			contentSpans := ed.highlightSearchMatches(line)
-			spans = append([]tui.Span{{Text: lineNum, Style: numStyle}}, contentSpans...)
+			// Apply cursorline background if enabled and this is the cursor line
+			if ed.cursorLine && isCursorLine {
+				contentSpans = ed.applyCursorLineStyle(contentSpans)
+			}
+			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, contentSpans...)
 		}
 	} else {
 		// Tilde line (beyond EOF)
@@ -2730,10 +3377,20 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 		return []tui.Span{{Text: " ", Style: normalStyle}}
 	}
 
-	if ed.win().visualLineMode {
+	if ed.win().visualMode == VisualLine {
 		// Line mode: entire line is selected or not
 		if ed.isLineSelected(lineIdx) {
 			return []tui.Span{{Text: line, Style: inverseStyle}}
+		}
+		return []tui.Span{{Text: line, Style: normalStyle}}
+	}
+
+	if ed.win().visualMode == VisualBlock {
+		// Block mode: select a rectangular column region
+		if ed.isLineSelected(lineIdx) {
+			startCol := min(ed.win().visualStartCol, ed.win().Col)
+			endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
+			return ed.buildBlockSelectionSpans(line, startCol, endCol, normalStyle, inverseStyle)
 		}
 		return []tui.Span{{Text: line, Style: normalStyle}}
 	}
@@ -2803,15 +3460,48 @@ func (ed *Editor) isLineSelected(lineIdx int) bool {
 	return lineIdx >= minLine && lineIdx <= maxLine
 }
 
+// buildBlockSelectionSpans builds spans for block (column) visual selection
+func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, normalStyle, inverseStyle tui.Style) []tui.Span {
+	// Clamp columns to line length
+	lineLen := len(line)
+	startCol = max(0, min(startCol, lineLen))
+	endCol = max(0, min(endCol, lineLen))
+
+	var spans []tui.Span
+
+	// Before selection
+	if startCol > 0 {
+		spans = append(spans, tui.Span{Text: line[:startCol], Style: normalStyle})
+	}
+
+	// Selected block region
+	if startCol < endCol {
+		spans = append(spans, tui.Span{Text: line[startCol:endCol], Style: inverseStyle})
+	} else if startCol == endCol && startCol < lineLen {
+		// Single column - still highlight one character
+		spans = append(spans, tui.Span{Text: string(line[startCol]), Style: inverseStyle})
+	} else if startCol >= lineLen {
+		// Selection extends beyond line - show virtual space
+		spans = append(spans, tui.Span{Text: " ", Style: inverseStyle})
+	}
+
+	// After selection
+	if endCol < lineLen {
+		spans = append(spans, tui.Span{Text: line[endCol:], Style: normalStyle})
+	}
+
+	return spans
+}
+
 // buildWindowView builds the view for a single window
 func buildWindowView(w *Window, focused bool) any {
 	return tui.Col{Children: []any{
 		// Content area - imperative layer, efficiently updated
 		// Width is set for vertical splits to constrain each window's area
 		tui.LayerView{
-			Layer:  w.contentLayer,
-			Height: int16(w.viewportHeight),
-			Width:  int16(w.viewportWidth),
+			Layer:      w.contentLayer,
+			ViewHeight: int16(w.viewportHeight),
+			ViewWidth:  int16(w.viewportWidth),
 		},
 		// Vim-style status bar (inverse video, shows filename and position)
 		tui.RichText{Spans: &w.StatusBar},
@@ -2848,6 +3538,26 @@ func buildView(ed *Editor) any {
 			Cond: &ed.cmdCompletionActive,
 			Then: tui.RichText{Spans: &ed.cmdWildmenuSpans},
 		},
+		tui.Text{Content: &ed.StatusLine},
+	}}
+}
+
+// buildFuzzyView creates the declarative fuzzy finder overlay view
+func buildFuzzyView(ed *Editor) any {
+	return tui.Col{Children: []any{
+		// Prompt line with query
+		tui.Text{Content: &ed.fuzzy.Query, Style: tui.Style{Attr: tui.AttrBold}},
+		// Results list with selection
+		&tui.SelectionList{
+			Items:      &ed.fuzzy.Matches,
+			Selected:   &ed.fuzzy.Selected,
+			Marker:     "> ",
+			MaxVisible: 20,
+			Render: func(s *string) any {
+				return tui.Text{Content: s}
+			},
+		},
+		// Status line
 		tui.Text{Content: &ed.StatusLine},
 	}}
 }
@@ -3295,6 +4005,36 @@ func (ed *Editor) deleteRange(r Range) {
 	ed.win().Col = startCol
 }
 
+// extractBlock extracts a rectangular block of text (for visual block yank)
+func (ed *Editor) extractBlock(startLine, endLine, startCol, endCol int) string {
+	var lines []string
+	for line := startLine; line <= endLine && line < len(ed.buf().Lines); line++ {
+		text := ed.buf().Lines[line]
+		// Extract the column range from this line
+		sc := min(startCol, len(text))
+		ec := min(endCol, len(text))
+		if sc < ec {
+			lines = append(lines, text[sc:ec])
+		} else {
+			lines = append(lines, "")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// deleteBlock deletes a rectangular block of text (for visual block delete)
+func (ed *Editor) deleteBlock(startLine, endLine, startCol, endCol int) {
+	for line := startLine; line <= endLine && line < len(ed.buf().Lines); line++ {
+		text := ed.buf().Lines[line]
+		// Delete the column range from this line
+		sc := min(startCol, len(text))
+		ec := min(endCol, len(text))
+		if sc < len(text) {
+			ed.buf().Lines[line] = text[:sc] + text[ec:]
+		}
+	}
+}
+
 // Multi-line text object functions
 
 // toInnerParagraphML returns the range of the inner paragraph
@@ -3583,6 +4323,14 @@ func isWordChar(r byte) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
 
+// abs returns absolute value of an int
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 // Cross-line word motions
 
 // wordForward moves to the start of the next word, crossing lines
@@ -3784,14 +4532,17 @@ func (ed *Editor) redo() {
 }
 
 // Visual mode implementation
-func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
+func (ed *Editor) enterVisualMode(app *tui.App, mode VisualMode) {
 	ed.Mode = "VISUAL"
 	ed.win().visualStart = ed.win().Cursor
 	ed.win().visualStartCol = ed.win().Col
-	ed.win().visualLineMode = lineMode
-	if lineMode {
+	ed.win().visualMode = mode
+	switch mode {
+	case VisualLine:
 		ed.StatusLine = "-- VISUAL LINE --"
-	} else {
+	case VisualBlock:
+		ed.StatusLine = "-- VISUAL BLOCK --"
+	default:
 		ed.StatusLine = "-- VISUAL --"
 	}
 	ed.updateDisplay()
@@ -3819,8 +4570,42 @@ func (ed *Editor) enterVisualMode(app *tui.App, lineMode bool) {
 
 	// Operators
 	visualRouter.Handle("d", func(_ riffkey.Match) { ed.VisualDelete(app) })
+	visualRouter.Handle("x", func(_ riffkey.Match) { ed.VisualDelete(app) })
 	visualRouter.Handle("c", func(_ riffkey.Match) { ed.VisualChange(app) })
 	visualRouter.Handle("y", func(_ riffkey.Match) { ed.VisualYank(app) })
+
+	// Block insert/append (only meaningful in block mode, but available in all)
+	visualRouter.Handle("I", func(_ riffkey.Match) { ed.VisualBlockInsert(app) })
+	visualRouter.Handle("A", func(_ riffkey.Match) { ed.VisualBlockAppend(app) })
+
+	// Switch visual modes
+	visualRouter.Handle("v", func(_ riffkey.Match) {
+		if ed.win().visualMode == VisualChar {
+			ed.exitVisualMode(app)
+		} else {
+			ed.win().visualMode = VisualChar
+			ed.StatusLine = "-- VISUAL --"
+			ed.updateDisplay()
+		}
+	})
+	visualRouter.Handle("V", func(_ riffkey.Match) {
+		if ed.win().visualMode == VisualLine {
+			ed.exitVisualMode(app)
+		} else {
+			ed.win().visualMode = VisualLine
+			ed.StatusLine = "-- VISUAL LINE --"
+			ed.updateDisplay()
+		}
+	})
+	visualRouter.Handle("<C-v>", func(_ riffkey.Match) {
+		if ed.win().visualMode == VisualBlock {
+			ed.exitVisualMode(app)
+		} else {
+			ed.win().visualMode = VisualBlock
+			ed.StatusLine = "-- VISUAL BLOCK --"
+			ed.updateDisplay()
+		}
+	})
 
 	// Text objects expand selection (uses shared definitions)
 	for _, obj := range mlTextObjectDefs {
@@ -3997,12 +4782,45 @@ func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
 		ed.splitHorizontal()
 	case "vs", "vsplit":
 		ed.splitVertical()
+	case "Ex", "Explore":
+		ed.openExplorer("")
+	case "Vex", "Vexplore":
+		ed.openExplorerSplit(true, "")
+	case "Sex", "Sexplore":
+		ed.openExplorerSplit(false, "")
+	case "Files", "FZF":
+		ed.openFuzzyFinder(app)
 	case "close":
 		ed.closeWindow()
 	case "only", "on":
 		ed.closeOtherWindows()
 	case "noh", "nohlsearch":
 		ed.searchPattern = ""
+	case "set relativenumber", "set rnu":
+		ed.relativeNumber = true
+		ed.StatusLine = "relativenumber on"
+	case "set norelativenumber", "set nornu":
+		ed.relativeNumber = false
+		ed.StatusLine = "relativenumber off"
+	case "set number", "set nu":
+		ed.relativeNumber = false
+		ed.StatusLine = "number on (relativenumber off)"
+	case "set cursorline", "set cul":
+		ed.cursorLine = true
+		ed.StatusLine = "cursorline on"
+	case "set nocursorline", "set nocul":
+		ed.cursorLine = false
+		ed.StatusLine = "cursorline off"
+	case "set signcolumn", "set scl":
+		ed.showSignColumn = true
+		ed.StatusLine = "signcolumn on"
+	case "set nosigncolumn", "set noscl":
+		ed.showSignColumn = false
+		ed.StatusLine = "signcolumn off"
+	case "gitsigns", "Gitsigns":
+		ed.refreshGitSigns()
+		ed.invalidateRenderedRange()
+		ed.StatusLine = "Git signs refreshed"
 	default:
 		// Try to parse as line number first
 		lineNum := 0
@@ -4223,4 +5041,435 @@ func loadFile(path string) []string {
 		lines[i] = strings.ReplaceAll(line, "\t", "    ")
 	}
 	return lines
+}
+
+// ============================================================================
+// File Tree / Netrw Implementation
+// ============================================================================
+
+// createNetrwBuffer creates a buffer for browsing a directory
+func (ed *Editor) createNetrwBuffer(dirPath string) *Buffer {
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		absPath = dirPath
+	}
+
+	ft := &FileTree{
+		Path:       absPath,
+		ShowHidden: false,
+	}
+	ft.refresh()
+
+	buf := &Buffer{
+		Lines:    ft.toLines(),
+		FileName: absPath + "/", // trailing slash indicates directory
+		marks:    make(map[rune]Pos),
+		fileTree: ft,
+	}
+	return buf
+}
+
+// refresh reloads the directory entries
+func (ft *FileTree) refresh() {
+	ft.Entries = nil
+
+	entries, err := os.ReadDir(ft.Path)
+	if err != nil {
+		ft.Entries = []DirEntry{{Name: "Error: " + err.Error(), IsDir: false}}
+		return
+	}
+
+	// Sort: directories first, then files, alphabetically within each
+	var dirs, files []DirEntry
+	for _, e := range entries {
+		name := e.Name()
+		// Skip hidden files unless ShowHidden is true
+		if !ft.ShowHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		de := DirEntry{Name: name, IsDir: e.IsDir()}
+		if e.IsDir() {
+			dirs = append(dirs, de)
+		} else {
+			files = append(files, de)
+		}
+	}
+
+	// Sort each group alphabetically (case-insensitive)
+	sort.Slice(dirs, func(i, j int) bool {
+		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
+	})
+	sort.Slice(files, func(i, j int) bool {
+		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
+	})
+
+	// Add parent directory entry first
+	ft.Entries = append(ft.Entries, DirEntry{Name: "..", IsDir: true})
+	ft.Entries = append(ft.Entries, dirs...)
+	ft.Entries = append(ft.Entries, files...)
+}
+
+// toLines converts file tree entries to displayable lines
+func (ft *FileTree) toLines() []string {
+	lines := make([]string, 0, len(ft.Entries)+2)
+
+	// Header
+	lines = append(lines, "\" Press ? for help")
+	lines = append(lines, ft.Path+"/")
+	lines = append(lines, "")
+
+	for _, e := range ft.Entries {
+		if e.IsDir {
+			lines = append(lines, e.Name+"/")
+		} else {
+			lines = append(lines, e.Name)
+		}
+	}
+	return lines
+}
+
+// getEntryAtLine returns the directory entry for a given line number
+// Returns nil if the line is not an entry (header lines)
+func (ft *FileTree) getEntryAtLine(lineIdx int) *DirEntry {
+	// Skip header lines (help, path, blank)
+	entryIdx := lineIdx - 3
+	if entryIdx < 0 || entryIdx >= len(ft.Entries) {
+		return nil
+	}
+	return &ft.Entries[entryIdx]
+}
+
+// openExplorer opens a file explorer in the current window
+func (ed *Editor) openExplorer(dirPath string) {
+	if dirPath == "" {
+		// Default to directory of current file
+		if ed.buf().FileName != "" && !ed.isNetrw() {
+			dirPath = filepath.Dir(ed.buf().FileName)
+		} else {
+			dirPath = "."
+		}
+	}
+
+	buf := ed.createNetrwBuffer(dirPath)
+	ed.win().buffer = buf
+	ed.win().Cursor = 3 // Start on first entry (after header)
+	ed.win().Col = 0
+	ed.win().topLine = 0
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+}
+
+// openExplorerSplit opens a file explorer in a new split
+func (ed *Editor) openExplorerSplit(vertical bool, dirPath string) {
+	if dirPath == "" {
+		if ed.buf().FileName != "" && !ed.isNetrw() {
+			dirPath = filepath.Dir(ed.buf().FileName)
+		} else {
+			dirPath = "."
+		}
+	}
+
+	buf := ed.createNetrwBuffer(dirPath)
+	if vertical {
+		ed.splitVerticalWithBuffer(buf)
+	} else {
+		ed.splitHorizontalWithBuffer(buf)
+	}
+	ed.win().Cursor = 3
+	ed.win().Col = 0
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+}
+
+// isNetrw returns true if the current buffer is a netrw browser
+func (ed *Editor) isNetrw() bool {
+	return ed.buf().fileTree != nil
+}
+
+// netrwEnter handles Enter key in netrw - opens file or enters directory
+func (ed *Editor) netrwEnter(app *tui.App) {
+	if !ed.isNetrw() {
+		return
+	}
+
+	ft := ed.buf().fileTree
+	entry := ft.getEntryAtLine(ed.win().Cursor)
+	if entry == nil {
+		return
+	}
+
+	fullPath := filepath.Join(ft.Path, entry.Name)
+
+	if entry.IsDir {
+		// Enter directory
+		ft.Path = fullPath
+		ft.refresh()
+		ed.buf().Lines = ft.toLines()
+		ed.buf().FileName = fullPath + "/"
+		ed.win().Cursor = 3 // Reset to first entry
+		ed.win().topLine = 0
+		ed.invalidateRenderedRange()
+		ed.updateDisplay()
+	} else {
+		// Open file
+		lines := loadFile(fullPath)
+		if lines == nil {
+			ed.StatusLine = "Error: Could not open " + fullPath
+			return
+		}
+		ed.buf().Lines = lines
+		ed.buf().FileName = fullPath
+		ed.buf().fileTree = nil // No longer a netrw buffer
+		ed.buf().undoStack = nil
+		ed.buf().redoStack = nil
+		ed.win().Cursor = 0
+		ed.win().Col = 0
+		ed.win().topLine = 0
+		ed.refreshGitSigns()
+		ed.invalidateRenderedRange()
+		ed.updateDisplay()
+	}
+}
+
+// netrwUp goes up one directory level (like pressing - in vim netrw)
+func (ed *Editor) netrwUp() {
+	if !ed.isNetrw() {
+		return
+	}
+
+	ft := ed.buf().fileTree
+	parent := filepath.Dir(ft.Path)
+	if parent == ft.Path {
+		return // Already at root
+	}
+
+	ft.Path = parent
+	ft.refresh()
+	ed.buf().Lines = ft.toLines()
+	ed.buf().FileName = parent + "/"
+	ed.win().Cursor = 3
+	ed.win().topLine = 0
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+}
+
+// netrwToggleHidden toggles display of hidden files
+func (ed *Editor) netrwToggleHidden() {
+	if !ed.isNetrw() {
+		return
+	}
+
+	ft := ed.buf().fileTree
+	ft.ShowHidden = !ft.ShowHidden
+	ft.refresh()
+	ed.buf().Lines = ft.toLines()
+	ed.win().Cursor = 3
+	ed.win().topLine = 0
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+	if ft.ShowHidden {
+		ed.StatusLine = "Showing hidden files"
+	} else {
+		ed.StatusLine = "Hiding hidden files"
+	}
+}
+
+// ============================================================================
+// Fuzzy Finder Implementation (Declarative)
+// ============================================================================
+
+// openFuzzyFinder opens a fuzzy file finder as a pushed view overlay
+func (ed *Editor) openFuzzyFinder(app *tui.App) {
+	// Save current buffer state for restoration on cancel
+	ed.fuzzy.PrevBuffer = ed.buf()
+	ed.fuzzy.PrevCursor = ed.win().Cursor
+
+	// Get source directory
+	sourceDir := "."
+	if ed.fuzzy.PrevBuffer.FileName != "" && !ed.isNetrw() {
+		sourceDir = filepath.Dir(ed.fuzzy.PrevBuffer.FileName)
+	}
+
+	// Collect all files recursively
+	allFiles := ed.collectFilesRecursive(sourceDir, 1000)
+
+	// Initialize fuzzy state
+	ed.fuzzy.Active = true
+	ed.fuzzy.Query = "> "
+	ed.fuzzy.AllItems = allFiles
+	ed.fuzzy.Matches = allFiles
+	ed.fuzzy.Selected = 0
+	ed.fuzzy.SourceDir = sourceDir
+
+	ed.StatusLine = "Fuzzy finder: type to search, ↑↓/C-p/C-n to navigate, Enter to select, Esc to cancel"
+
+	// Push the fuzzy view - this shows the declarative UI and activates its input handlers
+	app.PushView("fuzzy")
+}
+
+// collectFilesRecursive collects all files recursively up to maxFiles
+func (ed *Editor) collectFilesRecursive(dir string, maxFiles int) []string {
+	var files []string
+
+	// Use filepath.WalkDir for efficiency
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		if len(files) >= maxFiles {
+			return filepath.SkipAll
+		}
+		// Skip hidden directories
+		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		// Skip hidden files
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		// Only add files
+		if !d.IsDir() {
+			// Make path relative to dir
+			relPath, err := filepath.Rel(dir, path)
+			if err == nil {
+				files = append(files, relPath)
+			}
+		}
+		return nil
+	})
+
+	return files
+}
+
+// fuzzyMatch returns true if text matches the pattern fuzzily
+func fuzzyMatch(text, pattern string) bool {
+	ti, pi := 0, 0
+	for ti < len(text) && pi < len(pattern) {
+		if text[ti] == pattern[pi] {
+			pi++
+		}
+		ti++
+	}
+	return pi == len(pattern)
+}
+
+// fuzzyFilterMatches updates the matches based on the query
+func (ed *Editor) fuzzyFilterMatches() {
+	query := ed.fuzzy.Query
+	// Strip the "> " prompt prefix for matching
+	if len(query) > 2 {
+		query = query[2:]
+	} else {
+		query = ""
+	}
+
+	if query == "" {
+		ed.fuzzy.Matches = ed.fuzzy.AllItems
+		ed.fuzzy.Selected = 0
+		return
+	}
+
+	query = strings.ToLower(query)
+	var matches []string
+
+	for _, item := range ed.fuzzy.AllItems {
+		if fuzzyMatch(strings.ToLower(item), query) {
+			matches = append(matches, item)
+		}
+	}
+
+	ed.fuzzy.Matches = matches
+	if ed.fuzzy.Selected >= len(ed.fuzzy.Matches) {
+		ed.fuzzy.Selected = max(0, len(ed.fuzzy.Matches)-1)
+	}
+}
+
+// fuzzyBackspace handles backspace in fuzzy finder
+func (ed *Editor) fuzzyBackspace() {
+	if !ed.fuzzy.Active {
+		return
+	}
+	// Keep the "> " prefix, only delete after it
+	if len(ed.fuzzy.Query) > 2 {
+		ed.fuzzy.Query = ed.fuzzy.Query[:len(ed.fuzzy.Query)-1]
+		ed.fuzzyFilterMatches()
+	}
+}
+
+// fuzzyUp moves selection up
+func (ed *Editor) fuzzyUp() {
+	if !ed.fuzzy.Active || len(ed.fuzzy.Matches) == 0 {
+		return
+	}
+	ed.fuzzy.Selected = max(0, ed.fuzzy.Selected-1)
+}
+
+// fuzzyDown moves selection down
+func (ed *Editor) fuzzyDown() {
+	if !ed.fuzzy.Active || len(ed.fuzzy.Matches) == 0 {
+		return
+	}
+	ed.fuzzy.Selected = min(len(ed.fuzzy.Matches)-1, ed.fuzzy.Selected+1)
+}
+
+// fuzzySelect opens the selected file
+func (ed *Editor) fuzzySelect(app *tui.App) {
+	if !ed.fuzzy.Active || len(ed.fuzzy.Matches) == 0 {
+		ed.fuzzyCancel(app)
+		return
+	}
+
+	selectedFile := ed.fuzzy.Matches[ed.fuzzy.Selected]
+	fullPath := filepath.Join(ed.fuzzy.SourceDir, selectedFile)
+
+	lines := loadFile(fullPath)
+	if lines == nil {
+		ed.StatusLine = "Error: Could not open " + fullPath
+		return
+	}
+
+	// Clear fuzzy state BEFORE popping (PopView triggers render)
+	ed.fuzzy.Active = false
+	ed.fuzzy.Query = ""
+	ed.fuzzy.Matches = nil
+	ed.fuzzy.AllItems = nil
+
+	// Open the file in a new buffer BEFORE popping
+	ed.buf().Lines = lines
+	ed.buf().FileName = fullPath
+	ed.buf().undoStack = nil
+	ed.buf().redoStack = nil
+	ed.win().Cursor = 0
+	ed.win().Col = 0
+	ed.win().topLine = 0
+	ed.refreshGitSigns()
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+	ed.StatusLine = "Opened: " + fullPath
+
+	// Pop fuzzy view last (this triggers the final render)
+	app.PopView()
+}
+
+// fuzzyCancel cancels the fuzzy finder and restores previous state
+func (ed *Editor) fuzzyCancel(app *tui.App) {
+	if !ed.fuzzy.Active {
+		return
+	}
+
+	// Clear fuzzy state BEFORE popping (PopView triggers render)
+	ed.fuzzy.Active = false
+	ed.fuzzy.Query = ""
+	ed.fuzzy.Matches = nil
+	ed.fuzzy.AllItems = nil
+
+	// Restore cursor position BEFORE popping
+	ed.win().Cursor = ed.fuzzy.PrevCursor
+	ed.win().Col = 0
+	ed.invalidateRenderedRange()
+	ed.updateDisplay()
+	ed.StatusLine = ""
+
+	// Pop fuzzy view last (this triggers the final render)
+	app.PopView()
 }

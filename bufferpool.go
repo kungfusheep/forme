@@ -39,56 +39,22 @@ func (p *BufferPool) Current() *Buffer {
 	return p.buffers[p.current.Load()]
 }
 
-// Swap switches to the other buffer and queues the old one for clearing.
-// Returns the new current buffer (already cleared and ready to use).
-// Cost: ~8ns if next buffer is clean, otherwise waits for clearer
+// Swap switches to the other buffer.
+// Returns the new current buffer (cleared and ready to use).
 func (p *BufferPool) Swap() *Buffer {
 	old := p.current.Load()
 	next := 1 - old
 
-	// Mark old buffer as dirty before switching
+	// Mark old buffer as needing clear
 	p.dirty[old].Store(true)
 
-	// Check if next buffer is still dirty (clearer hasn't finished)
+	// Only clear if needed (skip if already clean)
 	if p.dirty[next].Load() {
-		// Wait for clearer to finish or clear synchronously
-		p.mu.Lock()
-		// Double-check under lock
-		if p.dirty[next].Load() {
-			// Clearer might be working on it - wait briefly
-			// If pendingClear is our target buffer, wait for it
-			if p.pendingClear == p.buffers[next] {
-				// Wait for clearer to signal completion
-				for p.dirty[next].Load() && p.clearerActive {
-					p.mu.Unlock()
-					// Brief yield to let clearer work
-					p.mu.Lock()
-					if p.pendingClear != p.buffers[next] {
-						break // Clearer moved on
-					}
-				}
-			}
-			// If still dirty after waiting, clear synchronously
-			if p.dirty[next].Load() {
-				p.mu.Unlock()
-				p.buffers[next].ClearDirty()
-				p.dirty[next].Store(false)
-				p.mu.Lock()
-			}
-		}
-		p.mu.Unlock()
+		p.buffers[next].ClearDirty()
+		p.dirty[next].Store(false)
 	}
 
 	p.current.Store(next)
-
-	// Queue old buffer for async clear
-	oldBuf := p.buffers[old]
-	p.mu.Lock()
-	p.pendingClear = oldBuf
-	p.pendingIdx = int(old)
-	p.cond.Signal()
-	p.mu.Unlock()
-
 	return p.buffers[next]
 }
 
@@ -141,6 +107,18 @@ func (p *BufferPool) Width() int {
 // Height returns the buffer height.
 func (p *BufferPool) Height() int {
 	return p.buffers[0].Height()
+}
+
+// Resize resizes both buffers in the pool to new dimensions.
+// Call this when the terminal is resized.
+func (p *BufferPool) Resize(width, height int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i := 0; i < 2; i++ {
+		p.buffers[i].Resize(width, height)
+		p.dirty[i].Store(false) // Mark as clean after resize (Resize clears)
+	}
 }
 
 // Run executes a render loop until ctx is cancelled.

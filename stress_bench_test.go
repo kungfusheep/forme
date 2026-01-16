@@ -50,7 +50,7 @@ func BenchmarkStress100Items(b *testing.B) {
 			ForEach(&stressData.Items, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 30},
+					Progress{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},
@@ -88,7 +88,7 @@ func BenchmarkStressWideProgress(b *testing.B) {
 			ForEach(&items, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 100},
+					Progress{Value: &item.CPU, BarWidth: 100},
 				}}
 			}),
 		},
@@ -129,7 +129,7 @@ func BenchmarkStressDenseGrid(b *testing.B) {
 			ForEach(&rows, func(row *[]StressItem) any {
 				return Row{Children: []any{
 					ForEach(row, func(item *StressItem) any {
-						return Progress{Value: &item.CPU, Width: 8}
+						return Progress{Value: &item.CPU, BarWidth: 8}
 					}),
 				}}
 			}),
@@ -167,7 +167,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 			ForEach(&cpuCores, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -175,7 +175,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 			ForEach(&memBanks, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -183,7 +183,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 			ForEach(&procList, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 40},
+					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -254,7 +254,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 			ForEach(&cpuCores, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -262,7 +262,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 			ForEach(&memBanks, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -270,7 +270,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 			ForEach(&procList, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 40},
+					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -307,7 +307,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 			ForEach(&cpuCores, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -315,7 +315,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 			ForEach(&memBanks, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 50},
+					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
 			Text{Content: ""},
@@ -323,7 +323,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 			ForEach(&procList, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 40},
+					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -354,7 +354,7 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 			ForEach(&stressData.Items, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 30},
+					Progress{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},
@@ -385,7 +385,7 @@ func BenchmarkSyncClear100Items(b *testing.B) {
 			ForEach(&stressData.Items, func(item *StressItem) any {
 				return Row{Children: []any{
 					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, Width: 30},
+					Progress{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},

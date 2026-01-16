@@ -103,18 +103,7 @@ var (
 
 // Equal returns true if two colors are equal.
 func (c Color) Equal(other Color) bool {
-	if c.Mode != other.Mode {
-		return false
-	}
-	switch c.Mode {
-	case ColorDefault:
-		return true
-	case Color16, Color256:
-		return c.Index == other.Index
-	case ColorRGB:
-		return c.R == other.R && c.G == other.G && c.B == other.B
-	}
-	return false
+	return c == other
 }
 
 // Style combines foreground, background colors and attributes.
@@ -182,7 +171,7 @@ func (s Style) Strikethrough() Style {
 
 // Equal returns true if two styles are equal.
 func (s Style) Equal(other Style) bool {
-	return s.FG.Equal(other.FG) && s.BG.Equal(other.BG) && s.Attr == other.Attr
+	return s == other
 }
 
 // Cell represents a single character cell on the terminal.
@@ -203,83 +192,138 @@ func NewCell(r rune, style Style) Cell {
 
 // Equal returns true if two cells are equal.
 func (c Cell) Equal(other Cell) bool {
-	return c.Rune == other.Rune && c.Style.Equal(other.Style)
+	return c == other
 }
 
-// DStyle represents styling options for declarative components.
-// Uses pointers to allow dynamic binding.
-type DStyle struct {
-	FG        *Color
-	BG        *Color
-	Bold      bool
-	Dim       bool
-	Italic    bool
-	Underline bool
-	Inverse   bool
-}
 
-// ToStyle converts DStyle to the rendering Style.
-func (ds DStyle) ToStyle() Style {
-	s := Style{}
-	if ds.FG != nil {
-		s.FG = *ds.FG
-	}
-	if ds.BG != nil {
-		s.BG = *ds.BG
-	}
-	if ds.Bold {
-		s.Attr |= AttrBold
-	}
-	if ds.Dim {
-		s.Attr |= AttrDim
-	}
-	if ds.Italic {
-		s.Attr |= AttrItalic
-	}
-	if ds.Underline {
-		s.Attr |= AttrUnderline
-	}
-	if ds.Inverse {
-		s.Attr |= AttrInverse
-	}
-	return s
+// Flex contains layout properties for display components.
+// Embedded in Row, Col, Text, etc. for consistent layout behavior.
+// Layout only - no visual styling here.
+type Flex struct {
+	PercentWidth float32 // fraction of parent width (0.5 = 50%)
+	Width        int16   // explicit width in characters
+	Height       int16   // explicit height in lines
+	FlexGrow     float32 // share of remaining space (0 = none, 1 = equal share)
 }
-
-// ColorPtr returns a pointer to a color for use in DStyle.
-func ColorPtr(c Color) *Color { return &c }
 
 // Text displays text content.
 type Text struct {
-	Content any    // string or *string
-	Bold    bool   // shorthand for Style.Bold
-	Style   DStyle // full styling options
+	Flex
+	Content any   // string or *string
+	Style   Style // styling (use Attr for bold, dim, etc.)
+}
+
+// Leader displays "Label.....Value" with dots filling the space.
+// Supports pointer bindings for dynamic updates.
+type Leader struct {
+	Label any   // string or *string
+	Value any   // string or *string
+	Width int16 // total width (0 = fill available from parent)
+	Fill  rune  // fill character (0 = '.')
+	Style Style // styling (use Attr for bold, dim, etc.)
+}
+
+// Custom allows user-defined components without modifying the framework.
+// Use this for specialized widgets that aren't covered by built-in primitives.
+// Note: Custom components use function calls (not inlined like built-ins),
+// but with viewport culling this overhead is negligible.
+type Custom struct {
+	// Measure returns natural (width, height) given available width.
+	// Called during the measure phase of rendering.
+	Measure func(availW int16) (w, h int16)
+
+	// Render draws the component to the buffer at the given position.
+	// Called during the draw phase with computed geometry.
+	Render func(buf *Buffer, x, y, w, h int16)
 }
 
 // Progress displays a progress bar.
 type Progress struct {
-	Value any   // int or *int (0-100)
-	Width int16 // width in characters
+	Flex
+	Value    any   // int or *int (0-100)
+	BarWidth int16 // width of the bar in characters (distinct from Flex.Width layout width)
 }
 
 // LayerView displays a scrollable layer.
 // The Layer is pre-rendered content that gets blitted to screen.
 type LayerView struct {
-	Layer  *Layer // the pre-rendered layer
-	Height int16  // viewport height (0 = fill available)
-	Width  int16  // viewport width (0 = fill available)
+	Flex
+	Layer      *Layer // the pre-rendered layer
+	ViewHeight int16  // viewport height (0 = fill available, distinct from Flex.Height)
+	ViewWidth  int16  // viewport width (0 = fill available, distinct from Flex.Width)
 }
 
 // Row arranges children horizontally.
 type Row struct {
+	flex
 	Children []any
+	Title    string // title for bordered containers
 	Gap      int8
+
+	// Set via chainable methods
+	border   BorderStyle
+	borderFG *Color
 }
 
 // Col arranges children vertically.
 type Col struct {
+	flex
 	Children []any
+	Title    string // title for bordered containers
 	Gap      int8
+
+	// Set via chainable methods
+	border   BorderStyle
+	borderFG *Color
 }
+
+// flex contains internal layout properties (use chainable methods to set).
+type flex struct {
+	percentWidth float32
+	width        int16
+	height       int16
+	flexGrow     float32
+}
+
+// Chainable layout methods for Row
+
+// WidthPct sets width as percentage of parent (0.5 = 50%).
+func (r Row) WidthPct(pct float32) Row { r.percentWidth = pct; return r }
+
+// Width sets explicit width in characters.
+func (r Row) Width(w int16) Row { r.width = w; return r }
+
+// Height sets explicit height in lines.
+func (r Row) Height(h int16) Row { r.height = h; return r }
+
+// Grow sets flex grow factor.
+func (r Row) Grow(g float32) Row { r.flexGrow = g; return r }
+
+// Border sets the border style.
+func (r Row) Border(b BorderStyle) Row { r.border = b; return r }
+
+// BorderFG sets the border foreground color.
+func (r Row) BorderFG(c Color) Row { r.borderFG = &c; return r }
+
+// Chainable layout methods for Col
+
+// WidthPct sets width as percentage of parent (0.5 = 50%).
+func (c Col) WidthPct(pct float32) Col { c.percentWidth = pct; return c }
+
+// Width sets explicit width in characters.
+func (c Col) Width(w int16) Col { c.width = w; return c }
+
+// Height sets explicit height in lines.
+func (c Col) Height(h int16) Col { c.height = h; return c }
+
+// Grow sets flex grow factor.
+func (c Col) Grow(g float32) Col { c.flexGrow = g; return c }
+
+// Border sets the border style.
+func (c Col) Border(b BorderStyle) Col { c.border = b; return c }
+
+// BorderFG sets the border foreground color.
+func (c Col) BorderFG(fg Color) Col { c.borderFG = &fg; return c }
 
 // IfNode conditionally renders content.
 type IfNode struct {
@@ -410,6 +454,7 @@ type Span struct {
 // RichText displays text with mixed inline styles.
 // Spans can be []Span (static) or *[]Span (dynamic binding).
 type RichText struct {
+	Flex
 	Spans any // []Span or *[]Span
 }
 

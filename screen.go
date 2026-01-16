@@ -193,35 +193,100 @@ func (s *Screen) handleSignals() {
 	}
 }
 
-// Flush renders the back buffer to the terminal, only updating changed cells.
+// FlushStats holds statistics from the last flush.
+type FlushStats struct {
+	DirtyRows   int
+	ChangedRows int
+}
+
+// lastFlushStats holds stats from the most recent flush.
+var lastFlushStats FlushStats
+
+// GetFlushStats returns stats from the last flush.
+func GetFlushStats() FlushStats {
+	return lastFlushStats
+}
+
+// Flush renders the back buffer to the terminal using per-cell diff.
+// Only cells that actually changed are written, with cursor positioning for each run.
+// Uses dirty row tracking to skip rows that haven't been modified.
 func (s *Screen) Flush() {
 	s.buf.Reset()
 
-	// Reset cursor position
-	s.buf.WriteString("\x1b[H") // Move to home position
+	dirtyCount := 0
+	changedCount := 0
+	cursorX, cursorY := -1, -1
 
 	for y := 0; y < s.height; y++ {
+		// Fast path: skip rows not marked dirty (no writes since last frame)
+		if !s.back.RowDirty(y) {
+			continue
+		}
+		dirtyCount++
+
+		rowChanged := false
 		for x := 0; x < s.width; x++ {
 			backCell := s.back.Get(x, y)
-			frontCell := s.front.Get(x, y)
-
-			if !backCell.Equal(frontCell) {
-				// Move cursor to position
-				s.buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", y+1, x+1))
-				// Apply style and write character
-				s.writeCell(&s.buf, backCell)
-				// Update front buffer
-				s.front.Set(x, y, backCell)
+			if backCell == s.front.Get(x, y) {
+				continue
 			}
+
+			// Cell changed - need to write it
+			if !rowChanged {
+				rowChanged = true
+				changedCount++
+			}
+
+			// Position cursor if not already there
+			if cursorX != x || cursorY != y {
+				s.buf.WriteString("\x1b[")
+				s.writeIntToBuf(y + 1)
+				s.buf.WriteByte(';')
+				s.writeIntToBuf(x + 1)
+				s.buf.WriteByte('H')
+			}
+
+			s.writeCell(&s.buf, backCell)
+			s.front.Set(x, y, backCell)
+			cursorX = x + 1 // cursor advances after write
+			cursorY = y
 		}
 	}
 
-	// Reset style at end
-	s.buf.WriteString("\x1b[0m")
-	s.lastStyle = DefaultStyle()
+	// Reset style at end if we have changes
+	if changedCount > 0 {
+		s.buf.WriteString("\x1b[0m")
+		s.lastStyle = DefaultStyle()
+	}
+	// Note: Don't write here - let FlushBuffer() do it so we can batch cursor ops
 
-	// Write to terminal
-	s.writer.Write(s.buf.Bytes())
+	// Clear dirty flags for next frame
+	s.back.ClearDirtyFlags()
+
+	// Record stats
+	lastFlushStats = FlushStats{DirtyRows: dirtyCount, ChangedRows: changedCount}
+}
+
+// writeIntToBuf writes an integer to the buffer without allocation.
+func (s *Screen) writeIntToBuf(n int) {
+	if n == 0 {
+		s.buf.WriteByte('0')
+		return
+	}
+	if n < 0 {
+		s.buf.WriteByte('-')
+		n = -n
+	}
+
+	// Use scratch space on stack (max 10 digits for int32)
+	var scratch [10]byte
+	i := len(scratch)
+	for n > 0 {
+		i--
+		scratch[i] = byte('0' + n%10)
+		n /= 10
+	}
+	s.buf.Write(scratch[i:])
 }
 
 // FlushFull does a complete redraw without diffing.
@@ -296,7 +361,7 @@ func (s *Screen) writeStyle(buf *bytes.Buffer, style Style) {
 	buf.WriteString("m")
 }
 
-// writeColor writes the ANSI escape code for a color.
+// writeColor writes the ANSI escape code for a color (allocation-free).
 func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
 	switch c.Mode {
 	case ColorDefault:
@@ -315,24 +380,32 @@ func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
 		if c.Index >= 8 {
 			// Bright colors
 			base += 60
-			buf.WriteString(fmt.Sprintf(";%d", base+int(c.Index-8)))
+			buf.WriteByte(';')
+			s.writeIntToBuf(base + int(c.Index-8))
 		} else {
-			buf.WriteString(fmt.Sprintf(";%d", base+int(c.Index)))
+			buf.WriteByte(';')
+			s.writeIntToBuf(base + int(c.Index))
 		}
 	case Color256:
 		// 256 color palette
 		if fg {
-			buf.WriteString(fmt.Sprintf(";38;5;%d", c.Index))
+			buf.WriteString(";38;5;")
 		} else {
-			buf.WriteString(fmt.Sprintf(";48;5;%d", c.Index))
+			buf.WriteString(";48;5;")
 		}
+		s.writeIntToBuf(int(c.Index))
 	case ColorRGB:
 		// True color
 		if fg {
-			buf.WriteString(fmt.Sprintf(";38;2;%d;%d;%d", c.R, c.G, c.B))
+			buf.WriteString(";38;2;")
 		} else {
-			buf.WriteString(fmt.Sprintf(";48;2;%d;%d;%d", c.R, c.G, c.B))
+			buf.WriteString(";48;2;")
 		}
+		s.writeIntToBuf(int(c.R))
+		buf.WriteByte(';')
+		s.writeIntToBuf(int(c.G))
+		buf.WriteByte(';')
+		s.writeIntToBuf(int(c.B))
 	}
 }
 
@@ -358,7 +431,45 @@ func (s *Screen) HideCursor() {
 
 // MoveCursor moves the cursor to the given position (0-indexed).
 func (s *Screen) MoveCursor(x, y int) {
-	s.writeString(fmt.Sprintf("\x1b[%d;%dH", y+1, x+1))
+	// Build escape sequence without allocation: \x1b[row;colH
+	var scratch [32]byte
+	b := scratch[:0]
+	b = append(b, "\x1b["...)
+	b = appendInt(b, y+1)
+	b = append(b, ';')
+	b = appendInt(b, x+1)
+	b = append(b, 'H')
+	s.writer.Write(b)
+}
+
+// BufferCursor writes cursor positioning and visibility to the internal buffer.
+// Call this before FlushBuffer() to batch cursor ops with content in one syscall.
+func (s *Screen) BufferCursor(x, y int, visible bool, shape CursorShape) {
+	// Cursor shape: \x1b[N q
+	s.buf.WriteString("\x1b[")
+	s.writeIntToBuf(int(shape))
+	s.buf.WriteString(" q")
+
+	// Cursor position: \x1b[row;colH
+	s.buf.WriteString("\x1b[")
+	s.writeIntToBuf(y + 1)
+	s.buf.WriteByte(';')
+	s.writeIntToBuf(x + 1)
+	s.buf.WriteByte('H')
+
+	// Cursor visibility
+	if visible {
+		s.buf.WriteString("\x1b[?25h")
+	} else {
+		s.buf.WriteString("\x1b[?25l")
+	}
+}
+
+// FlushBuffer writes the accumulated buffer to the terminal in one syscall.
+func (s *Screen) FlushBuffer() {
+	if s.buf.Len() > 0 {
+		s.writer.Write(s.buf.Bytes())
+	}
 }
 
 // CursorShape represents the terminal cursor shape.
@@ -376,5 +487,31 @@ const (
 
 // SetCursorShape changes the cursor shape.
 func (s *Screen) SetCursorShape(shape CursorShape) {
-	s.writeString(fmt.Sprintf("\x1b[%d q", shape))
+	// Build escape sequence without allocation: \x1b[N q
+	var scratch [16]byte
+	b := scratch[:0]
+	b = append(b, "\x1b["...)
+	b = appendInt(b, int(shape))
+	b = append(b, " q"...)
+	s.writer.Write(b)
+}
+
+// appendInt appends an integer to a byte slice without allocation.
+func appendInt(b []byte, n int) []byte {
+	if n == 0 {
+		return append(b, '0')
+	}
+	if n < 0 {
+		b = append(b, '-')
+		n = -n
+	}
+	// Find number of digits
+	var scratch [10]byte
+	i := len(scratch)
+	for n > 0 {
+		i--
+		scratch[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return append(b, scratch[i:]...)
 }

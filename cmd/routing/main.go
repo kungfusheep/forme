@@ -93,33 +93,33 @@ func main() {
 
 func homeView() any {
 	return tui.Col{Children: []any{
-		tui.Text{Content: &home.Title, Bold: true},
+		tui.Text{Content: &home.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: "j/k: change counter"},
 		tui.Text{Content: "s: go to settings"},
 		tui.Text{Content: "?: help"},
 		tui.Text{Content: "q: quit"},
 		tui.Text{},
-		tui.Progress{Value: &home.Counter, Width: 30},
+		tui.Progress{Value: &home.Counter, BarWidth: 30},
 	}}
 }
 
 func settingsView() any {
 	return tui.Col{Children: []any{
-		tui.Text{Content: &settings.Title, Bold: true},
+		tui.Text{Content: &settings.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: "j/k: adjust volume"},
 		tui.Text{Content: "Esc: back to home"},
 		tui.Text{Content: "?: help"},
 		tui.Text{},
 		tui.Text{Content: "Volume:"},
-		tui.Progress{Value: &settings.Volume, Width: 30},
+		tui.Progress{Value: &settings.Volume, BarWidth: 30},
 	}}
 }
 
 func helpView() any {
 	return tui.Col{Children: []any{
-		tui.Text{Content: &help.Title, Bold: true},
+		tui.Text{Content: &help.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: &help.Text},
 	}}
