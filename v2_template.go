@@ -120,6 +120,11 @@ type V2Op struct {
 
 	// Custom layout
 	CustomLayout LayoutFunc
+
+	// Layer
+	LayerPtr    *Layer // pointer to Layer
+	LayerWidth  int16  // viewport width (0 = fill available)
+	LayerHeight int16  // viewport height (0 = fill available)
 }
 
 type V2OpKind uint8
@@ -141,6 +146,7 @@ const (
 
 	V2OpCustom // Custom renderer
 	V2OpLayout // Custom layout
+	V2OpLayer  // LayerView (scrollable off-screen buffer)
 )
 
 // V2Build compiles a declarative UI into a V2Template.
@@ -215,6 +221,8 @@ func (t *V2Template) compile(node any, parent int16, depth int, elemBase unsafe.
 		return t.compileBox(v, parent, depth, elemBase, elemSize)
 	case ConditionNode:
 		return t.compileCondition(v, parent, depth, elemBase, elemSize)
+	case LayerView:
+		return t.compileLayer(v, parent, depth)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
 	}
@@ -253,6 +261,17 @@ func (t *V2Template) compileBox(box Box, parent int16, depth int, elemBase unsaf
 	t.ops[idx].ChildEnd = int16(len(t.ops))
 
 	return idx
+}
+
+func (t *V2Template) compileLayer(v LayerView, parent int16, depth int) int16 {
+	return t.addOp(V2Op{
+		Kind:        V2OpLayer,
+		Parent:      parent,
+		LayerPtr:    v.Layer,
+		LayerWidth:  v.ViewWidth,
+		LayerHeight: v.ViewHeight,
+		FlexGrow:    v.FlexGrow, // Allow layers to participate in flex
+	}, depth)
 }
 
 func (t *V2Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
@@ -594,6 +613,13 @@ func (t *V2Template) setOpWidth(op *V2Op, geom *V2Geom, availW int16, elemBase u
 	case V2OpLayout:
 		geom.W = availW
 
+	case V2OpLayer:
+		if op.LayerWidth > 0 {
+			geom.W = op.LayerWidth
+		} else {
+			geom.W = availW
+		}
+
 	case V2OpContainer:
 		if op.Width > 0 {
 			geom.W = op.Width
@@ -717,6 +743,24 @@ func (t *V2Template) layout(_ int16) {
 					_, h := op.CustomRenderer.MinSize()
 					geom.H = int16(h)
 				}
+
+			case V2OpLayer:
+				// Layer height calculation
+				if op.LayerHeight > 0 {
+					// Explicit viewport height
+					geom.H = op.LayerHeight
+				} else if op.FlexGrow > 0 {
+					// Flex layer - use minimal height, will expand via flex
+					geom.H = 1
+				} else if op.LayerPtr != nil && op.LayerPtr.viewHeight > 0 {
+					// Use pre-set viewport height
+					geom.H = int16(op.LayerPtr.viewHeight)
+				} else {
+					// Default to 1 line
+					geom.H = 1
+				}
+				// Store content height for flex distribution
+				geom.ContentH = geom.H
 
 			case V2OpLayout:
 				t.layoutCustom(idx, op, geom)
@@ -1022,8 +1066,8 @@ func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
 
 		childGeom := &t.geom[i]
 
-		// Check for direct flex child
-		if childOp.Kind == V2OpContainer && childOp.FlexGrow > 0 {
+		// Check for direct flex child (container or layer)
+		if (childOp.Kind == V2OpContainer || childOp.Kind == V2OpLayer) && childOp.FlexGrow > 0 {
 			totalFlex += childOp.FlexGrow
 			flexChildren = append(flexChildren, i)
 			flexGrowValues = append(flexGrowValues, childOp.FlexGrow)
@@ -1309,6 +1353,17 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 			t.renderOp(buf, i, absX, absY, geom.W)
 		}
 
+	case V2OpLayer:
+		// Blit the layer's visible portion to the buffer
+		if op.LayerPtr != nil {
+			layerW := int(geom.W)
+			if op.LayerWidth > 0 {
+				layerW = int(op.LayerWidth)
+			}
+			op.LayerPtr.setViewport(layerW, int(geom.H))
+			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
+		}
+
 	case V2OpContainer:
 		// Draw border if present
 		if op.Border.Horizontal != 0 {
@@ -1434,6 +1489,17 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 				continue
 			}
 			sub.renderSubOp(buf, i, absX, absY, geom.W, elemBase)
+		}
+
+	case V2OpLayer:
+		// Blit the layer's visible portion to the buffer
+		if op.LayerPtr != nil {
+			layerW := int(geom.W)
+			if op.LayerWidth > 0 {
+				layerW = int(op.LayerWidth)
+			}
+			op.LayerPtr.setViewport(layerW, int(geom.H))
+			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
 		}
 
 	case V2OpContainer:

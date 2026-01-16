@@ -253,6 +253,9 @@ type LayerView struct {
 	ViewWidth  int16  // viewport width (0 = fill available, distinct from Flex.Width)
 }
 
+// Grow sets the flex grow factor for this layer.
+func (l LayerView) Grow(factor float32) LayerView { l.FlexGrow = factor; return l }
+
 // Row arranges children horizontally.
 type Row struct {
 	flex
