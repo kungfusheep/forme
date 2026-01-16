@@ -19,7 +19,7 @@ func NewLayer() *Layer {
 
 // SetContent renders a template to the layer's internal buffer.
 // Call this when content changes (e.g., page navigation).
-func (l *Layer) SetContent(tmpl *SerialTemplate, width, height int) {
+func (l *Layer) SetContent(tmpl *Template, width, height int) {
 	l.buffer = NewBuffer(width, height)
 	tmpl.Execute(l.buffer, int16(width), int16(height))
 	l.scrollY = 0
@@ -55,8 +55,10 @@ func (l *Layer) updateMaxScroll() {
 	}
 }
 
-// setViewport is called by the framework during layout.
-func (l *Layer) setViewport(width, height int) {
+// SetViewport sets the viewport dimensions for the layer.
+// This should be called before ScrollTo if the viewport height affects maxScroll.
+// Also called internally by the framework during layout.
+func (l *Layer) SetViewport(width, height int) {
 	l.viewWidth = width
 	l.viewHeight = height
 	l.updateMaxScroll()

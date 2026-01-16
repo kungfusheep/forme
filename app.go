@@ -27,16 +27,15 @@ type App struct {
 	input  *riffkey.Input
 	reader *riffkey.Reader
 
-	// SerialTemplate + BufferPool (for SetView single-view mode)
-	template   *SerialTemplate
-	v2template *V2Template
-	pool       *BufferPool
+	// Template + BufferPool (for SetView single-view mode)
+	template *Template
+	pool     *BufferPool
 
 	// Multi-view routing
-	viewTemplates map[string]*SerialTemplate
-	viewRouters   map[string]*riffkey.Router
-	currentView   string
-	viewStack     []string // pushed views (for modal overlays)
+	viewTemplates map[string]*Template
+	viewRouters     map[string]*riffkey.Router
+	currentView     string
+	viewStack       []string // pushed views (for modal overlays)
 
 	// State
 	running    bool
@@ -47,6 +46,9 @@ type App struct {
 	cursorX, cursorY int
 	cursorVisible    bool
 	cursorShape      CursorShape
+
+	// Resize callback
+	onResize func(width, height int)
 }
 
 // NewApp creates a new TUI application.
@@ -72,31 +74,19 @@ func NewApp() (*App, error) {
 }
 
 // SetView sets a declarative view for fast rendering.
-// This uses SerialTemplate + BufferPool for maximum performance.
 // Pointers in the view are captured at compile time - just mutate your state.
 //
 // Example:
 //
 //	state := &MyState{Title: "Hello", Progress: 50}
 //	app.SetView(
-//	    DCol{Children: []any{
-//	        DText{Content: &state.Title},
-//	        DProgress{Value: &state.Progress},
+//	    Col{Children: []any{
+//	        Text{Content: &state.Title},
+//	        Progress{Value: &state.Progress},
 //	    }},
 //	)
 func (a *App) SetView(view any) *App {
-	a.template = BuildSerial(view)
-	// Create buffer pool for async clearing
-	size := a.screen.Size()
-	a.pool = NewBufferPool(size.Width, size.Height)
-	return a
-}
-
-// SetV2View sets a V2 template view for rendering.
-// Use this for V2 features like Box layouts, custom Renderer, etc.
-func (a *App) SetV2View(view any) *App {
-	a.v2template = V2Build(view)
-	a.template = nil // clear old template
+	a.template = Build(view)
 	// Create buffer pool for async clearing
 	size := a.screen.Size()
 	a.pool = NewBufferPool(size.Width, size.Height)
@@ -121,7 +111,9 @@ type ViewBuilder struct {
 func (a *App) View(name string, view any) *ViewBuilder {
 	// Initialize maps if needed
 	if a.viewTemplates == nil {
-		a.viewTemplates = make(map[string]*SerialTemplate)
+		a.viewTemplates = make(map[string]*Template)
+	}
+	if a.viewRouters == nil {
 		a.viewRouters = make(map[string]*riffkey.Router)
 	}
 
@@ -132,7 +124,7 @@ func (a *App) View(name string, view any) *ViewBuilder {
 	}
 
 	// Compile template and create router for this view
-	a.viewTemplates[name] = BuildSerial(view)
+	a.viewTemplates[name] = Build(view)
 	router := riffkey.NewRouter()
 	a.viewRouters[name] = router
 
@@ -147,6 +139,15 @@ func (a *App) View(name string, view any) *ViewBuilder {
 func (vb *ViewBuilder) Handle(pattern string, handler func(riffkey.Match)) *ViewBuilder {
 	vb.router.Handle(pattern, handler)
 	return vb
+}
+
+// UpdateView recompiles a view with a new view definition.
+// Use this when the view's structure changes and needs re-compilation.
+func (a *App) UpdateView(name string, view any) {
+	if a.viewTemplates == nil {
+		return
+	}
+	a.viewTemplates[name] = Build(view)
 }
 
 // Go switches to a different view.
@@ -254,6 +255,13 @@ func (a *App) HideCursor() {
 	a.cursorVisible = false
 }
 
+// OnResize sets a callback to be called when the terminal is resized.
+// The callback receives the new width and height.
+// Use this to update viewport dimensions, reinitialize layers, etc.
+func (a *App) OnResize(fn func(width, height int)) {
+	a.onResize = fn
+}
+
 // RequestRender marks that a render is needed.
 // Safe to call from any goroutine.
 func (a *App) RequestRender() {
@@ -281,19 +289,6 @@ func (a *App) render() {
 		t0 = time.Now()
 	}
 
-	// Fast path: use SerialTemplate or V2Template + BufferPool
-	// Priority: view stack (pushed modals) > currentView > single-view template
-	var tmpl *SerialTemplate
-	if len(a.viewStack) > 0 && a.viewTemplates != nil {
-		// Use topmost pushed view
-		topView := a.viewStack[len(a.viewStack)-1]
-		tmpl = a.viewTemplates[topView]
-	} else if a.currentView != "" && a.viewTemplates != nil {
-		tmpl = a.viewTemplates[a.currentView]
-	} else if a.template != nil {
-		tmpl = a.template
-	}
-
 	if a.pool == nil {
 		return // No pool
 	}
@@ -301,14 +296,31 @@ func (a *App) render() {
 	size := a.screen.Size()
 	buf := a.pool.Current()
 
-	// Use V2Template if set, otherwise SerialTemplate
-	if a.v2template != nil {
-		a.v2template.Execute(buf, int16(size.Width), int16(size.Height))
-	} else if tmpl != nil {
-		tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+	// Priority: pushed views > current view > base template
+	if len(a.viewStack) > 0 {
+		topView := a.viewStack[len(a.viewStack)-1]
+		if a.viewTemplates != nil {
+			if tmpl, ok := a.viewTemplates[topView]; ok {
+				tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+				goto rendered
+			}
+		}
+	}
+
+	// No pushed view - use base template
+	if a.currentView != "" && a.viewTemplates != nil {
+		if tmpl, ok := a.viewTemplates[a.currentView]; ok {
+			tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+		} else {
+			return // View not found
+		}
+	} else if a.template != nil {
+		a.template.Execute(buf, int16(size.Width), int16(size.Height))
 	} else {
 		return // No view set
 	}
+
+rendered:
 
 	if DebugTiming {
 		t1 = time.Now()
@@ -450,6 +462,10 @@ func (a *App) handleResize() {
 		// Resize the buffer pool to match new terminal dimensions
 		if a.pool != nil {
 			a.pool.Resize(size.Width, size.Height)
+		}
+		// Notify application of resize
+		if a.onResize != nil {
+			a.onResize(size.Width, size.Height)
 		}
 		a.RequestRender()
 	}

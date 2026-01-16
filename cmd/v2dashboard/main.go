@@ -290,7 +290,7 @@ func main() {
 
 	// Build UI with conditionals (using V2 template for Box, custom Renderer support)
 	// Layout uses Grow() to push footer to bottom of screen
-	app.SetV2View(tui.Col{Children: []any{
+	app.SetView(tui.Col{Children: []any{
 		// ══════════════════════════════════════════════════════════════
 		// HEADER SECTION (fixed height)
 		// ══════════════════════════════════════════════════════════════

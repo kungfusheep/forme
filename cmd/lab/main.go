@@ -89,7 +89,7 @@ func buildLayer(layer *tui.Layer, name string, color tui.Color, lines int) {
 	)
 
 	pageContent := tui.Col{Children: children}
-	pageTemplate := tui.BuildSerial(pageContent)
+	pageTemplate := tui.Build(pageContent)
 
 	// Render to layer with correct height
 	layer.SetContent(pageTemplate, 80, len(children))

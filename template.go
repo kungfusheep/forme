@@ -46,11 +46,11 @@ type Box struct {
 	Children []any
 }
 
-// V2Template is a compiled UI template.
+// Template is a compiled UI template.
 // Compile does all reflection. Execute is pure pointer arithmetic.
-type V2Template struct {
-	ops  []V2Op
-	geom []V2Geom // parallel to ops, filled at runtime
+type Template struct {
+	ops  []Op
+	geom []Geom // parallel to ops, filled at runtime
 
 	// For bottom-up layout traversal
 	maxDepth int
@@ -60,17 +60,17 @@ type V2Template struct {
 	elemBase unsafe.Pointer
 }
 
-// V2Geom holds runtime geometry for an op.
+// Geom holds runtime geometry for an op.
 // Filled during execute, parallel array to ops.
-type V2Geom struct {
+type Geom struct {
 	W, H           int16 // dimensions
 	LocalX, LocalY int16 // position relative to parent
 	ContentH       int16 // natural content height (before flex distribution)
 }
 
-// V2Op represents a single instruction.
-type V2Op struct {
-	Kind   V2OpKind
+// Op represents a single instruction.
+type Op struct {
+	Kind   OpKind
 	Depth  int8  // tree depth (root children = 0)
 	Parent int16 // parent op index, -1 for root children
 
@@ -101,19 +101,19 @@ type V2Op struct {
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
 	CondNode ConditionNode // for If (builder-style conditions)
-	ThenTmpl *V2Template   // for If
-	ElseTmpl *V2Template   // for If/Else
-	IterTmpl *V2Template  // for ForEach
+	ThenTmpl *Template   // for If
+	ElseTmpl *Template   // for If/Else
+	IterTmpl *Template  // for ForEach
 	SlicePtr unsafe.Pointer
 	ElemSize uintptr
 
 	// ForEach runtime - reused across frames
-	iterGeoms []V2Geom // per-item geometry
+	iterGeoms []Geom // per-item geometry
 
 	// Switch
 	SwitchNode  SwitchNodeInterface
-	SwitchCases []*V2Template
-	SwitchDef   *V2Template
+	SwitchCases []*Template
+	SwitchDef   *Template
 
 	// Custom renderer
 	CustomRenderer Renderer
@@ -125,34 +125,51 @@ type V2Op struct {
 	LayerPtr    *Layer // pointer to Layer
 	LayerWidth  int16  // viewport width (0 = fill available)
 	LayerHeight int16  // viewport height (0 = fill available)
+
+	// RichText
+	StaticSpans []Span   // for static spans
+	SpansPtr    *[]Span  // for pointer to spans
+	SpansOff    uintptr  // for ForEach offset
+
+	// SelectionList
+	SelectionListPtr *SelectionList // pointer to the list for len/offset updates
+	SelectedPtr      *int           // pointer to selected index
+	Marker           string         // selection marker (e.g., "> ")
+	MarkerWidth      int16          // cached rune count of marker
 }
 
-type V2OpKind uint8
+type OpKind uint8
 
 const (
-	V2OpText V2OpKind = iota
-	V2OpTextPtr
-	V2OpTextOff
+	OpText OpKind = iota
+	OpTextPtr
+	OpTextOff
 
-	V2OpProgress
-	V2OpProgressPtr
-	V2OpProgressOff
+	OpProgress
+	OpProgressPtr
+	OpProgressOff
 
-	V2OpContainer // Col or Row (determined by IsRow)
+	OpContainer // Col or Row (determined by IsRow)
 
-	V2OpIf
-	V2OpForEach
-	V2OpSwitch
+	OpIf
+	OpForEach
+	OpSwitch
 
-	V2OpCustom // Custom renderer
-	V2OpLayout // Custom layout
-	V2OpLayer  // LayerView (scrollable off-screen buffer)
+	OpCustom // Custom renderer
+	OpLayout // Custom layout
+	OpLayer  // LayerView (scrollable off-screen buffer)
+
+	OpRichText    // RichText with static spans
+	OpRichTextPtr // RichText with pointer to spans
+	OpRichTextOff // RichText with offset (ForEach)
+
+	OpSelectionList // SelectionList with marker and windowing
 )
 
-// V2Build compiles a declarative UI into a V2Template.
-func V2Build(ui any) *V2Template {
-	t := &V2Template{
-		ops:     make([]V2Op, 0, 32),
+// Build compiles a declarative UI into a Template.
+func Build(ui any) *Template {
+	t := &Template{
+		ops:     make([]Op, 0, 32),
 		byDepth: make([][]int16, 16),
 	}
 
@@ -171,12 +188,12 @@ func V2Build(ui any) *V2Template {
 	}
 
 	// Pre-allocate geometry array
-	t.geom = make([]V2Geom, len(t.ops))
+	t.geom = make([]Geom, len(t.ops))
 
 	return t
 }
 
-func (t *V2Template) addOp(op V2Op, depth int) int16 {
+func (t *Template) addOp(op Op, depth int) int16 {
 	idx := int16(len(t.ops))
 	op.Depth = int8(depth)
 	t.ops = append(t.ops, op)
@@ -197,7 +214,7 @@ func (t *V2Template) addOp(op V2Op, depth int) int16 {
 	return idx
 }
 
-func (t *V2Template) compile(node any, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	if node == nil {
 		return -1
 	}
@@ -223,6 +240,12 @@ func (t *V2Template) compile(node any, parent int16, depth int, elemBase unsafe.
 		return t.compileCondition(v, parent, depth, elemBase, elemSize)
 	case LayerView:
 		return t.compileLayer(v, parent, depth)
+	case RichText:
+		return t.compileRichText(v, parent, depth, elemBase, elemSize)
+	case SelectionList:
+		return t.compileSelectionList(&v, parent, depth, elemBase, elemSize)
+	case *SelectionList:
+		return t.compileSelectionList(v, parent, depth, elemBase, elemSize)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
 	}
@@ -235,18 +258,18 @@ func (t *V2Template) compile(node any, parent int16, depth int, elemBase unsafe.
 	return -1
 }
 
-func (t *V2Template) compileRenderer(r Renderer, parent int16, depth int) int16 {
-	return t.addOp(V2Op{
-		Kind:           V2OpCustom,
+func (t *Template) compileRenderer(r Renderer, parent int16, depth int) int16 {
+	return t.addOp(Op{
+		Kind:           OpCustom,
 		Parent:         parent,
 		CustomRenderer: r,
 	}, depth)
 }
 
-func (t *V2Template) compileBox(box Box, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileBox(box Box, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	// Add layout op first (will fill in ChildStart/ChildEnd)
-	idx := t.addOp(V2Op{
-		Kind:         V2OpLayout,
+	idx := t.addOp(Op{
+		Kind:         OpLayout,
 		Parent:       parent,
 		CustomLayout: box.Layout,
 		ChildStart:   int16(len(t.ops)),
@@ -263,9 +286,9 @@ func (t *V2Template) compileBox(box Box, parent int16, depth int, elemBase unsaf
 	return idx
 }
 
-func (t *V2Template) compileLayer(v LayerView, parent int16, depth int) int16 {
-	return t.addOp(V2Op{
-		Kind:        V2OpLayer,
+func (t *Template) compileLayer(v LayerView, parent int16, depth int) int16 {
+	return t.addOp(Op{
+		Kind:        OpLayer,
 		Parent:      parent,
 		LayerPtr:    v.Layer,
 		LayerWidth:  v.ViewWidth,
@@ -274,21 +297,117 @@ func (t *V2Template) compileLayer(v LayerView, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *V2Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	op := V2Op{
+func (t *Template) compileRichText(v RichText, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := Op{
+		Parent: parent,
+	}
+
+	switch spans := v.Spans.(type) {
+	case []Span:
+		op.Kind = OpRichText
+		op.StaticSpans = spans
+	case *[]Span:
+		if elemBase != nil && isWithinRange(unsafe.Pointer(spans), elemBase, elemSize) {
+			op.Kind = OpRichTextOff
+			op.SpansOff = uintptr(unsafe.Pointer(spans)) - uintptr(elemBase)
+		} else {
+			op.Kind = OpRichTextPtr
+			op.SpansPtr = spans
+		}
+	default:
+		// Empty RichText
+		op.Kind = OpRichText
+		op.StaticSpans = nil
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileSelectionList(v *SelectionList, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	// Analyze slice using reflection
+	sliceRV := reflect.ValueOf(v.Items)
+	if sliceRV.Kind() != reflect.Ptr {
+		panic("SelectionList Items must be pointer to slice")
+	}
+	sliceType := sliceRV.Type().Elem()
+	if sliceType.Kind() != reflect.Slice {
+		panic("SelectionList Items must be pointer to slice")
+	}
+	elemType := sliceType.Elem()
+	sliceElemSize := elemType.Size()
+	slicePtr := unsafe.Pointer(sliceRV.Pointer())
+
+	// Default marker
+	marker := v.Marker
+	if marker == "" {
+		marker = "> "
+	}
+	markerWidth := int16(utf8.RuneCountInString(marker))
+
+	// Create iteration template if Render function provided
+	var iterTmpl *Template
+	if v.Render != nil {
+		renderRV := reflect.ValueOf(v.Render)
+		takesPtr := renderRV.Type().In(0).Kind() == reflect.Ptr
+
+		var dummyElem reflect.Value
+		var dummyBase unsafe.Pointer
+		if takesPtr {
+			dummyElem = reflect.New(elemType)
+			dummyBase = unsafe.Pointer(dummyElem.Pointer())
+		} else {
+			dummyElem = reflect.New(elemType).Elem()
+			dummyBase = unsafe.Pointer(dummyElem.Addr().Pointer())
+		}
+
+		// Call render to get template structure
+		templateResult := renderRV.Call([]reflect.Value{dummyElem})[0].Interface()
+
+		// Compile iteration template
+		iterTmpl = &Template{
+			ops:     make([]Op, 0, 16),
+			byDepth: make([][]int16, 8),
+		}
+		for i := range iterTmpl.byDepth {
+			iterTmpl.byDepth[i] = make([]int16, 0, 4)
+		}
+		iterTmpl.compile(templateResult, -1, 0, dummyBase, sliceElemSize)
+		if iterTmpl.maxDepth >= 0 {
+			iterTmpl.byDepth = iterTmpl.byDepth[:iterTmpl.maxDepth+1]
+		}
+		iterTmpl.geom = make([]Geom, len(iterTmpl.ops))
+	}
+
+	op := Op{
+		Kind:             OpSelectionList,
+		Parent:           parent,
+		SlicePtr:         slicePtr,
+		ElemSize:         sliceElemSize,
+		IterTmpl:         iterTmpl,
+		SelectionListPtr: v,
+		SelectedPtr:      v.Selected,
+		Marker:           marker,
+		MarkerWidth:      markerWidth,
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := Op{
 		Parent: parent,
 	}
 
 	switch val := v.Content.(type) {
 	case string:
-		op.Kind = V2OpText
+		op.Kind = OpText
 		op.StaticStr = val
 	case *string:
 		if elemBase != nil && isWithinRange(unsafe.Pointer(val), elemBase, elemSize) {
-			op.Kind = V2OpTextOff
+			op.Kind = OpTextOff
 			op.StrOff = uintptr(unsafe.Pointer(val)) - uintptr(elemBase)
 		} else {
-			op.Kind = V2OpTextPtr
+			op.Kind = OpTextPtr
 			op.StrPtr = val
 		}
 	}
@@ -296,27 +415,27 @@ func (t *V2Template) compileText(v Text, parent int16, depth int, elemBase unsaf
 	return t.addOp(op, depth)
 }
 
-func (t *V2Template) compileProgress(v Progress, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileProgress(v Progress, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	width := v.BarWidth
 	if width == 0 {
 		width = 20
 	}
 
-	op := V2Op{
+	op := Op{
 		Parent: parent,
 		Width:  width,
 	}
 
 	switch val := v.Value.(type) {
 	case int:
-		op.Kind = V2OpProgress
+		op.Kind = OpProgress
 		op.StaticInt = val
 	case *int:
 		if elemBase != nil && isWithinRange(unsafe.Pointer(val), elemBase, elemSize) {
-			op.Kind = V2OpProgressOff
+			op.Kind = OpProgressOff
 			op.IntOff = uintptr(unsafe.Pointer(val)) - uintptr(elemBase)
 		} else {
-			op.Kind = V2OpProgressPtr
+			op.Kind = OpProgressPtr
 			op.IntPtr = val
 		}
 	}
@@ -324,9 +443,9 @@ func (t *V2Template) compileProgress(v Progress, parent int16, depth int, elemBa
 	return t.addOp(op, depth)
 }
 
-func (t *V2Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG *Color, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	op := V2Op{
-		Kind:         V2OpContainer,
+func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG *Color, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := Op{
+		Kind:         OpContainer,
 		Parent:       parent,
 		IsRow:        isRow,
 		Gap:          gap,
@@ -355,9 +474,9 @@ func (t *V2Template) compileContainer(children []any, gap int8, isRow bool, f fl
 	return idx
 }
 
-func (t *V2Template) compileIf(v IfNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	op := V2Op{
-		Kind:   V2OpIf,
+func (t *Template) compileIf(v IfNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := Op{
+		Kind:   OpIf,
 		Parent: parent,
 	}
 
@@ -369,8 +488,8 @@ func (t *V2Template) compileIf(v IfNode, parent int16, depth int, elemBase unsaf
 
 	// Compile then branch as sub-template
 	if v.Then != nil {
-		thenTmpl := &V2Template{
-			ops:     make([]V2Op, 0, 16),
+		thenTmpl := &Template{
+			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
 		}
 		for i := range thenTmpl.byDepth {
@@ -380,14 +499,14 @@ func (t *V2Template) compileIf(v IfNode, parent int16, depth int, elemBase unsaf
 		if thenTmpl.maxDepth >= 0 {
 			thenTmpl.byDepth = thenTmpl.byDepth[:thenTmpl.maxDepth+1]
 		}
-		thenTmpl.geom = make([]V2Geom, len(thenTmpl.ops))
+		thenTmpl.geom = make([]Geom, len(thenTmpl.ops))
 		op.ThenTmpl = thenTmpl
 	}
 
 	return t.addOp(op, depth)
 }
 
-func (t *V2Template) compileCondition(cond ConditionNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileCondition(cond ConditionNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	// Check if condition pointer is within element range (ForEach context)
 	if elemBase != nil && elemSize > 0 {
 		ptrAddr := cond.getPtrAddr()
@@ -398,16 +517,16 @@ func (t *V2Template) compileCondition(cond ConditionNode, parent int16, depth in
 		}
 	}
 
-	op := V2Op{
-		Kind:     V2OpIf,
+	op := Op{
+		Kind:     OpIf,
 		Parent:   parent,
 		CondNode: cond,
 	}
 
 	// Compile then branch as sub-template
 	if cond.getThen() != nil {
-		thenTmpl := &V2Template{
-			ops:     make([]V2Op, 0, 16),
+		thenTmpl := &Template{
+			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
 		}
 		for i := range thenTmpl.byDepth {
@@ -417,14 +536,14 @@ func (t *V2Template) compileCondition(cond ConditionNode, parent int16, depth in
 		if thenTmpl.maxDepth >= 0 {
 			thenTmpl.byDepth = thenTmpl.byDepth[:thenTmpl.maxDepth+1]
 		}
-		thenTmpl.geom = make([]V2Geom, len(thenTmpl.ops))
+		thenTmpl.geom = make([]Geom, len(thenTmpl.ops))
 		op.ThenTmpl = thenTmpl
 	}
 
 	// Compile else branch if present
 	if cond.getElse() != nil {
-		elseTmpl := &V2Template{
-			ops:     make([]V2Op, 0, 16),
+		elseTmpl := &Template{
+			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
 		}
 		for i := range elseTmpl.byDepth {
@@ -434,27 +553,27 @@ func (t *V2Template) compileCondition(cond ConditionNode, parent int16, depth in
 		if elseTmpl.maxDepth >= 0 {
 			elseTmpl.byDepth = elseTmpl.byDepth[:elseTmpl.maxDepth+1]
 		}
-		elseTmpl.geom = make([]V2Geom, len(elseTmpl.ops))
+		elseTmpl.geom = make([]Geom, len(elseTmpl.ops))
 		op.ElseTmpl = elseTmpl
 	}
 
 	return t.addOp(op, depth)
 }
 
-func (t *V2Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	op := V2Op{
-		Kind:       V2OpSwitch,
+func (t *Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	op := Op{
+		Kind:       OpSwitch,
 		Parent:     parent,
 		SwitchNode: sw,
 	}
 
 	// Compile each case branch
 	caseNodes := sw.getCaseNodes()
-	op.SwitchCases = make([]*V2Template, len(caseNodes))
+	op.SwitchCases = make([]*Template, len(caseNodes))
 	for i, caseNode := range caseNodes {
 		if caseNode != nil {
-			caseTmpl := &V2Template{
-				ops:     make([]V2Op, 0, 16),
+			caseTmpl := &Template{
+				ops:     make([]Op, 0, 16),
 				byDepth: make([][]int16, 8),
 			}
 			for j := range caseTmpl.byDepth {
@@ -464,15 +583,15 @@ func (t *V2Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth i
 			if caseTmpl.maxDepth >= 0 {
 				caseTmpl.byDepth = caseTmpl.byDepth[:caseTmpl.maxDepth+1]
 			}
-			caseTmpl.geom = make([]V2Geom, len(caseTmpl.ops))
+			caseTmpl.geom = make([]Geom, len(caseTmpl.ops))
 			op.SwitchCases[i] = caseTmpl
 		}
 	}
 
 	// Compile default branch
 	if defNode := sw.getDefaultNode(); defNode != nil {
-		defTmpl := &V2Template{
-			ops:     make([]V2Op, 0, 16),
+		defTmpl := &Template{
+			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
 		}
 		for i := range defTmpl.byDepth {
@@ -482,14 +601,14 @@ func (t *V2Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth i
 		if defTmpl.maxDepth >= 0 {
 			defTmpl.byDepth = defTmpl.byDepth[:defTmpl.maxDepth+1]
 		}
-		defTmpl.geom = make([]V2Geom, len(defTmpl.ops))
+		defTmpl.geom = make([]Geom, len(defTmpl.ops))
 		op.SwitchDef = defTmpl
 	}
 
 	return t.addOp(op, depth)
 }
 
-func (t *V2Template) compileForEach(v ForEachNode, parent int16, depth int) int16 {
+func (t *Template) compileForEach(v ForEachNode, parent int16, depth int) int16 {
 	// Analyze slice
 	sliceRV := reflect.ValueOf(v.Items)
 	if sliceRV.Kind() != reflect.Ptr {
@@ -521,8 +640,8 @@ func (t *V2Template) compileForEach(v ForEachNode, parent int16, depth int) int1
 	templateResult := renderRV.Call([]reflect.Value{dummyElem})[0].Interface()
 
 	// Compile iteration template
-	iterTmpl := &V2Template{
-		ops:     make([]V2Op, 0, 16),
+	iterTmpl := &Template{
+		ops:     make([]Op, 0, 16),
 		byDepth: make([][]int16, 8),
 	}
 	for i := range iterTmpl.byDepth {
@@ -532,10 +651,10 @@ func (t *V2Template) compileForEach(v ForEachNode, parent int16, depth int) int1
 	if iterTmpl.maxDepth >= 0 {
 		iterTmpl.byDepth = iterTmpl.byDepth[:iterTmpl.maxDepth+1]
 	}
-	iterTmpl.geom = make([]V2Geom, len(iterTmpl.ops))
+	iterTmpl.geom = make([]Geom, len(iterTmpl.ops))
 
-	op := V2Op{
-		Kind:     V2OpForEach,
+	op := Op{
+		Kind:     OpForEach,
 		Parent:   parent,
 		SlicePtr: slicePtr,
 		ElemSize: elemSize,
@@ -546,7 +665,7 @@ func (t *V2Template) compileForEach(v ForEachNode, parent int16, depth int) int1
 }
 
 // Execute runs all three phases and renders to the buffer.
-func (t *V2Template) Execute(buf *Buffer, screenW, screenH int16) {
+func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 	// Phase 1: Width distribution (top → down)
 	t.distributeWidths(screenW, nil)
 
@@ -563,7 +682,7 @@ func (t *V2Template) Execute(buf *Buffer, screenW, screenH int16) {
 // distributeWidths assigns W to all ops, top-down.
 // Each container sets its children's widths. For Rows, this includes flex distribution.
 // elemBase is optional - used for offset-based text in ForEach sub-templates.
-func (t *V2Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
+func (t *Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
 	// Set root-level ops to screen width first
 	for _, idx := range t.byDepth[0] {
 		op := &t.ops[idx]
@@ -577,7 +696,7 @@ func (t *V2Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
 			op := &t.ops[idx]
 			geom := &t.geom[idx]
 
-			if op.Kind == V2OpContainer {
+			if op.Kind == OpContainer {
 				t.distributeWidthsToChildren(idx, op, geom, elemBase)
 			}
 		}
@@ -585,15 +704,15 @@ func (t *V2Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
 }
 
 // setOpWidth sets a single op's width based on available space.
-func (t *V2Template) setOpWidth(op *V2Op, geom *V2Geom, availW int16, elemBase unsafe.Pointer) {
+func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.Pointer) {
 	switch op.Kind {
-	case V2OpText:
+	case OpText:
 		geom.W = int16(utf8.RuneCountInString(op.StaticStr))
 
-	case V2OpTextPtr:
+	case OpTextPtr:
 		geom.W = int16(utf8.RuneCountInString(*op.StrPtr))
 
-	case V2OpTextOff:
+	case OpTextOff:
 		if elemBase != nil {
 			strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
 			geom.W = int16(utf8.RuneCountInString(*strPtr))
@@ -601,26 +720,29 @@ func (t *V2Template) setOpWidth(op *V2Op, geom *V2Geom, availW int16, elemBase u
 			geom.W = 10
 		}
 
-	case V2OpProgress, V2OpProgressPtr, V2OpProgressOff:
+	case OpProgress, OpProgressPtr, OpProgressOff:
 		geom.W = op.Width
 
-	case V2OpCustom:
+	case OpCustom:
 		if op.CustomRenderer != nil {
 			w, _ := op.CustomRenderer.MinSize()
 			geom.W = int16(w)
 		}
 
-	case V2OpLayout:
+	case OpLayout:
 		geom.W = availW
 
-	case V2OpLayer:
+	case OpLayer:
 		if op.LayerWidth > 0 {
 			geom.W = op.LayerWidth
 		} else {
 			geom.W = availW
 		}
 
-	case V2OpContainer:
+	case OpSelectionList:
+		geom.W = availW
+
+	case OpContainer:
 		if op.Width > 0 {
 			geom.W = op.Width
 		} else if op.PercentWidth > 0 {
@@ -637,7 +759,7 @@ func (t *V2Template) setOpWidth(op *V2Op, geom *V2Geom, availW int16, elemBase u
 // distributeWidthsToChildren sets widths for all children of a container.
 // For Rows: two-pass (non-flex first, then flex distribution).
 // For Cols: children fill available width.
-func (t *V2Template) distributeWidthsToChildren(idx int16, op *V2Op, geom *V2Geom, elemBase unsafe.Pointer) {
+func (t *Template) distributeWidthsToChildren(idx int16, op *Op, geom *Geom, elemBase unsafe.Pointer) {
 	// Calculate content width (subtract border)
 	contentW := geom.W
 	if op.Border.Horizontal != 0 {
@@ -652,7 +774,7 @@ func (t *V2Template) distributeWidthsToChildren(idx int16, op *V2Op, geom *V2Geo
 }
 
 // distributeColChildWidths sets widths for children of a Col (they fill available width).
-func (t *V2Template) distributeColChildWidths(idx int16, op *V2Op, availW int16, elemBase unsafe.Pointer) {
+func (t *Template) distributeColChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
 		childOp := &t.ops[i]
 		if childOp.Parent != idx {
@@ -664,11 +786,13 @@ func (t *V2Template) distributeColChildWidths(idx int16, op *V2Op, availW int16,
 }
 
 // distributeRowChildWidths sets widths for children of a Row using two-pass flex.
-func (t *V2Template) distributeRowChildWidths(idx int16, op *V2Op, availW int16, elemBase unsafe.Pointer) {
+func (t *Template) distributeRowChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
 	// Pass 1: Set widths for non-flex children, collect flex children
+	// Containers without explicit width/flex are treated as implicit flex (share remaining space)
 	var usedW int16
 	var totalFlex float32
 	var flexChildren []int16
+	var implicitFlexChildren []int16 // containers without explicit width
 
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
 		childOp := &t.ops[i]
@@ -678,11 +802,14 @@ func (t *V2Template) distributeRowChildWidths(idx int16, op *V2Op, availW int16,
 		childGeom := &t.geom[i]
 
 		if childOp.FlexGrow > 0 {
-			// Flex child - defer to pass 2
+			// Explicit flex child - defer to pass 2
 			totalFlex += childOp.FlexGrow
 			flexChildren = append(flexChildren, i)
+		} else if childOp.Kind == OpContainer && childOp.Width == 0 && childOp.PercentWidth == 0 {
+			// Container without explicit width - treat as implicit flex
+			implicitFlexChildren = append(implicitFlexChildren, i)
 		} else {
-			// Non-flex child - set width now
+			// Non-flex child with explicit or content-based width
 			t.setOpWidth(childOp, childGeom, availW, elemBase)
 			usedW += childGeom.W
 		}
@@ -702,6 +829,7 @@ func (t *V2Template) distributeRowChildWidths(idx int16, op *V2Op, availW int16,
 	// Pass 2: Distribute remaining width to flex children
 	remaining := availW - usedW
 	if remaining > 0 && totalFlex > 0 {
+		// Explicit flex children
 		distributed := int16(0)
 		for i, childIdx := range flexChildren {
 			childOp := &t.ops[childIdx]
@@ -719,11 +847,26 @@ func (t *V2Template) distributeRowChildWidths(idx int16, op *V2Op, availW int16,
 			// Set the flex child's width
 			childGeom.W = flexW
 		}
+	} else if remaining > 0 && len(implicitFlexChildren) > 0 {
+		// No explicit flex, but implicit flex containers - share remaining evenly
+		shareW := remaining / int16(len(implicitFlexChildren))
+		distributed := int16(0)
+		for i, childIdx := range implicitFlexChildren {
+			childGeom := &t.geom[childIdx]
+
+			w := shareW
+			// Last child gets remainder
+			if i == len(implicitFlexChildren)-1 {
+				w = remaining - distributed
+			}
+			distributed += w
+			childGeom.W = w
+		}
 	}
 }
 
 // layout computes H and local positions, bottom-up.
-func (t *V2Template) layout(_ int16) {
+func (t *Template) layout(_ int16) {
 	// Bottom-up: deepest first
 	for depth := t.maxDepth; depth >= 0; depth-- {
 		for _, idx := range t.byDepth[depth] {
@@ -731,20 +874,40 @@ func (t *V2Template) layout(_ int16) {
 			geom := &t.geom[idx]
 
 			switch op.Kind {
-			case V2OpText, V2OpTextPtr, V2OpTextOff:
+			case OpText, OpTextPtr, OpTextOff:
 				geom.H = 1
 
-			case V2OpProgress, V2OpProgressPtr, V2OpProgressOff:
+			case OpProgress, OpProgressPtr, OpProgressOff:
 				geom.H = 1
 
-			case V2OpCustom:
+			case OpRichText, OpRichTextPtr, OpRichTextOff:
+				geom.H = 1
+
+			case OpSelectionList:
+				// Calculate height based on slice length and MaxVisible
+				sliceHdr := *(*sliceHeader)(op.SlicePtr)
+				// Update len for helper methods
+				if op.SelectionListPtr != nil {
+					op.SelectionListPtr.len = sliceHdr.Len
+					op.SelectionListPtr.ensureVisible()
+				}
+				visibleCount := sliceHdr.Len
+				if op.SelectionListPtr != nil && op.SelectionListPtr.MaxVisible > 0 && visibleCount > op.SelectionListPtr.MaxVisible {
+					visibleCount = op.SelectionListPtr.MaxVisible
+				}
+				geom.H = int16(visibleCount)
+				if geom.H == 0 {
+					geom.H = 1 // Minimum height
+				}
+
+			case OpCustom:
 				// Custom renderer provides its own size
 				if op.CustomRenderer != nil {
 					_, h := op.CustomRenderer.MinSize()
 					geom.H = int16(h)
 				}
 
-			case V2OpLayer:
+			case OpLayer:
 				// Layer height calculation
 				if op.LayerHeight > 0 {
 					// Explicit viewport height
@@ -762,10 +925,10 @@ func (t *V2Template) layout(_ int16) {
 				// Store content height for flex distribution
 				geom.ContentH = geom.H
 
-			case V2OpLayout:
+			case OpLayout:
 				t.layoutCustom(idx, op, geom)
 
-			case V2OpContainer:
+			case OpContainer:
 				t.layoutContainer(idx, op, geom)
 			}
 		}
@@ -773,7 +936,7 @@ func (t *V2Template) layout(_ int16) {
 }
 
 // layoutContainer positions children and computes container height.
-func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
+func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 	// Content area offset for border
 	contentOffX := int16(0)
 	contentOffY := int16(0)
@@ -807,7 +970,7 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 
 			// Control flow ops expand to their content
 			switch childOp.Kind {
-			case V2OpIf:
+			case OpIf:
 				// Use evaluateWithBase for conditions in ForEach context
 				condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
 					(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(t.elemBase))
@@ -844,7 +1007,7 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 					}
 				}
 
-			case V2OpForEach:
+			case OpForEach:
 				h, w := t.layoutForEach(i, childOp, availW)
 				t.geom[i].LocalX = contentOffX + cursor
 				t.geom[i].LocalY = contentOffY
@@ -855,9 +1018,9 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 					maxH = h
 				}
 
-			case V2OpSwitch:
+			case OpSwitch:
 				// Get matching template
-				var tmpl *V2Template
+				var tmpl *Template
 				matchIdx := childOp.SwitchNode.getMatchIndex()
 				if matchIdx >= 0 && matchIdx < len(childOp.SwitchCases) {
 					tmpl = childOp.SwitchCases[matchIdx]
@@ -915,7 +1078,7 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 
 			// Control flow ops expand to their content
 			switch childOp.Kind {
-			case V2OpIf:
+			case OpIf:
 				// Use evaluateWithBase for conditions in ForEach context
 				condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
 					(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(t.elemBase))
@@ -946,7 +1109,7 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 					t.geom[i].ContentH = 0
 				}
 
-			case V2OpForEach:
+			case OpForEach:
 				h, _ := t.layoutForEach(i, childOp, availW)
 				t.geom[i].LocalX = contentOffX
 				t.geom[i].LocalY = contentOffY + cursor
@@ -954,9 +1117,9 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 				t.geom[i].W = availW
 				cursor += h
 
-			case V2OpSwitch:
+			case OpSwitch:
 				// Get matching template
-				var tmpl *V2Template
+				var tmpl *Template
 				matchIdx := childOp.SwitchNode.getMatchIndex()
 				if matchIdx >= 0 && matchIdx < len(childOp.SwitchCases) {
 					tmpl = childOp.SwitchCases[matchIdx]
@@ -1006,14 +1169,14 @@ func (t *V2Template) layoutContainer(idx int16, op *V2Op, geom *V2Geom) {
 // distributeFlexGrow distributes remaining height to Col flex children.
 // Row flex is handled during width distribution (single pass).
 // Col flex must happen after layout since it needs content heights.
-func (t *V2Template) distributeFlexGrow(rootH int16) {
+func (t *Template) distributeFlexGrow(rootH int16) {
 	for depth := 0; depth <= t.maxDepth; depth++ {
 		for _, idx := range t.byDepth[depth] {
 			op := &t.ops[idx]
 
 			// Only Cols need height flex distribution here
 			// Rows already handled width flex in distributeWidths
-			if op.Kind == V2OpContainer && !op.IsRow {
+			if op.Kind == OpContainer && !op.IsRow {
 				t.distributeFlexInCol(idx, op, rootH)
 			}
 		}
@@ -1021,7 +1184,7 @@ func (t *V2Template) distributeFlexGrow(rootH int16) {
 }
 
 // distributeFlexInCol distributes vertical flex space within a column container.
-func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
+func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 	geom := &t.geom[idx]
 
 	// Calculate available height
@@ -1067,7 +1230,7 @@ func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
 		childGeom := &t.geom[i]
 
 		// Check for direct flex child (container or layer)
-		if (childOp.Kind == V2OpContainer || childOp.Kind == V2OpLayer) && childOp.FlexGrow > 0 {
+		if (childOp.Kind == OpContainer || childOp.Kind == OpLayer) && childOp.FlexGrow > 0 {
 			totalFlex += childOp.FlexGrow
 			flexChildren = append(flexChildren, i)
 			flexGrowValues = append(flexGrowValues, childOp.FlexGrow)
@@ -1076,7 +1239,7 @@ func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
 		}
 
 		// Check for If containing a flex child in its active branch
-		if childOp.Kind == V2OpIf {
+		if childOp.Kind == OpIf {
 			flexGrow := t.getIfFlexGrow(childOp)
 			if flexGrow > 0 {
 				totalFlex += flexGrow
@@ -1145,7 +1308,7 @@ func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
 		// Propagate extra height to nested templates in If ops
 		for _, childIdx := range flexChildren {
 			childOp := &t.ops[childIdx]
-			if childOp.Kind == V2OpIf {
+			if childOp.Kind == OpIf {
 				childGeom := &t.geom[childIdx]
 				t.propagateFlexToIf(childOp, childGeom.H)
 			}
@@ -1160,11 +1323,11 @@ func (t *V2Template) distributeFlexInCol(idx int16, op *V2Op, rootH int16) {
 }
 
 // propagateFlexToIf propagates flex height to an If's active branch template.
-func (t *V2Template) propagateFlexToIf(op *V2Op, newH int16) {
+func (t *Template) propagateFlexToIf(op *Op, newH int16) {
 	condTrue := (op.CondPtr != nil && *op.CondPtr) ||
 		(op.CondNode != nil && op.CondNode.evaluateWithBase(t.elemBase))
 
-	var tmpl *V2Template
+	var tmpl *Template
 	if condTrue && op.ThenTmpl != nil {
 		tmpl = op.ThenTmpl
 	} else if !condTrue && op.ElseTmpl != nil {
@@ -1177,7 +1340,7 @@ func (t *V2Template) propagateFlexToIf(op *V2Op, newH int16) {
 
 	// If root is a flex container, update its height and redistribute
 	rootOp := &tmpl.ops[0]
-	if rootOp.Kind == V2OpContainer && rootOp.FlexGrow > 0 {
+	if rootOp.Kind == OpContainer && rootOp.FlexGrow > 0 {
 		tmpl.geom[0].H = newH
 		tmpl.distributeFlexGrow(newH)
 	}
@@ -1185,12 +1348,12 @@ func (t *V2Template) propagateFlexToIf(op *V2Op, newH int16) {
 
 // getIfFlexGrow returns the FlexGrow value from an If's active branch, if any.
 // This allows If-wrapped containers to participate in flex distribution.
-func (t *V2Template) getIfFlexGrow(op *V2Op) float32 {
+func (t *Template) getIfFlexGrow(op *Op) float32 {
 	// Determine which branch is active
 	condTrue := (op.CondPtr != nil && *op.CondPtr) ||
 		(op.CondNode != nil && op.CondNode.evaluateWithBase(t.elemBase))
 
-	var tmpl *V2Template
+	var tmpl *Template
 	if condTrue && op.ThenTmpl != nil {
 		tmpl = op.ThenTmpl
 	} else if !condTrue && op.ElseTmpl != nil {
@@ -1203,7 +1366,7 @@ func (t *V2Template) getIfFlexGrow(op *V2Op) float32 {
 
 	// Check if root op of the branch is a Container with FlexGrow
 	rootOp := &tmpl.ops[0]
-	if rootOp.Kind == V2OpContainer && rootOp.FlexGrow > 0 {
+	if rootOp.Kind == OpContainer && rootOp.FlexGrow > 0 {
 		return rootOp.FlexGrow
 	}
 
@@ -1211,7 +1374,7 @@ func (t *V2Template) getIfFlexGrow(op *V2Op) float32 {
 }
 
 // layoutCustom handles custom layout containers using the Arranger interface.
-func (t *V2Template) layoutCustom(idx int16, op *V2Op, geom *V2Geom) {
+func (t *Template) layoutCustom(idx int16, op *Op, geom *Geom) {
 	if op.CustomLayout == nil {
 		return
 	}
@@ -1259,7 +1422,7 @@ func (t *V2Template) layoutCustom(idx int16, op *V2Op, geom *V2Geom) {
 }
 
 // layoutForEach iterates items, layouts each, returns total height and max width.
-func (t *V2Template) layoutForEach(_ int16, op *V2Op, availW int16) (totalH, maxW int16) {
+func (t *Template) layoutForEach(_ int16, op *Op, availW int16) (totalH, maxW int16) {
 	if op.IterTmpl == nil || op.SlicePtr == nil {
 		return 0, 0
 	}
@@ -1271,7 +1434,7 @@ func (t *V2Template) layoutForEach(_ int16, op *V2Op, availW int16) (totalH, max
 
 	// Ensure we have enough geometry slots for items
 	if cap(op.iterGeoms) < sliceHdr.Len {
-		op.iterGeoms = make([]V2Geom, sliceHdr.Len)
+		op.iterGeoms = make([]Geom, sliceHdr.Len)
 	}
 	op.iterGeoms = op.iterGeoms[:sliceHdr.Len]
 
@@ -1302,11 +1465,11 @@ func (t *V2Template) layoutForEach(_ int16, op *V2Op, availW int16) (totalH, max
 }
 
 // render draws to buffer, accumulating global positions top-down.
-func (t *V2Template) render(buf *Buffer, globalX, globalY, maxW int16) {
+func (t *Template) render(buf *Buffer, globalX, globalY, maxW int16) {
 	t.renderOp(buf, 0, globalX, globalY, maxW)
 }
 
-func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16) {
+func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16) {
 	if idx < 0 || int(idx) >= len(t.ops) {
 		return
 	}
@@ -1319,31 +1482,44 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 	absY := globalY + geom.LocalY
 
 	switch op.Kind {
-	case V2OpText:
+	case OpText:
 		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, Style{}, int(maxW))
 
-	case V2OpTextPtr:
+	case OpTextPtr:
 		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, Style{}, int(maxW))
 
-	case V2OpTextOff:
+	case OpTextOff:
 		// Would need elemBase passed through for ForEach
 		// For now, skip
 
-	case V2OpProgress:
+	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
 		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
 
-	case V2OpProgressPtr:
+	case OpProgressPtr:
 		ratio := float32(*op.IntPtr) / 100.0
 		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
 
-	case V2OpCustom:
+	case OpRichText:
+		buf.WriteSpans(int(absX), int(absY), op.StaticSpans, int(maxW))
+
+	case OpRichTextPtr:
+		buf.WriteSpans(int(absX), int(absY), *op.SpansPtr, int(maxW))
+
+	case OpRichTextOff:
+		// Would need elemBase passed through for ForEach
+		// For now, skip
+
+	case OpSelectionList:
+		t.renderSelectionList(buf, op, geom, absX, absY, maxW)
+
+	case OpCustom:
 		// Custom renderer draws itself
 		if op.CustomRenderer != nil {
 			op.CustomRenderer.Render(buf, int(absX), int(absY), int(geom.W), int(geom.H))
 		}
 
-	case V2OpLayout:
+	case OpLayout:
 		// Custom layout just renders children at their arranged positions
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
@@ -1353,18 +1529,18 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 			t.renderOp(buf, i, absX, absY, geom.W)
 		}
 
-	case V2OpLayer:
+	case OpLayer:
 		// Blit the layer's visible portion to the buffer
 		if op.LayerPtr != nil {
 			layerW := int(geom.W)
 			if op.LayerWidth > 0 {
 				layerW = int(op.LayerWidth)
 			}
-			op.LayerPtr.setViewport(layerW, int(geom.H))
+			op.LayerPtr.SetViewport(layerW, int(geom.H))
 			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
 		}
 
-	case V2OpContainer:
+	case OpContainer:
 		// Draw border if present
 		if op.Border.Horizontal != 0 {
 			style := DefaultStyle()
@@ -1388,7 +1564,7 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 			t.renderOp(buf, i, absX, absY, geom.W)
 		}
 
-	case V2OpIf:
+	case OpIf:
 		// Render active branch if condition is true
 		condTrue := (op.CondPtr != nil && *op.CondPtr) || (op.CondNode != nil && op.CondNode.evaluate())
 		if op.ThenTmpl != nil && condTrue {
@@ -1397,7 +1573,7 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
 		}
 
-	case V2OpForEach:
+	case OpForEach:
 		// Render each item using iterGeoms for positioning
 		if op.IterTmpl == nil || op.SlicePtr == nil {
 			return
@@ -1417,9 +1593,9 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 			t.renderSubTemplate(buf, op.IterTmpl, itemAbsX, itemAbsY, itemGeom.W, elemPtr)
 		}
 
-	case V2OpSwitch:
+	case OpSwitch:
 		// Render matching case template
-		var tmpl *V2Template
+		var tmpl *Template
 		matchIdx := op.SwitchNode.getMatchIndex()
 		if matchIdx >= 0 && matchIdx < len(op.SwitchCases) {
 			tmpl = op.SwitchCases[matchIdx]
@@ -1433,7 +1609,7 @@ func (t *V2Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int
 }
 
 // renderSubTemplate renders a sub-template (for ForEach) with element-bound data.
-func (t *V2Template) renderSubTemplate(buf *Buffer, sub *V2Template, globalX, globalY, maxW int16, elemBase unsafe.Pointer) {
+func (t *Template) renderSubTemplate(buf *Buffer, sub *Template, globalX, globalY, maxW int16, elemBase unsafe.Pointer) {
 	// Render root-level ops in sub-template
 	for i := range sub.ops {
 		if sub.ops[i].Parent == -1 {
@@ -1443,7 +1619,7 @@ func (t *V2Template) renderSubTemplate(buf *Buffer, sub *V2Template, globalX, gl
 }
 
 // renderSubOp renders a single op in a sub-template, recursing into children.
-func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW int16, elemBase unsafe.Pointer) {
+func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW int16, elemBase unsafe.Pointer) {
 	op := &sub.ops[idx]
 	geom := &sub.geom[idx]
 
@@ -1451,37 +1627,51 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 	absY := globalY + geom.LocalY
 
 	switch op.Kind {
-	case V2OpText:
+	case OpText:
 		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, Style{}, int(maxW))
 
-	case V2OpTextPtr:
+	case OpTextPtr:
 		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, Style{}, int(maxW))
 
-	case V2OpTextOff:
+	case OpTextOff:
 		// Offset from element base
 		strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
 		buf.WriteStringFast(int(absX), int(absY), *strPtr, Style{}, int(maxW))
 
-	case V2OpProgress:
+	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
 		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
 
-	case V2OpProgressPtr:
+	case OpProgressPtr:
 		ratio := float32(*op.IntPtr) / 100.0
 		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
 
-	case V2OpProgressOff:
+	case OpProgressOff:
 		intPtr := (*int)(unsafe.Pointer(uintptr(elemBase) + op.IntOff))
 		ratio := float32(*intPtr) / 100.0
 		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
 
-	case V2OpCustom:
+	case OpRichText:
+		buf.WriteSpans(int(absX), int(absY), op.StaticSpans, int(maxW))
+
+	case OpRichTextPtr:
+		buf.WriteSpans(int(absX), int(absY), *op.SpansPtr, int(maxW))
+
+	case OpRichTextOff:
+		// Offset from element base
+		spansPtr := (*[]Span)(unsafe.Pointer(uintptr(elemBase) + op.SpansOff))
+		buf.WriteSpans(int(absX), int(absY), *spansPtr, int(maxW))
+
+	case OpSelectionList:
+		sub.renderSelectionList(buf, op, geom, absX, absY, maxW)
+
+	case OpCustom:
 		// Custom renderer draws itself
 		if op.CustomRenderer != nil {
 			op.CustomRenderer.Render(buf, int(absX), int(absY), int(geom.W), int(geom.H))
 		}
 
-	case V2OpLayout:
+	case OpLayout:
 		// Custom layout renders children at their arranged positions
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &sub.ops[i]
@@ -1491,18 +1681,18 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 			sub.renderSubOp(buf, i, absX, absY, geom.W, elemBase)
 		}
 
-	case V2OpLayer:
+	case OpLayer:
 		// Blit the layer's visible portion to the buffer
 		if op.LayerPtr != nil {
 			layerW := int(geom.W)
 			if op.LayerWidth > 0 {
 				layerW = int(op.LayerWidth)
 			}
-			op.LayerPtr.setViewport(layerW, int(geom.H))
+			op.LayerPtr.SetViewport(layerW, int(geom.H))
 			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
 		}
 
-	case V2OpContainer:
+	case OpContainer:
 		// Draw border if present
 		if op.Border.Horizontal != 0 {
 			style := DefaultStyle()
@@ -1526,7 +1716,7 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 			sub.renderSubOp(buf, i, absX, absY, geom.W, elemBase)
 		}
 
-	case V2OpIf:
+	case OpIf:
 		// Use evaluateWithBase for conditions inside ForEach
 		condTrue := (op.CondPtr != nil && *op.CondPtr) || (op.CondNode != nil && op.CondNode.evaluateWithBase(elemBase))
 		if op.ThenTmpl != nil && condTrue {
@@ -1535,7 +1725,7 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 			sub.renderSubTemplate(buf, op.ElseTmpl, absX, absY, geom.W, elemBase)
 		}
 
-	case V2OpForEach:
+	case OpForEach:
 		// Nested ForEach - render with nested element base
 		if op.IterTmpl != nil && op.SlicePtr != nil {
 			sliceHdr := *(*sliceHeader)(op.SlicePtr)
@@ -1548,9 +1738,9 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 			}
 		}
 
-	case V2OpSwitch:
+	case OpSwitch:
 		// Render matching case template within ForEach context
-		var tmpl *V2Template
+		var tmpl *Template
 		matchIdx := op.SwitchNode.getMatchIndex()
 		if matchIdx >= 0 && matchIdx < len(op.SwitchCases) {
 			tmpl = op.SwitchCases[matchIdx]
@@ -1563,9 +1753,84 @@ func (sub *V2Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, max
 	}
 }
 
+// renderSelectionList renders a selection list with marker and windowing.
+func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, absY, maxW int16) {
+	sliceHdr := *(*sliceHeader)(op.SlicePtr)
+	if sliceHdr.Len == 0 {
+		return
+	}
+
+	// Get selected index
+	selectedIdx := -1
+	if op.SelectedPtr != nil {
+		selectedIdx = *op.SelectedPtr
+	}
+
+	// Calculate visible window
+	startIdx := 0
+	endIdx := sliceHdr.Len
+	if op.SelectionListPtr != nil && op.SelectionListPtr.MaxVisible > 0 {
+		startIdx = op.SelectionListPtr.offset
+		endIdx = startIdx + op.SelectionListPtr.MaxVisible
+		if endIdx > sliceHdr.Len {
+			endIdx = sliceHdr.Len
+		}
+	}
+
+	// Spaces for non-selected items (same width as marker)
+	spaces := ""
+	for i := int16(0); i < op.MarkerWidth; i++ {
+		spaces += " "
+	}
+
+	contentW := int(maxW) - int(op.MarkerWidth)
+
+	// Render visible items
+	y := int(absY)
+	for i := startIdx; i < endIdx; i++ {
+		// Determine marker or spaces
+		var markerText string
+		if i == selectedIdx {
+			markerText = op.Marker
+		} else {
+			markerText = spaces
+		}
+
+		// Write marker first
+		buf.WriteStringFast(int(absX), y, markerText, Style{}, int(maxW))
+
+		// Get content from iteration template
+		if op.IterTmpl != nil && len(op.IterTmpl.ops) > 0 {
+			elemPtr := unsafe.Pointer(uintptr(sliceHdr.Data) + uintptr(i)*op.ElemSize)
+
+			// Render the first op from iteration template (usually a Text)
+			iterOp := &op.IterTmpl.ops[0]
+			contentX := int(absX) + int(op.MarkerWidth)
+
+			switch iterOp.Kind {
+			case OpText:
+				buf.WriteStringFast(contentX, y, iterOp.StaticStr, Style{}, contentW)
+			case OpTextPtr:
+				buf.WriteStringFast(contentX, y, *iterOp.StrPtr, Style{}, contentW)
+			case OpTextOff:
+				strPtr := (*string)(unsafe.Pointer(uintptr(elemPtr) + iterOp.StrOff))
+				buf.WriteStringFast(contentX, y, *strPtr, Style{}, contentW)
+			case OpRichText:
+				buf.WriteSpans(contentX, y, iterOp.StaticSpans, contentW)
+			case OpRichTextPtr:
+				buf.WriteSpans(contentX, y, *iterOp.SpansPtr, contentW)
+			case OpRichTextOff:
+				spansPtr := (*[]Span)(unsafe.Pointer(uintptr(elemPtr) + iterOp.SpansOff))
+				buf.WriteSpans(contentX, y, *spansPtr, contentW)
+			}
+		}
+		y++
+	}
+}
+
 // Height returns the computed height after layout.
 // Must call Execute first.
-func (t *V2Template) Height() int16 {
+func (t *Template) Height() int16 {
 	if len(t.geom) == 0 {
 		return 0
 	}

@@ -131,7 +131,7 @@ func main() {
 		},
 	}
 
-	serial := tui.BuildSerial(ui)
+	serial := tui.Build(ui)
 	buf := tui.NewBuffer(width, height)
 
 	// Hide cursor
