@@ -662,6 +662,64 @@ func BG(text string, color Color) Span {
 	return Span{Text: text, Style: Style{BG: color}}
 }
 
+// Field bundles the state for a text input field.
+// Use with TextInput.Field for cleaner multi-field forms.
+type Field struct {
+	Value  string
+	Cursor int
+}
+
+// FocusGroup tracks which field in a group is focused.
+// Share a single FocusGroup across multiple inputs.
+type FocusGroup struct {
+	Current int
+}
+
+// TextInput is a single-line text input field.
+// Wire up input handling via riffkey.NewTextHandler or riffkey.NewFieldHandler.
+//
+// Example with Field + FocusGroup (recommended for forms):
+//
+//	name := tui.Field{}
+//	focus := tui.FocusGroup{}
+//	tui.TextInput{Field: &name, FocusGroup: &focus, FocusIndex: 0}
+//
+// Example with separate pointers (for single fields):
+//
+//	tui.TextInput{Value: &query, Cursor: &cursor, Placeholder: "Search..."}
+type TextInput struct {
+	// Field-based API (recommended for forms)
+	Field      *Field      // Bundles Value + Cursor in one struct
+	FocusGroup *FocusGroup // Shared focus tracker - cursor shows when FocusGroup.Current == FocusIndex
+	FocusIndex int         // This field's index in the focus group
+
+	// Pointer-based API (for single fields)
+	Value   *string // Bound text value (ignored if Field is set)
+	Cursor  *int    // Cursor position (ignored if Field is set)
+	Focused *bool   // Show cursor only when true (ignored if FocusGroup is set)
+
+	// Common options
+	Placeholder      string // Shown when value is empty
+	Width            int    // Field width (0 = fill available)
+	Mask             rune   // Password mask character (0 = none)
+	Style            Style  // Text style
+	PlaceholderStyle Style  // Placeholder style (zero = dim text)
+	CursorStyle      Style  // Cursor style (zero = reverse video)
+}
+
+// Overlay displays content floating above the main view.
+// Use for modals, dialogs, and floating windows.
+type Overlay struct {
+	Visible     *bool // nil = always visible, otherwise controlled by pointer
+	Centered    bool  // true = center on screen (default behavior if X/Y not set)
+	X, Y        int   // explicit position (used if Centered is false)
+	Width       int   // explicit width (0 = auto from content)
+	Height      int   // explicit height (0 = auto from content)
+	Backdrop    bool  // draw dimmed backdrop behind overlay
+	BackdropFG  Color // backdrop dim color (default: BrightBlack)
+	Child       any   // overlay content
+}
+
 // sliceHeader is the runtime representation of a slice.
 // Used for zero-allocation slice iteration.
 type sliceHeader struct {

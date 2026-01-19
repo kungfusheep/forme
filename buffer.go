@@ -1,6 +1,9 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 // Buffer is a 2D grid of cells representing a drawable surface.
 type Buffer struct {
@@ -210,6 +213,123 @@ func (b *Buffer) WriteSpans(x, y int, spans []Span, maxWidth int) {
 			}
 			x++
 			written++
+		}
+	}
+}
+
+// WriteLeader writes "Label.....Value" format with fill characters.
+// The label is left-aligned, value is right-aligned, fill chars in between.
+func (b *Buffer) WriteLeader(x, y int, label, value string, width int, fill rune, style Style) {
+	if y < 0 || y >= b.height {
+		return
+	}
+	if y > b.dirtyMaxY {
+		b.dirtyMaxY = y
+	}
+	b.dirtyRows[y] = true
+
+	if fill == 0 {
+		fill = '.'
+	}
+
+	base := y * b.width
+	labelLen := utf8.RuneCountInString(label)
+	valueLen := utf8.RuneCountInString(value)
+
+	// Calculate fill length
+	fillLen := width - labelLen - valueLen
+	if fillLen < 1 {
+		fillLen = 1 // at least one fill char
+	}
+
+	pos := x
+	// Write label
+	for _, r := range label {
+		if pos >= b.width || pos-x >= width {
+			return
+		}
+		if pos >= 0 {
+			b.cells[base+pos] = Cell{Rune: r, Style: style}
+		}
+		pos++
+	}
+
+	// Write fill
+	for i := 0; i < fillLen && pos < b.width && pos-x < width; i++ {
+		if pos >= 0 {
+			b.cells[base+pos] = Cell{Rune: fill, Style: style}
+		}
+		pos++
+	}
+
+	// Write value
+	for _, r := range value {
+		if pos >= b.width || pos-x >= width {
+			return
+		}
+		if pos >= 0 {
+			b.cells[base+pos] = Cell{Rune: r, Style: style}
+		}
+		pos++
+	}
+}
+
+// sparklineChars maps values 0-7 to Unicode block characters.
+var sparklineChars = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
+// WriteSparkline writes a sparkline chart using Unicode block characters.
+func (b *Buffer) WriteSparkline(x, y int, values []float64, width int, min, max float64, style Style) {
+	if y < 0 || y >= b.height || len(values) == 0 {
+		return
+	}
+	if y > b.dirtyMaxY {
+		b.dirtyMaxY = y
+	}
+	b.dirtyRows[y] = true
+
+	// Auto-detect min/max if not specified
+	if min == 0 && max == 0 {
+		min, max = values[0], values[0]
+		for _, v := range values {
+			if v < min {
+				min = v
+			}
+			if v > max {
+				max = v
+			}
+		}
+	}
+
+	// Handle case where all values are the same
+	valRange := max - min
+	if valRange == 0 {
+		valRange = 1
+	}
+
+	base := y * b.width
+	dataLen := len(values)
+
+	for i := 0; i < width && x+i < b.width; i++ {
+		// Map position to data index (handles width != len(values))
+		dataIdx := i * dataLen / width
+		if dataIdx >= dataLen {
+			dataIdx = dataLen - 1
+		}
+
+		// Normalize value to 0-7 range
+		normalized := (values[dataIdx] - min) / valRange
+		if normalized < 0 {
+			normalized = 0
+		} else if normalized > 1 {
+			normalized = 1
+		}
+		charIdx := int(normalized * 7.99) // 0-7
+		if charIdx > 7 {
+			charIdx = 7
+		}
+
+		if x+i >= 0 {
+			b.cells[base+x+i] = Cell{Rune: sparklineChars[charIdx], Style: style}
 		}
 	}
 }

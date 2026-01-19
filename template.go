@@ -61,6 +61,9 @@ type Template struct {
 
 	// App reference for jump mode coordination
 	app *App
+
+	// Pending overlays to render after main content (cleared each frame)
+	pendingOverlays []int16
 }
 
 // SetApp links this template to an App for jump mode support.
@@ -86,6 +89,7 @@ type Op struct {
 	StaticStr string
 	StrPtr    *string
 	StrOff    uintptr // offset from element base (for ForEach)
+	TextStyle Style   // style for text rendering
 
 	StaticInt int
 	IntPtr    *int
@@ -205,8 +209,29 @@ type Op struct {
 	TreeStyle         Style     // styling
 
 	// Jump (jump target wrapper) - just marks a position, child is inline
-	JumpOnSelect func()  // callback when target is selected
-	JumpStyle    Style   // label style override (zero = use app default)
+	JumpOnSelect func() // callback when target is selected
+	JumpStyle    Style  // label style override (zero = use app default)
+
+	// TextInput
+	TextInputFieldPtr      *Field      // Field-based API (bundles Value+Cursor)
+	TextInputFocusGroupPtr *FocusGroup // shared focus tracker
+	TextInputFocusIndex    int         // this field's index in focus group
+	TextInputValuePtr       *string // bound text value (legacy)
+	TextInputCursorPtr      *int    // bound cursor position (legacy)
+	TextInputFocusedPtr     *bool   // show cursor only when true (legacy)
+	TextInputPlaceholder    string  // placeholder text
+	TextInputMask           rune    // password mask (0 = none)
+	TextInputStyle          Style   // text style
+	TextInputPlaceholderSty Style   // placeholder style
+	TextInputCursorStyle    Style   // cursor style
+
+	// Overlay
+	OverlayVisiblePtr *bool     // nil = always visible
+	OverlayCentered   bool      // center on screen
+	OverlayX, OverlayY int16    // explicit position
+	OverlayBackdrop   bool      // draw backdrop
+	OverlayBackdropFG Color     // backdrop color
+	OverlayChildTmpl  *Template // compiled child content
 }
 
 type OpKind uint8
@@ -252,6 +277,8 @@ const (
 	OpTabs      // Tab headers
 	OpTreeView  // Hierarchical tree
 	OpJump      // Jump target wrapper
+	OpTextInput // Single-line text input
+	OpOverlay   // Floating overlay/modal
 )
 
 // Build compiles a declarative UI into a Template.
@@ -356,6 +383,10 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileTreeView(v, parent, depth)
 	case Jump:
 		return t.compileJump(v, parent, depth, elemBase, elemSize)
+	case TextInput:
+		return t.compileTextInput(v, parent, depth)
+	case Overlay:
+		return t.compileOverlay(v, parent, depth)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
 	}
@@ -738,9 +769,72 @@ func (t *Template) compileJump(v Jump, parent int16, depth int, elemBase unsafe.
 	return idx
 }
 
+func (t *Template) compileTextInput(v TextInput, parent int16, depth int) int16 {
+	op := Op{
+		Kind:                    OpTextInput,
+		Parent:                  parent,
+		Width:                   int16(v.Width),
+		TextInputFieldPtr:       v.Field,
+		TextInputFocusGroupPtr:  v.FocusGroup,
+		TextInputFocusIndex:     v.FocusIndex,
+		TextInputValuePtr:       v.Value,
+		TextInputCursorPtr:      v.Cursor,
+		TextInputFocusedPtr:     v.Focused,
+		TextInputPlaceholder:    v.Placeholder,
+		TextInputMask:           v.Mask,
+		TextInputStyle:          v.Style,
+		TextInputPlaceholderSty: v.PlaceholderStyle,
+		TextInputCursorStyle:    v.CursorStyle,
+	}
+
+	// Set defaults for styles
+	if op.TextInputPlaceholderSty.Equal(Style{}) {
+		op.TextInputPlaceholderSty = Style{Attr: AttrDim}
+	}
+	if op.TextInputCursorStyle.Equal(Style{}) {
+		op.TextInputCursorStyle = Style{Attr: AttrInverse}
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileOverlay(v Overlay, parent int16, depth int) int16 {
+	// Compile child into sub-template
+	var childTmpl *Template
+	if v.Child != nil {
+		childTmpl = Build(v.Child)
+	}
+
+	// Determine centering - default to centered if no explicit position
+	centered := v.Centered || (v.X == 0 && v.Y == 0)
+
+	// Set default backdrop color
+	backdropFG := v.BackdropFG
+	if backdropFG.Mode == ColorDefault && v.Backdrop {
+		backdropFG = BrightBlack
+	}
+
+	op := Op{
+		Kind:              OpOverlay,
+		Parent:            parent,
+		Width:             int16(v.Width),
+		Height:            int16(v.Height),
+		OverlayVisiblePtr: v.Visible,
+		OverlayCentered:   centered,
+		OverlayX:          int16(v.X),
+		OverlayY:          int16(v.Y),
+		OverlayBackdrop:   v.Backdrop,
+		OverlayBackdropFG: backdropFG,
+		OverlayChildTmpl:  childTmpl,
+	}
+
+	return t.addOp(op, depth)
+}
+
 func (t *Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
-		Parent: parent,
+		Parent:    parent,
+		TextStyle: v.Style,
 	}
 
 	switch val := v.Content.(type) {
@@ -1011,6 +1105,9 @@ func (t *Template) compileForEach(v ForEachNode, parent int16, depth int) int16 
 
 // Execute runs all three phases and renders to the buffer.
 func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
+	// Clear pending overlays from previous frame
+	t.pendingOverlays = t.pendingOverlays[:0]
+
 	// Phase 1: Width distribution (top → down)
 	t.distributeWidths(screenW, nil)
 
@@ -1022,6 +1119,9 @@ func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 
 	// Phase 3: Render (top → down)
 	t.render(buf, 0, 0, screenW)
+
+	// Phase 4: Render overlays (after main content so they appear on top)
+	t.renderOverlays(buf, screenW, screenH)
 }
 
 // distributeWidths assigns W to all ops, top-down.
@@ -1174,6 +1274,18 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 		// Jump is a transparent wrapper - uses full available width
 		// Children will be laid out within this width
 		geom.W = availW
+
+	case OpTextInput:
+		// TextInput uses explicit width or fills available
+		if op.Width > 0 {
+			geom.W = op.Width
+		} else {
+			geom.W = availW
+		}
+
+	case OpOverlay:
+		// Overlays float above content, take zero space in layout
+		geom.W = 0
 
 	case OpContainer:
 		if op.Width > 0 {
@@ -1436,6 +1548,14 @@ func (t *Template) layout(_ int16) {
 				if geom.H == 0 {
 					geom.H = 1
 				}
+
+			case OpTextInput:
+				// TextInput is always 1 line
+				geom.H = 1
+
+			case OpOverlay:
+				// Overlays float above content, take zero space in layout
+				geom.H = 0
 
 			case OpLayout:
 				t.layoutCustom(idx, op, geom)
@@ -1995,10 +2115,10 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	switch op.Kind {
 	case OpText:
-		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, op.TextStyle, int(maxW))
 
 	case OpTextPtr:
-		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, op.TextStyle, int(maxW))
 
 	case OpTextOff:
 		// Would need elemBase passed through for ForEach
@@ -2085,6 +2205,16 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpJump:
 		t.renderJump(buf, op, geom, absX, absY, maxW, idx)
+
+	case OpTextInput:
+		t.renderTextInput(buf, op, geom, absX, absY)
+
+	case OpOverlay:
+		// Collect visible overlays for rendering after main content
+		visible := op.OverlayVisiblePtr == nil || *op.OverlayVisiblePtr
+		if visible {
+			t.pendingOverlays = append(t.pendingOverlays, idx)
+		}
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -2201,15 +2331,15 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	switch op.Kind {
 	case OpText:
-		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, op.TextStyle, int(maxW))
 
 	case OpTextPtr:
-		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, op.TextStyle, int(maxW))
 
 	case OpTextOff:
 		// Offset from element base
 		strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
-		buf.WriteStringFast(int(absX), int(absY), *strPtr, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), *strPtr, op.TextStyle, int(maxW))
 
 	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
@@ -2298,6 +2428,16 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	case OpJump:
 		sub.renderJump(buf, op, geom, absX, absY, maxW, idx)
+
+	case OpTextInput:
+		sub.renderTextInput(buf, op, geom, absX, absY)
+
+	case OpOverlay:
+		// Collect visible overlays for rendering after main content
+		visible := op.OverlayVisiblePtr == nil || *op.OverlayVisiblePtr
+		if visible {
+			sub.pendingOverlays = append(sub.pendingOverlays, idx)
+		}
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -2443,12 +2583,12 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 
 			switch iterOp.Kind {
 			case OpText:
-				buf.WriteStringFast(contentX, y, iterOp.StaticStr, Style{}, contentW)
+				buf.WriteStringFast(contentX, y, iterOp.StaticStr, iterOp.TextStyle, contentW)
 			case OpTextPtr:
-				buf.WriteStringFast(contentX, y, *iterOp.StrPtr, Style{}, contentW)
+				buf.WriteStringFast(contentX, y, *iterOp.StrPtr, iterOp.TextStyle, contentW)
 			case OpTextOff:
 				strPtr := (*string)(unsafe.Pointer(uintptr(elemPtr) + iterOp.StrOff))
-				buf.WriteStringFast(contentX, y, *strPtr, Style{}, contentW)
+				buf.WriteStringFast(contentX, y, *strPtr, iterOp.TextStyle, contentW)
 			case OpRichText:
 				buf.WriteSpans(contentX, y, iterOp.StaticSpans, contentW)
 			case OpRichTextPtr:
@@ -2596,6 +2736,187 @@ func (t *Template) renderJump(buf *Buffer, op *Op, geom *Geom, absX, absY, maxW 
 			}
 		}
 	}
+}
+
+func (t *Template) renderTextInput(buf *Buffer, op *Op, geom *Geom, absX, absY int16) {
+	width := int(geom.W)
+	if width <= 0 {
+		return
+	}
+
+	// Get value and cursor - prefer Field API, fall back to pointer API
+	var value string
+	var cursor int
+	if op.TextInputFieldPtr != nil {
+		value = op.TextInputFieldPtr.Value
+		cursor = op.TextInputFieldPtr.Cursor
+	} else {
+		if op.TextInputValuePtr != nil {
+			value = *op.TextInputValuePtr
+		}
+		cursor = len(value) // default to end
+		if op.TextInputCursorPtr != nil {
+			cursor = *op.TextInputCursorPtr
+		}
+	}
+
+	// Clamp cursor to valid range
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(value) {
+		cursor = len(value)
+	}
+
+	// Determine if cursor should be shown
+	// Priority: FocusGroup > Focused > always show
+	var showCursor bool
+	if op.TextInputFocusGroupPtr != nil {
+		showCursor = op.TextInputFocusGroupPtr.Current == op.TextInputFocusIndex
+	} else if op.TextInputFocusedPtr != nil {
+		showCursor = *op.TextInputFocusedPtr
+	} else {
+		// Default: show cursor if we have cursor tracking
+		showCursor = op.TextInputFieldPtr != nil || op.TextInputCursorPtr != nil
+	}
+
+	// Handle empty state with placeholder
+	if value == "" {
+		if op.TextInputPlaceholder != "" {
+			buf.WriteStringFast(int(absX), int(absY), op.TextInputPlaceholder, op.TextInputPlaceholderSty, width)
+		}
+		// Draw cursor at start if focused
+		if showCursor {
+			buf.Set(int(absX), int(absY), Cell{Rune: ' ', Style: op.TextInputCursorStyle})
+		}
+		return
+	}
+
+	// Apply mask if set
+	displayValue := value
+	if op.TextInputMask != 0 {
+		runes := make([]rune, len([]rune(value)))
+		for i := range runes {
+			runes[i] = op.TextInputMask
+		}
+		displayValue = string(runes)
+	}
+
+	// Calculate scroll offset for horizontal scrolling
+	// Keep cursor visible within the field
+	displayRunes := []rune(displayValue)
+	cursorRune := cursor
+	if cursorRune > len(displayRunes) {
+		cursorRune = len(displayRunes)
+	}
+
+	scrollOffset := 0
+	if showCursor && cursorRune >= width {
+		scrollOffset = cursorRune - width + 1
+	}
+
+	// Render visible portion
+	visibleEnd := scrollOffset + width
+	if visibleEnd > len(displayRunes) {
+		visibleEnd = len(displayRunes)
+	}
+
+	x := int(absX)
+	for i := scrollOffset; i < visibleEnd; i++ {
+		style := op.TextInputStyle
+		// Highlight cursor position if focused
+		if showCursor && i == cursorRune {
+			style = op.TextInputCursorStyle
+		}
+		buf.Set(x, int(absY), Cell{Rune: displayRunes[i], Style: style})
+		x++
+	}
+
+	// If cursor is at end (after last char), draw cursor there
+	if showCursor && cursorRune >= len(displayRunes) && cursorRune-scrollOffset < width {
+		buf.Set(int(absX)+cursorRune-scrollOffset, int(absY), Cell{Rune: ' ', Style: op.TextInputCursorStyle})
+	}
+}
+
+// renderOverlays renders all collected overlays after main content.
+func (t *Template) renderOverlays(buf *Buffer, screenW, screenH int16) {
+	for _, idx := range t.pendingOverlays {
+		op := &t.ops[idx]
+		t.renderOverlay(buf, op, screenW, screenH)
+	}
+}
+
+// renderOverlay renders a single overlay to the buffer.
+func (t *Template) renderOverlay(buf *Buffer, op *Op, screenW, screenH int16) {
+	if op.OverlayChildTmpl == nil {
+		return
+	}
+
+	// Link app to child template for jump mode support
+	op.OverlayChildTmpl.app = t.app
+
+	// Calculate content size by doing a dry-run layout
+	childTmpl := op.OverlayChildTmpl
+
+	// Determine overlay dimensions
+	overlayW := op.Width
+	overlayH := op.Height
+
+	if overlayW == 0 || overlayH == 0 {
+		// Calculate natural size from content
+		// Use a temporary buffer for measurement
+		childTmpl.distributeWidths(screenW, nil)
+		childTmpl.layout(screenH)
+		childTmpl.distributeFlexGrow(screenH)
+
+		// Get root content size
+		if len(childTmpl.geom) > 0 {
+			if overlayW == 0 {
+				overlayW = childTmpl.geom[0].W
+			}
+			if overlayH == 0 {
+				overlayH = childTmpl.geom[0].H
+			}
+		}
+	}
+
+	// Calculate position
+	var posX, posY int16
+	if op.OverlayCentered {
+		posX = (screenW - overlayW) / 2
+		posY = (screenH - overlayH) / 2
+	} else {
+		posX = op.OverlayX
+		posY = op.OverlayY
+	}
+
+	// Clamp to screen bounds
+	if posX < 0 {
+		posX = 0
+	}
+	if posY < 0 {
+		posY = 0
+	}
+
+	// Draw backdrop if enabled
+	if op.OverlayBackdrop {
+		backdropStyle := Style{FG: op.OverlayBackdropFG, Attr: AttrDim}
+		for y := int16(0); y < screenH; y++ {
+			for x := int16(0); x < screenW; x++ {
+				cell := buf.Get(int(x), int(y))
+				// Dim existing content
+				cell.Style = backdropStyle
+				buf.Set(int(x), int(y), cell)
+			}
+		}
+	}
+
+	// Render the overlay content
+	// Re-layout with actual available space
+	childTmpl.distributeWidths(overlayW, nil)
+	childTmpl.layout(overlayH)
+	childTmpl.distributeFlexGrow(overlayH)
+	childTmpl.render(buf, posX, posY, overlayW)
 }
 
 func (t *Template) renderTabs(buf *Buffer, op *Op, geom *Geom, absX, absY int16) {

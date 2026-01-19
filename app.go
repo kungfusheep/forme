@@ -46,6 +46,8 @@ type App struct {
 	cursorX, cursorY int
 	cursorVisible    bool
 	cursorShape      CursorShape
+	cursorColor      Color
+	cursorColorSet   bool
 
 	// Resize callback
 	onResize func(width, height int)
@@ -345,6 +347,13 @@ func (a *App) HideCursor() {
 	a.cursorVisible = false
 }
 
+// SetCursorColor sets the cursor color using OSC 12 escape sequence.
+// This changes the actual cursor color in supporting terminals.
+func (a *App) SetCursorColor(c Color) {
+	a.cursorColor = c
+	a.cursorColorSet = true
+}
+
 // OnResize sets a callback to be called when the terminal is resized.
 // The callback receives the new width and height.
 // Use this to update viewport dimensions, reinitialize layers, etc.
@@ -440,6 +449,9 @@ rendered:
 		a.pool.Swap()    // Queue async clear
 
 		// Add cursor ops to same buffer - one syscall for everything
+		if a.cursorColorSet {
+			a.screen.BufferCursorColor(a.cursorColor)
+		}
 		a.screen.BufferCursor(a.cursorX, a.cursorY, a.cursorVisible, a.cursorShape)
 		a.screen.FlushBuffer() // Single syscall for content + cursor
 	}

@@ -24,6 +24,7 @@ type Screen struct {
 	// Terminal state
 	origTermios *unix.Termios
 	inRawMode   bool
+	inlineMode  bool // Inline mode (no alternate buffer)
 
 	// Resize handling
 	resizeChan chan Size
@@ -165,6 +166,107 @@ func (s *Screen) ExitRawMode() error {
 
 	s.inRawMode = false
 	return nil
+}
+
+// EnterInlineMode puts the terminal into raw mode WITHOUT alternate buffer.
+// Use this for inline UI elements (progress bars, menus, etc.) that render
+// in the normal terminal flow rather than taking over the screen.
+func (s *Screen) EnterInlineMode() error {
+	if s.inRawMode {
+		return nil
+	}
+
+	termios, err := unix.IoctlGetTermios(s.fd, unix.TIOCGETA)
+	if err != nil {
+		return fmt.Errorf("failed to get termios: %w", err)
+	}
+	s.origTermios = termios
+
+	raw := *termios
+	// Input flags: disable break, CR to NL, parity, strip, flow control
+	raw.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP | unix.IXON
+	// Output flags: disable post processing
+	raw.Oflag &^= unix.OPOST
+	// Control flags: set 8 bit chars
+	raw.Cflag |= unix.CS8
+	// Local flags: disable echo, canonical mode, signals, extended input
+	raw.Lflag &^= unix.ECHO | unix.ICANON | unix.ISIG | unix.IEXTEN
+	// Control chars: min bytes = 1, timeout = 0
+	raw.Cc[unix.VMIN] = 1
+	raw.Cc[unix.VTIME] = 0
+
+	if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, &raw); err != nil {
+		return fmt.Errorf("failed to set raw mode: %w", err)
+	}
+
+	s.inRawMode = true
+	s.inlineMode = true
+
+	// Start listening for resize signals
+	signal.Notify(s.sigChan, syscall.SIGWINCH)
+	go s.handleSignals()
+
+	// NO alternate screen switch for inline mode
+	// Keep cursor visible
+
+	return nil
+}
+
+// ExitInlineMode restores the terminal from inline mode.
+// If clear is true, clears the lines used.
+// If clear is false, moves cursor below the rendered content.
+func (s *Screen) ExitInlineMode(linesUsed int, clear bool) error {
+	if !s.inRawMode {
+		return nil
+	}
+
+	// After FlushInline, cursor is at start of our content (row 0 of inline area)
+	if clear && linesUsed > 0 {
+		// Build all clear commands into a single write
+		var clearBuf bytes.Buffer
+		for i := 0; i < linesUsed; i++ {
+			clearBuf.WriteString("\r\x1b[2K") // Start of line, clear entire line
+			if i < linesUsed-1 {
+				clearBuf.WriteString("\x1b[1B") // Move down to next line
+			}
+		}
+		// Move back to first line
+		if linesUsed > 1 {
+			clearBuf.WriteString(fmt.Sprintf("\x1b[%dA", linesUsed-1))
+		}
+		clearBuf.WriteString("\r") // Ensure at start of line
+		clearBuf.WriteString("\x1b[0m") // Reset style
+		s.writer.Write(clearBuf.Bytes())
+	} else if linesUsed > 0 {
+		// Move cursor below content
+		var moveBuf bytes.Buffer
+		if linesUsed > 1 {
+			moveBuf.WriteString(fmt.Sprintf("\x1b[%dB", linesUsed-1)) // Move to last line of content
+		}
+		moveBuf.WriteString("\r\n") // New line after content
+		moveBuf.WriteString("\x1b[0m") // Reset style
+		s.writer.Write(moveBuf.Bytes())
+	} else {
+		// Reset style
+		s.writeString("\x1b[0m")
+	}
+
+	signal.Stop(s.sigChan)
+
+	if s.origTermios != nil {
+		if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, s.origTermios); err != nil {
+			return fmt.Errorf("failed to restore termios: %w", err)
+		}
+	}
+
+	s.inRawMode = false
+	s.inlineMode = false
+	return nil
+}
+
+// IsInlineMode returns true if the screen is in inline mode.
+func (s *Screen) IsInlineMode() bool {
+	return s.inlineMode
 }
 
 // handleSignals processes OS signals.
@@ -312,6 +414,48 @@ func (s *Screen) FlushFull() {
 	s.lastStyle = DefaultStyle()
 
 	s.writer.Write(s.buf.Bytes())
+}
+
+// FlushInline renders the buffer for inline mode (no alternate screen).
+// Renders at current cursor position using relative movement.
+// Returns the number of lines rendered for cleanup tracking.
+func (s *Screen) FlushInline(height int) int {
+	s.buf.Reset()
+
+	linesRendered := 0
+	for y := 0; y < height && y < s.height; y++ {
+		// Move to start of line, clear to end of line
+		s.buf.WriteString("\r\x1b[K")
+
+		for x := 0; x < s.width; x++ {
+			cell := s.back.Get(x, y)
+			if cell.Rune == 0 {
+				break // Stop at first empty cell (end of content)
+			}
+			s.writeCell(&s.buf, cell)
+			s.front.Set(x, y, cell)
+		}
+		linesRendered++
+
+		if y < height-1 {
+			s.buf.WriteString("\n") // Move down to next line
+		}
+	}
+
+	// Reset style
+	s.buf.WriteString("\x1b[0m")
+	s.lastStyle = DefaultStyle()
+
+	// Move cursor back to start of our content (first line)
+	if linesRendered > 1 {
+		s.buf.WriteString(fmt.Sprintf("\x1b[%dA", linesRendered-1))
+	}
+	s.buf.WriteString("\r")
+
+	s.writer.Write(s.buf.Bytes())
+	s.back.ClearDirtyFlags()
+
+	return linesRendered
 }
 
 // writeCell writes a cell's style and rune to the buffer.
@@ -463,6 +607,28 @@ func (s *Screen) BufferCursor(x, y int, visible bool, shape CursorShape) {
 	} else {
 		s.buf.WriteString("\x1b[?25l")
 	}
+}
+
+// BufferCursorColor sets cursor color using OSC 12 escape sequence.
+// Format: OSC 12 ; #RRGGBB BEL
+func (s *Screen) BufferCursorColor(c Color) {
+	if c.Mode == ColorRGB {
+		s.buf.WriteString("\x1b]12;#")
+		s.buf.WriteByte(hexDigit(c.R >> 4))
+		s.buf.WriteByte(hexDigit(c.R & 0xF))
+		s.buf.WriteByte(hexDigit(c.G >> 4))
+		s.buf.WriteByte(hexDigit(c.G & 0xF))
+		s.buf.WriteByte(hexDigit(c.B >> 4))
+		s.buf.WriteByte(hexDigit(c.B & 0xF))
+		s.buf.WriteByte('\x07') // BEL terminator
+	}
+}
+
+func hexDigit(n uint8) byte {
+	if n < 10 {
+		return '0' + n
+	}
+	return 'a' + n - 10
 }
 
 // FlushBuffer writes the accumulated buffer to the terminal in one syscall.

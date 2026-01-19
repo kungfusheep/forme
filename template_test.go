@@ -475,17 +475,18 @@ func TestV2NestedCustomComponent(t *testing.T) {
 	}
 }
 
-// Sparkline is a custom renderer that draws a mini chart
-type Sparkline struct {
+// CustomSparkline is a custom renderer example that draws a mini chart
+// (Used to test the Renderer interface)
+type CustomSparkline struct {
 	Values *[]float64
 	Width  int
 }
 
-func (s Sparkline) MinSize() (width, height int) {
+func (s CustomSparkline) MinSize() (width, height int) {
 	return s.Width, 1
 }
 
-func (s Sparkline) Render(buf *Buffer, x, y, w, h int) {
+func (s CustomSparkline) Render(buf *Buffer, x, y, w, h int) {
 	if s.Values == nil || len(*s.Values) == 0 {
 		return
 	}
@@ -518,12 +519,12 @@ func (s Sparkline) Render(buf *Buffer, x, y, w, h int) {
 	}
 }
 
-func TestV2CustomRenderer(t *testing.T) {
+func TestCustomRenderer(t *testing.T) {
 	values := []float64{1, 3, 5, 7, 5, 3, 1, 2, 4, 6}
 
 	tmpl := Build(Col{Children: []any{
 		Text{Content: "CPU:"},
-		Sparkline{Values: &values, Width: 10},
+		CustomSparkline{Values: &values, Width: 10},
 	}})
 
 	buf := NewBuffer(40, 10)
