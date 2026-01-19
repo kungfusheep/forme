@@ -223,6 +223,139 @@ type Leader struct {
 	Style Style // styling (use Attr for bold, dim, etc.)
 }
 
+// Align specifies text alignment within a cell.
+type Align uint8
+
+const (
+	AlignLeft Align = iota
+	AlignRight
+	AlignCenter
+)
+
+// TableColumn defines a column in a Table.
+type TableColumn struct {
+	Header string // column header text
+	Width  int    // column width (0 = auto-size)
+	Align  Align  // text alignment
+}
+
+// Table displays tabular data with columns and optional headers.
+// Uses pointer bindings for dynamic data updates.
+type Table struct {
+	Columns    []TableColumn // column definitions
+	Rows       any           // *[][]string - pointer to row data
+	ShowHeader bool          // show header row
+	HeaderStyle Style        // style for header row
+	RowStyle    Style        // style for data rows
+	AltRowStyle Style        // style for alternating rows (if non-zero)
+}
+
+// Sparkline displays a mini chart using Unicode block characters.
+// Values are normalized to fit within the available height (1 character).
+// Uses: ▁▂▃▄▅▆▇█
+type Sparkline struct {
+	Values any     // []float64 or *[]float64
+	Width  int16   // width (0 = auto from data length)
+	Min    float64 // minimum value (0 = auto-detect)
+	Max    float64 // maximum value (0 = auto-detect)
+	Style  Style   // styling
+}
+
+// HRule draws a horizontal line that fills available width.
+// Default character is '─' (box drawing light horizontal).
+type HRule struct {
+	Char  rune  // line character (0 = '─')
+	Style Style // styling
+}
+
+// VRule draws a vertical line that fills available height.
+// Default character is '│' (box drawing light vertical).
+type VRule struct {
+	Char  rune  // line character (0 = '│')
+	Style Style // styling
+}
+
+// Spacer creates empty space with specified dimensions.
+// Useful for layout padding and spacing.
+type Spacer struct {
+	Width  int16 // fixed width (0 = fill available)
+	Height int16 // fixed height (1 if not specified)
+}
+
+// Spinner displays an animated loading indicator.
+// The Frame pointer controls which animation frame to show.
+// Increment Frame and re-render to animate.
+type Spinner struct {
+	Frame  *int     // pointer to current frame index
+	Frames []string // custom frames (nil = default braille spinner)
+	Style  Style    // styling
+}
+
+// SpinnerBraille is the default spinner animation (braille dots).
+var SpinnerBraille = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// SpinnerDots is a simple dot spinner.
+var SpinnerDots = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+// SpinnerLine is a line spinner.
+var SpinnerLine = []string{"-", "\\", "|", "/"}
+
+// SpinnerCircle is a circle spinner.
+var SpinnerCircle = []string{"◐", "◓", "◑", "◒"}
+
+// Scrollbar displays a visual scroll indicator.
+// Vertical by default; set Horizontal to true for horizontal scrollbar.
+type Scrollbar struct {
+	ContentSize  int     // total content size
+	ViewSize     int     // visible viewport size
+	Position     *int    // pointer to current scroll position
+	Length       int16   // scrollbar length (0 = fill available)
+	Horizontal   bool    // true for horizontal scrollbar
+	TrackChar    rune    // track character (default: '│' or '─')
+	ThumbChar    rune    // thumb character (default: '█')
+	TrackStyle   Style   // track styling
+	ThumbStyle   Style   // thumb styling
+}
+
+// TabsStyle defines the visual style for tab headers.
+type TabsStyle uint8
+
+const (
+	TabsStyleUnderline TabsStyle = iota // active tab has underline
+	TabsStyleBox                        // tabs in boxes
+	TabsStyleBracket                    // tabs with [ ] brackets
+)
+
+// Tabs displays a row of tab headers with active tab indicator.
+type Tabs struct {
+	Labels         []string  // tab labels
+	Selected       *int      // pointer to selected tab index
+	Style          TabsStyle // visual style
+	Gap            int       // gap between tabs (default: 2)
+	ActiveStyle    Style     // style for active tab
+	InactiveStyle  Style     // style for inactive tabs
+}
+
+// TreeNode represents a node in a tree structure.
+type TreeNode struct {
+	Label    string      // display label
+	Children []*TreeNode // child nodes
+	Expanded bool        // whether children are visible
+	Data     any         // optional user data
+}
+
+// TreeView displays a hierarchical tree structure.
+type TreeView struct {
+	Root          *TreeNode // root node (can be hidden)
+	ShowRoot      bool      // whether to display the root node
+	Indent        int       // indentation per level (default: 2)
+	ShowLines     bool      // show connecting lines (├ └ │)
+	ExpandedChar  rune      // character for expanded nodes (default: '▼')
+	CollapsedChar rune      // character for collapsed nodes (default: '▶')
+	LeafChar      rune      // character for leaf nodes (default: ' ')
+	Style         Style     // styling for labels
+}
+
 // Custom allows user-defined components without modifying the framework.
 // Use this for specialized widgets that aren't covered by built-in primitives.
 // Note: Custom components use function calls (not inlined like built-ins),
@@ -235,6 +368,15 @@ type Custom struct {
 	// Render draws the component to the buffer at the given position.
 	// Called during the draw phase with computed geometry.
 	Render func(buf *Buffer, x, y, w, h int16)
+}
+
+// Jump wraps a component to make it a jump target.
+// When jump mode is active, a label is displayed at this component's position.
+// When the user types the label, OnSelect is called.
+type Jump struct {
+	Child    any    // The wrapped component
+	OnSelect func() // Called when this target is selected
+	Style    Style  // Optional: per-target label style override
 }
 
 // Progress displays a progress bar.

@@ -49,9 +49,20 @@ type App struct {
 
 	// Resize callback
 	onResize func(width, height int)
+
+	// Inline mode
+	inline         bool
+	clearOnExit    bool
+	linesUsed      int
+	viewHeight     int16 // Height of the view for inline mode
+	nonInteractive bool  // True when running via RunNonInteractive
+
+	// Jump labels
+	jumpMode  *JumpMode
+	jumpStyle JumpStyle
 }
 
-// NewApp creates a new TUI application.
+// NewApp creates a new TUI application (fullscreen, alternate buffer).
 func NewApp() (*App, error) {
 	screen, err := NewScreen(nil)
 	if err != nil {
@@ -68,9 +79,83 @@ func NewApp() (*App, error) {
 		input:      input,
 		reader:     reader,
 		renderChan: make(chan struct{}, 1),
+		jumpMode:   &JumpMode{},
+		jumpStyle:  DefaultJumpStyle,
 	}
 
 	return app, nil
+}
+
+// NewInlineApp creates a new inline TUI application.
+// Inline apps render at the current cursor position without taking over the screen.
+// Use this for progress bars, selection menus, spinners, etc.
+func NewInlineApp() (*App, error) {
+	app, err := NewApp()
+	if err != nil {
+		return nil, err
+	}
+	app.inline = true
+	return app, nil
+}
+
+// ClearOnExit sets whether the inline app should clear its content on exit.
+// If true, the rendered content disappears when the app stops.
+// If false (default), the content remains visible and cursor moves below it.
+func (a *App) ClearOnExit(clear bool) *App {
+	a.clearOnExit = clear
+	return a
+}
+
+// IsInline returns true if this is an inline app.
+func (a *App) IsInline() bool {
+	return a.inline
+}
+
+// Height sets the height for inline apps.
+// This determines how many lines the inline view will use.
+// If not set, defaults to 1.
+func (a *App) Height(h int16) *App {
+	a.viewHeight = h
+	return a
+}
+
+// RunNonInteractive runs an inline app without an input loop.
+// Use this for progress bars, spinners, etc. that don't need keyboard input.
+// Call Stop() when done to clean up and exit.
+func (a *App) RunNonInteractive() error {
+	if !a.inline {
+		return fmt.Errorf("RunNonInteractive only works with inline apps")
+	}
+
+	a.running = true
+	a.nonInteractive = true
+
+	// Clean up buffer pool on exit
+	if a.pool != nil {
+		defer a.pool.Stop()
+	}
+
+	// Enter inline mode (raw mode without alternate buffer)
+	if err := a.screen.EnterInlineMode(); err != nil {
+		return err
+	}
+
+	// Initial render
+	a.render()
+
+	// Wait for Stop() to be called
+	for a.running {
+		select {
+		case <-a.renderChan:
+			a.render()
+		case <-time.After(50 * time.Millisecond):
+			// Check running flag periodically
+		}
+	}
+
+	// Clean up
+	a.screen.ExitInlineMode(a.linesUsed, a.clearOnExit)
+	return nil
 }
 
 // SetView sets a declarative view for fast rendering.
@@ -87,6 +172,7 @@ func NewApp() (*App, error) {
 //	)
 func (a *App) SetView(view any) *App {
 	a.template = Build(view)
+	a.template.SetApp(a) // Link for jump mode support
 	// Create buffer pool for async clearing
 	size := a.screen.Size()
 	a.pool = NewBufferPool(size.Width, size.Height)
@@ -124,7 +210,9 @@ func (a *App) View(name string, view any) *ViewBuilder {
 	}
 
 	// Compile template and create router for this view
-	a.viewTemplates[name] = Build(view)
+	tmpl := Build(view)
+	tmpl.SetApp(a) // Link for jump mode support
+	a.viewTemplates[name] = tmpl
 	router := riffkey.NewRouter()
 	a.viewRouters[name] = router
 
@@ -147,7 +235,9 @@ func (a *App) UpdateView(name string, view any) {
 	if a.viewTemplates == nil {
 		return
 	}
-	a.viewTemplates[name] = Build(view)
+	tmpl := Build(view)
+	tmpl.SetApp(a) // Link for jump mode support
+	a.viewTemplates[name] = tmpl
 }
 
 // Go switches to a different view.
@@ -296,12 +386,20 @@ func (a *App) render() {
 	size := a.screen.Size()
 	buf := a.pool.Current()
 
+	// For inline mode, use view height instead of terminal height
+	renderHeight := int16(size.Height)
+	if a.inline && a.viewHeight > 0 {
+		renderHeight = a.viewHeight
+	} else if a.inline {
+		renderHeight = 1 // Default to 1 line for inline
+	}
+
 	// Priority: pushed views > current view > base template
 	if len(a.viewStack) > 0 {
 		topView := a.viewStack[len(a.viewStack)-1]
 		if a.viewTemplates != nil {
 			if tmpl, ok := a.viewTemplates[topView]; ok {
-				tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+				tmpl.Execute(buf, int16(size.Width), renderHeight)
 				goto rendered
 			}
 		}
@@ -310,12 +408,12 @@ func (a *App) render() {
 	// No pushed view - use base template
 	if a.currentView != "" && a.viewTemplates != nil {
 		if tmpl, ok := a.viewTemplates[a.currentView]; ok {
-			tmpl.Execute(buf, int16(size.Width), int16(size.Height))
+			tmpl.Execute(buf, int16(size.Width), renderHeight)
 		} else {
 			return // View not found
 		}
 	} else if a.template != nil {
-		a.template.Execute(buf, int16(size.Width), int16(size.Height))
+		a.template.Execute(buf, int16(size.Width), renderHeight)
 	} else {
 		return // No view set
 	}
@@ -331,12 +429,20 @@ rendered:
 
 	// Copy to screen's back buffer for flush
 	a.copyToScreen(buf)
-	a.screen.Flush() // Builds buffer but doesn't write
-	a.pool.Swap()    // Queue async clear
 
-	// Add cursor ops to same buffer - one syscall for everything
-	a.screen.BufferCursor(a.cursorX, a.cursorY, a.cursorVisible, a.cursorShape)
-	a.screen.FlushBuffer() // Single syscall for content + cursor
+	if a.inline {
+		// Inline mode: render at cursor position
+		a.linesUsed = a.screen.FlushInline(int(renderHeight))
+		a.pool.Swap() // Queue async clear
+	} else {
+		// Fullscreen mode: diff-based update
+		a.screen.Flush() // Builds buffer but doesn't write
+		a.pool.Swap()    // Queue async clear
+
+		// Add cursor ops to same buffer - one syscall for everything
+		a.screen.BufferCursor(a.cursorX, a.cursorY, a.cursorVisible, a.cursorShape)
+		a.screen.FlushBuffer() // Single syscall for content + cursor
+	}
 
 	if DebugTiming {
 		lastFlushTime = time.Since(t1)
@@ -404,11 +510,19 @@ func (a *App) run(startView string) error {
 		defer a.pool.Stop()
 	}
 
-	// Enter raw mode
-	if err := a.screen.EnterRawMode(); err != nil {
-		return err
+	// Enter raw mode (inline or fullscreen)
+	if a.inline {
+		if err := a.screen.EnterInlineMode(); err != nil {
+			return err
+		}
+		// Use closure so linesUsed is read at defer time, not now (when it's 0)
+		defer func() { a.screen.ExitInlineMode(a.linesUsed, a.clearOnExit) }()
+	} else {
+		if err := a.screen.EnterRawMode(); err != nil {
+			return err
+		}
+		defer a.screen.ExitRawMode()
 	}
-	defer a.screen.ExitRawMode()
 
 	// Handle resize
 	go a.handleResize()
@@ -431,6 +545,10 @@ func (a *App) run(startView string) error {
 
 	// Normal termination via Stop() causes reader to return error
 	if !a.running {
+		// Reopen stdin for inline apps so subsequent apps can use it
+		if a.inline {
+			reopenStdin()
+		}
 		return nil
 	}
 	return err
@@ -452,8 +570,19 @@ func (a *App) handleRenderRequests() {
 // Stop signals the application to stop.
 func (a *App) Stop() {
 	a.running = false
-	// Close stdin to unblock the reader
-	os.Stdin.Close()
+	// Close stdin to unblock the input reader (not needed for non-interactive)
+	if !a.nonInteractive {
+		os.Stdin.Close()
+	}
+}
+
+// reopenStdin reopens stdin from /dev/tty after it was closed.
+// This allows running multiple inline apps in sequence.
+func reopenStdin() {
+	f, err := os.Open("/dev/tty")
+	if err == nil {
+		os.Stdin = f
+	}
 }
 
 // handleResize watches for terminal resize events.
@@ -474,4 +603,121 @@ func (a *App) handleResize() {
 // Size returns the current screen size.
 func (a *App) Size() Size {
 	return a.screen.Size()
+}
+
+// =============================================================================
+// Jump Labels
+// =============================================================================
+
+// JumpKey registers a key pattern to trigger jump mode.
+// This is a convenience method that calls EnterJumpMode when the key is pressed.
+func (a *App) JumpKey(pattern string) *App {
+	a.router.Handle(pattern, func(_ riffkey.Match) {
+		a.EnterJumpMode()
+	})
+	return a
+}
+
+// SetJumpStyle sets the global style for jump labels.
+func (a *App) SetJumpStyle(style JumpStyle) *App {
+	a.jumpStyle = style
+	return a
+}
+
+// JumpStyle returns the current jump style.
+func (a *App) JumpStyle() JumpStyle {
+	return a.jumpStyle
+}
+
+// JumpModeActive returns true if jump mode is currently active.
+func (a *App) JumpModeActive() bool {
+	return a.jumpMode.Active
+}
+
+// JumpMode returns the jump mode state for use during rendering.
+func (a *App) JumpMode() *JumpMode {
+	return a.jumpMode
+}
+
+// EnterJumpMode activates jump label mode.
+// A render is triggered to collect jump targets, then a temporary router
+// is pushed to handle label input.
+func (a *App) EnterJumpMode() {
+	if a.jumpMode.Active {
+		return // Already in jump mode
+	}
+
+	a.jumpMode.Active = true
+	a.jumpMode.ClearJumpTargets()
+
+	// Render to collect targets (they register during render)
+	a.render()
+
+	// Assign labels after collecting targets
+	a.jumpMode.AssignLabels()
+
+	if len(a.jumpMode.Targets) == 0 {
+		// No targets, exit immediately
+		a.jumpMode.Active = false
+		return
+	}
+
+	// Create temporary router for jump input
+	jumpRouter := riffkey.NewRouter().NoCounts()
+
+	// Build label lookup
+	for _, target := range a.jumpMode.Targets {
+		target := target // capture for closure
+		jumpRouter.Handle(target.Label, func(_ riffkey.Match) {
+			if target.OnSelect != nil {
+				target.OnSelect()
+			}
+			a.ExitJumpMode()
+		})
+	}
+
+	// Escape cancels
+	jumpRouter.Handle("<Esc>", func(_ riffkey.Match) {
+		a.ExitJumpMode()
+	})
+
+	// Any unmatched key cancels (unless it's a partial match for multi-char labels)
+	jumpRouter.HandleUnmatched(func(k riffkey.Key) bool {
+		// For multi-char labels, accumulate input
+		if k.Rune != 0 && k.Mod == riffkey.ModNone {
+			a.jumpMode.Input += string(k.Rune)
+			// Check if any label starts with this prefix
+			if a.jumpMode.HasPartialMatch(a.jumpMode.Input) {
+				return true // Keep waiting for more input
+			}
+		}
+		// No match, cancel
+		a.ExitJumpMode()
+		return true
+	})
+
+	a.input.Push(jumpRouter)
+
+	// Re-render to show labels
+	a.RequestRender()
+}
+
+// ExitJumpMode deactivates jump label mode.
+func (a *App) ExitJumpMode() {
+	if !a.jumpMode.Active {
+		return
+	}
+
+	a.jumpMode.Active = false
+	a.jumpMode.ClearJumpTargets()
+	a.input.Pop()
+	a.RequestRender()
+}
+
+// AddJumpTarget registers a jump target during rendering.
+// Called by Jump components when jump mode is active.
+func (a *App) AddJumpTarget(x, y int16, onSelect func(), style Style) {
+	if a.jumpMode.Active {
+		a.jumpMode.AddTarget(x, y, onSelect, style)
+	}
 }

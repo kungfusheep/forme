@@ -58,6 +58,14 @@ type Template struct {
 
 	// Current element base for ForEach context (set during layout/render)
 	elemBase unsafe.Pointer
+
+	// App reference for jump mode coordination
+	app *App
+}
+
+// SetApp links this template to an App for jump mode support.
+func (t *Template) SetApp(a *App) {
+	t.app = a
 }
 
 // Geom holds runtime geometry for an op.
@@ -136,6 +144,69 @@ type Op struct {
 	SelectedPtr      *int           // pointer to selected index
 	Marker           string         // selection marker (e.g., "> ")
 	MarkerWidth      int16          // cached rune count of marker
+
+	// Leader
+	LeaderLabel    string  // static label
+	LeaderValue    string  // static value (OpLeader)
+	LeaderValuePtr *string // pointer value (OpLeaderPtr)
+	LeaderFill     rune    // fill character (default '.')
+	LeaderStyle    Style   // styling
+
+	// Table
+	TableColumns    []TableColumn  // column definitions
+	TableRowsPtr    *[][]string    // pointer to row data
+	TableShowHeader bool           // show header row
+	TableHeaderStyle Style         // style for header
+	TableRowStyle    Style         // style for rows
+	TableAltStyle    Style         // alternating row style
+
+	// Sparkline
+	SparkValues    []float64   // static values
+	SparkValuesPtr *[]float64  // pointer values
+	SparkMin       float64     // min value (0 = auto)
+	SparkMax       float64     // max value (0 = auto)
+	SparkStyle     Style       // styling
+
+	// HRule/VRule
+	RuleChar  rune  // line character
+	RuleStyle Style // styling
+
+	// Spinner
+	SpinnerFramePtr *int     // pointer to frame index
+	SpinnerFrames   []string // animation frames
+	SpinnerStyle    Style    // styling
+
+	// Scrollbar
+	ScrollContentSize int   // total content size
+	ScrollViewSize    int   // visible viewport size
+	ScrollPosPtr      *int  // pointer to scroll position
+	ScrollHorizontal  bool  // true for horizontal scrollbar
+	ScrollTrackChar   rune  // track character
+	ScrollThumbChar   rune  // thumb character
+	ScrollTrackStyle  Style // track styling
+	ScrollThumbStyle  Style // thumb styling
+
+	// Tabs
+	TabsLabels        []string  // tab labels
+	TabsSelectedPtr   *int      // pointer to selected tab index
+	TabsStyleType     TabsStyle // visual style
+	TabsGap           int       // gap between tabs
+	TabsActiveStyle   Style     // style for active tab
+	TabsInactiveStyle Style     // style for inactive tabs
+
+	// TreeView
+	TreeRoot          *TreeNode // root node
+	TreeShowRoot      bool      // whether to display root
+	TreeIndent        int       // indentation per level
+	TreeShowLines     bool      // show connecting lines
+	TreeExpandedChar  rune      // expanded indicator
+	TreeCollapsedChar rune      // collapsed indicator
+	TreeLeafChar      rune      // leaf indicator
+	TreeStyle         Style     // styling
+
+	// Jump (jump target wrapper) - just marks a position, child is inline
+	JumpOnSelect func()  // callback when target is selected
+	JumpStyle    Style   // label style override (zero = use app default)
 }
 
 type OpKind uint8
@@ -164,6 +235,23 @@ const (
 	OpRichTextOff // RichText with offset (ForEach)
 
 	OpSelectionList // SelectionList with marker and windowing
+
+	OpLeader    // Leader with static label and value
+	OpLeaderPtr // Leader with pointer value
+
+	OpTable // Table with columns and rows
+
+	OpSparkline    // Sparkline with static values
+	OpSparklinePtr // Sparkline with pointer values
+
+	OpHRule     // Horizontal line
+	OpVRule     // Vertical line
+	OpSpacer    // Empty space
+	OpSpinner   // Animated spinner
+	OpScrollbar // Scroll indicator
+	OpTabs      // Tab headers
+	OpTreeView  // Hierarchical tree
+	OpJump      // Jump target wrapper
 )
 
 // Build compiles a declarative UI into a Template.
@@ -246,6 +334,28 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileSelectionList(&v, parent, depth, elemBase, elemSize)
 	case *SelectionList:
 		return t.compileSelectionList(v, parent, depth, elemBase, elemSize)
+	case Leader:
+		return t.compileLeader(v, parent, depth)
+	case Table:
+		return t.compileTable(v, parent, depth)
+	case Sparkline:
+		return t.compileSparkline(v, parent, depth)
+	case HRule:
+		return t.compileHRule(v, parent, depth)
+	case VRule:
+		return t.compileVRule(v, parent, depth)
+	case Spacer:
+		return t.compileSpacer(v, parent, depth)
+	case Spinner:
+		return t.compileSpinner(v, parent, depth)
+	case Scrollbar:
+		return t.compileScrollbar(v, parent, depth)
+	case Tabs:
+		return t.compileTabs(v, parent, depth)
+	case TreeView:
+		return t.compileTreeView(v, parent, depth)
+	case Jump:
+		return t.compileJump(v, parent, depth, elemBase, elemSize)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
 	}
@@ -391,6 +501,241 @@ func (t *Template) compileSelectionList(v *SelectionList, parent int16, depth in
 	}
 
 	return t.addOp(op, depth)
+}
+
+func (t *Template) compileLeader(v Leader, parent int16, depth int) int16 {
+	op := Op{
+		Parent:      parent,
+		LeaderFill:  v.Fill,
+		LeaderStyle: v.Style,
+		Width:       v.Width,
+	}
+
+	// Get label (always static for now)
+	switch label := v.Label.(type) {
+	case string:
+		op.LeaderLabel = label
+	case *string:
+		op.LeaderLabel = *label // dereference at compile time for simplicity
+	}
+
+	// Get value (static or pointer)
+	switch val := v.Value.(type) {
+	case string:
+		op.Kind = OpLeader
+		op.LeaderValue = val
+	case *string:
+		op.Kind = OpLeaderPtr
+		op.LeaderValuePtr = val
+	default:
+		op.Kind = OpLeader
+		op.LeaderValue = ""
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileTable(v Table, parent int16, depth int) int16 {
+	// Extract rows pointer
+	var rowsPtr *[][]string
+	switch rows := v.Rows.(type) {
+	case *[][]string:
+		rowsPtr = rows
+	case [][]string:
+		// Static data - take address (works but won't update dynamically)
+		rowsPtr = &rows
+	}
+
+	op := Op{
+		Kind:             OpTable,
+		Parent:           parent,
+		TableColumns:     v.Columns,
+		TableRowsPtr:     rowsPtr,
+		TableShowHeader:  v.ShowHeader,
+		TableHeaderStyle: v.HeaderStyle,
+		TableRowStyle:    v.RowStyle,
+		TableAltStyle:    v.AltRowStyle,
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileSparkline(v Sparkline, parent int16, depth int) int16 {
+	op := Op{
+		Parent:     parent,
+		Width:      v.Width,
+		SparkMin:   v.Min,
+		SparkMax:   v.Max,
+		SparkStyle: v.Style,
+	}
+
+	switch vals := v.Values.(type) {
+	case []float64:
+		op.Kind = OpSparkline
+		op.SparkValues = vals
+		if op.Width == 0 {
+			op.Width = int16(len(vals))
+		}
+	case *[]float64:
+		op.Kind = OpSparklinePtr
+		op.SparkValuesPtr = vals
+		if op.Width == 0 && vals != nil {
+			op.Width = int16(len(*vals))
+		}
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileHRule(v HRule, parent int16, depth int) int16 {
+	char := v.Char
+	if char == 0 {
+		char = '─'
+	}
+	return t.addOp(Op{
+		Kind:      OpHRule,
+		Parent:    parent,
+		RuleChar:  char,
+		RuleStyle: v.Style,
+	}, depth)
+}
+
+func (t *Template) compileVRule(v VRule, parent int16, depth int) int16 {
+	char := v.Char
+	if char == 0 {
+		char = '│'
+	}
+	return t.addOp(Op{
+		Kind:      OpVRule,
+		Parent:    parent,
+		RuleChar:  char,
+		RuleStyle: v.Style,
+	}, depth)
+}
+
+func (t *Template) compileSpacer(v Spacer, parent int16, depth int) int16 {
+	height := v.Height
+	if height == 0 {
+		height = 1
+	}
+	return t.addOp(Op{
+		Kind:   OpSpacer,
+		Parent: parent,
+		Width:  v.Width,
+		Height: height,
+	}, depth)
+}
+
+func (t *Template) compileSpinner(v Spinner, parent int16, depth int) int16 {
+	frames := v.Frames
+	if frames == nil {
+		frames = SpinnerBraille
+	}
+	return t.addOp(Op{
+		Kind:            OpSpinner,
+		Parent:          parent,
+		SpinnerFramePtr: v.Frame,
+		SpinnerFrames:   frames,
+		SpinnerStyle:    v.Style,
+	}, depth)
+}
+
+func (t *Template) compileScrollbar(v Scrollbar, parent int16, depth int) int16 {
+	trackChar := v.TrackChar
+	thumbChar := v.ThumbChar
+	if trackChar == 0 {
+		if v.Horizontal {
+			trackChar = '─'
+		} else {
+			trackChar = '│'
+		}
+	}
+	if thumbChar == 0 {
+		thumbChar = '█'
+	}
+	return t.addOp(Op{
+		Kind:              OpScrollbar,
+		Parent:            parent,
+		Width:             v.Length, // for horizontal
+		Height:            v.Length, // for vertical
+		ScrollContentSize: v.ContentSize,
+		ScrollViewSize:    v.ViewSize,
+		ScrollPosPtr:      v.Position,
+		ScrollHorizontal:  v.Horizontal,
+		ScrollTrackChar:   trackChar,
+		ScrollThumbChar:   thumbChar,
+		ScrollTrackStyle:  v.TrackStyle,
+		ScrollThumbStyle:  v.ThumbStyle,
+	}, depth)
+}
+
+func (t *Template) compileTabs(v Tabs, parent int16, depth int) int16 {
+	gap := v.Gap
+	if gap == 0 {
+		gap = 2
+	}
+	return t.addOp(Op{
+		Kind:              OpTabs,
+		Parent:            parent,
+		TabsLabels:        v.Labels,
+		TabsSelectedPtr:   v.Selected,
+		TabsStyleType:     v.Style,
+		TabsGap:           gap,
+		TabsActiveStyle:   v.ActiveStyle,
+		TabsInactiveStyle: v.InactiveStyle,
+	}, depth)
+}
+
+func (t *Template) compileTreeView(v TreeView, parent int16, depth int) int16 {
+	indent := v.Indent
+	if indent == 0 {
+		indent = 2
+	}
+	expandedChar := v.ExpandedChar
+	if expandedChar == 0 {
+		expandedChar = '▼'
+	}
+	collapsedChar := v.CollapsedChar
+	if collapsedChar == 0 {
+		collapsedChar = '▶'
+	}
+	leafChar := v.LeafChar
+	if leafChar == 0 {
+		leafChar = ' '
+	}
+	return t.addOp(Op{
+		Kind:              OpTreeView,
+		Parent:            parent,
+		TreeRoot:          v.Root,
+		TreeShowRoot:      v.ShowRoot,
+		TreeIndent:        indent,
+		TreeShowLines:     v.ShowLines,
+		TreeExpandedChar:  expandedChar,
+		TreeCollapsedChar: collapsedChar,
+		TreeLeafChar:      leafChar,
+		TreeStyle:         v.Style,
+	}, depth)
+}
+
+func (t *Template) compileJump(v Jump, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	// Jump is a simple wrapper - add the op, then compile child as our child
+	idx := t.addOp(Op{
+		Kind:         OpJump,
+		Parent:       parent,
+		JumpOnSelect: v.OnSelect,
+		JumpStyle:    v.Style,
+		ChildStart:   int16(len(t.ops)), // Will be set after child compiled
+	}, depth)
+
+	// Compile the child inline
+	if v.Child != nil {
+		t.compile(v.Child, idx, depth+1, elemBase, elemSize)
+	}
+
+	// Set child end
+	t.ops[idx].ChildEnd = int16(len(t.ops))
+
+	return idx
 }
 
 func (t *Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
@@ -723,6 +1068,89 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 	case OpProgress, OpProgressPtr, OpProgressOff:
 		geom.W = op.Width
 
+	case OpLeader, OpLeaderPtr:
+		geom.W = op.Width
+		if geom.W == 0 {
+			geom.W = 20 // default width
+		}
+
+	case OpTable:
+		// Width is sum of column widths
+		totalW := 0
+		for _, col := range op.TableColumns {
+			if col.Width > 0 {
+				totalW += col.Width
+			} else {
+				totalW += 10 // default column width
+			}
+		}
+		geom.W = int16(totalW)
+
+	case OpSparkline:
+		geom.W = op.Width
+		if geom.W == 0 {
+			geom.W = int16(len(op.SparkValues))
+		}
+
+	case OpSparklinePtr:
+		geom.W = op.Width
+		if geom.W == 0 && op.SparkValuesPtr != nil {
+			geom.W = int16(len(*op.SparkValuesPtr))
+		}
+
+	case OpHRule:
+		geom.W = 0 // fill available
+
+	case OpVRule:
+		geom.W = 1 // single column
+
+	case OpSpacer:
+		geom.W = op.Width // 0 = fill available
+
+	case OpSpinner:
+		geom.W = 1 // single character width
+
+	case OpScrollbar:
+		if op.ScrollHorizontal {
+			if op.Width > 0 {
+				geom.W = op.Width
+			} else {
+				geom.W = availW // fill available
+			}
+		} else {
+			geom.W = 1 // vertical scrollbar is 1 char wide
+		}
+
+	case OpTabs:
+		// Calculate width based on labels and style
+		totalW := 0
+		for i, label := range op.TabsLabels {
+			labelW := utf8.RuneCountInString(label)
+			switch op.TabsStyleType {
+			case TabsStyleBox:
+				labelW += 4 // "│ " + " │"
+			case TabsStyleBracket:
+				labelW += 2 // "[ ]"
+			}
+			totalW += labelW
+			if i < len(op.TabsLabels)-1 {
+				totalW += op.TabsGap
+			}
+		}
+		geom.W = int16(totalW)
+
+	case OpTreeView:
+		// Width is the widest visible node including indentation
+		maxW := 0
+		if op.TreeRoot != nil {
+			startLevel := 0
+			if !op.TreeShowRoot {
+				startLevel = -1
+			}
+			maxW = t.treeMaxWidth(op.TreeRoot, startLevel, op.TreeIndent, op.TreeShowRoot)
+		}
+		geom.W = int16(maxW)
+
 	case OpCustom:
 		if op.CustomRenderer != nil {
 			w, _ := op.CustomRenderer.MinSize()
@@ -740,6 +1168,11 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 		}
 
 	case OpSelectionList:
+		geom.W = availW
+
+	case OpJump:
+		// Jump is a transparent wrapper - uses full available width
+		// Children will be laid out within this width
 		geom.W = availW
 
 	case OpContainer:
@@ -883,6 +1316,68 @@ func (t *Template) layout(_ int16) {
 			case OpRichText, OpRichTextPtr, OpRichTextOff:
 				geom.H = 1
 
+			case OpLeader, OpLeaderPtr:
+				geom.H = 1
+
+			case OpTable:
+				// Height is number of rows + header if shown
+				rowCount := 0
+				if op.TableRowsPtr != nil {
+					rowCount = len(*op.TableRowsPtr)
+				}
+				if op.TableShowHeader {
+					rowCount++
+				}
+				geom.H = int16(rowCount)
+				if geom.H == 0 {
+					geom.H = 1
+				}
+
+			case OpSparkline, OpSparklinePtr:
+				geom.H = 1
+
+			case OpHRule:
+				geom.H = 1
+
+			case OpVRule:
+				geom.H = 1 // default height (will be stretched by flex)
+
+			case OpSpacer:
+				geom.H = op.Height
+
+			case OpSpinner:
+				geom.H = 1 // single line
+
+			case OpScrollbar:
+				if op.ScrollHorizontal {
+					geom.H = 1 // horizontal scrollbar is 1 line tall
+				} else {
+					if op.Height > 0 {
+						geom.H = op.Height
+					} else {
+						geom.H = 1 // will be expanded by flex if needed
+					}
+				}
+
+			case OpTabs:
+				switch op.TabsStyleType {
+				case TabsStyleBox:
+					geom.H = 3 // top border + content + bottom border
+				default:
+					geom.H = 1 // single line for underline/bracket styles
+				}
+
+			case OpTreeView:
+				// Height is number of visible nodes
+				count := 0
+				if op.TreeRoot != nil {
+					count = t.treeVisibleCount(op.TreeRoot, op.TreeShowRoot)
+				}
+				geom.H = int16(count)
+				if geom.H == 0 {
+					geom.H = 1
+				}
+
 			case OpSelectionList:
 				// Calculate height based on slice length and MaxVisible
 				sliceHdr := *(*sliceHeader)(op.SlicePtr)
@@ -924,6 +1419,23 @@ func (t *Template) layout(_ int16) {
 				}
 				// Store content height for flex distribution
 				geom.ContentH = geom.H
+
+			case OpJump:
+				// Jump's height is sum of children's heights (like a Col)
+				totalH := int16(0)
+				for i := op.ChildStart; i < op.ChildEnd; i++ {
+					childOp := &t.ops[i]
+					if childOp.Parent == idx {
+						childGeom := &t.geom[i]
+						childGeom.LocalX = 0
+						childGeom.LocalY = totalH
+						totalH += childGeom.H
+					}
+				}
+				geom.H = totalH
+				if geom.H == 0 {
+					geom.H = 1
+				}
 
 			case OpLayout:
 				t.layoutCustom(idx, op, geom)
@@ -1510,8 +2022,69 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		// Would need elemBase passed through for ForEach
 		// For now, skip
 
+	case OpLeader:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, op.LeaderStyle)
+
+	case OpLeaderPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, op.LeaderStyle)
+
+	case OpTable:
+		t.renderTable(buf, op, absX, absY, maxW)
+
+	case OpSparkline:
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+
+	case OpSparklinePtr:
+		if op.SparkValuesPtr != nil {
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+		}
+
+	case OpHRule:
+		width := int(maxW)
+		if geom.W > 0 {
+			width = int(geom.W)
+		}
+		for i := 0; i < width; i++ {
+			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+		}
+
+	case OpVRule:
+		for i := 0; i < int(geom.H); i++ {
+			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+		}
+
+	case OpSpacer:
+		// Spacer renders nothing (just takes up space)
+
+	case OpSpinner:
+		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
+			frameIdx := *op.SpinnerFramePtr % len(op.SpinnerFrames)
+			frame := op.SpinnerFrames[frameIdx]
+			buf.WriteStringFast(int(absX), int(absY), frame, op.SpinnerStyle, 1)
+		}
+
+	case OpScrollbar:
+		t.renderScrollbar(buf, op, geom, absX, absY)
+
+	case OpTabs:
+		t.renderTabs(buf, op, geom, absX, absY)
+
+	case OpTreeView:
+		t.renderTreeView(buf, op, absX, absY)
+
 	case OpSelectionList:
 		t.renderSelectionList(buf, op, geom, absX, absY, maxW)
+
+	case OpJump:
+		t.renderJump(buf, op, geom, absX, absY, maxW, idx)
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -1662,8 +2235,69 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		spansPtr := (*[]Span)(unsafe.Pointer(uintptr(elemBase) + op.SpansOff))
 		buf.WriteSpans(int(absX), int(absY), *spansPtr, int(maxW))
 
+	case OpLeader:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, op.LeaderStyle)
+
+	case OpLeaderPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, op.LeaderStyle)
+
+	case OpTable:
+		sub.renderTable(buf, op, absX, absY, maxW)
+
+	case OpSparkline:
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+
+	case OpSparklinePtr:
+		if op.SparkValuesPtr != nil {
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+		}
+
+	case OpHRule:
+		width := int(maxW)
+		if geom.W > 0 {
+			width = int(geom.W)
+		}
+		for i := 0; i < width; i++ {
+			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+		}
+
+	case OpVRule:
+		for i := 0; i < int(geom.H); i++ {
+			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+		}
+
+	case OpSpacer:
+		// Spacer renders nothing
+
+	case OpSpinner:
+		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
+			frameIdx := *op.SpinnerFramePtr % len(op.SpinnerFrames)
+			frame := op.SpinnerFrames[frameIdx]
+			buf.WriteStringFast(int(absX), int(absY), frame, op.SpinnerStyle, 1)
+		}
+
+	case OpScrollbar:
+		sub.renderScrollbar(buf, op, geom, absX, absY)
+
+	case OpTabs:
+		sub.renderTabs(buf, op, geom, absX, absY)
+
+	case OpTreeView:
+		sub.renderTreeView(buf, op, absX, absY)
+
 	case OpSelectionList:
 		sub.renderSelectionList(buf, op, geom, absX, absY, maxW)
+
+	case OpJump:
+		sub.renderJump(buf, op, geom, absX, absY, maxW, idx)
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -1825,6 +2459,372 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 			}
 		}
 		y++
+	}
+}
+
+// treeVisibleCount returns the number of visible nodes in the tree.
+func (t *Template) treeVisibleCount(node *TreeNode, includeRoot bool) int {
+	if node == nil {
+		return 0
+	}
+	count := 0
+	if includeRoot {
+		count = 1
+	}
+	if node.Expanded || !includeRoot {
+		for _, child := range node.Children {
+			count += t.treeVisibleCount(child, true)
+		}
+	}
+	return count
+}
+
+// treeMaxWidth returns the maximum width of visible nodes.
+func (t *Template) treeMaxWidth(node *TreeNode, level, indent int, includeRoot bool) int {
+	if node == nil {
+		return 0
+	}
+	maxW := 0
+	if includeRoot && level >= 0 {
+		// 2 for indicator + space, then indent + label
+		lineW := 2 + level*indent + utf8.RuneCountInString(node.Label)
+		if lineW > maxW {
+			maxW = lineW
+		}
+	}
+	if node.Expanded || !includeRoot {
+		for _, child := range node.Children {
+			childW := t.treeMaxWidth(child, level+1, indent, true)
+			if childW > maxW {
+				maxW = childW
+			}
+		}
+	}
+	return maxW
+}
+
+func (t *Template) renderTreeView(buf *Buffer, op *Op, absX, absY int16) {
+	if op.TreeRoot == nil {
+		return
+	}
+	y := int(absY)
+	t.renderTreeNode(buf, op, op.TreeRoot, int(absX), &y, 0, op.TreeShowRoot, nil)
+}
+
+func (t *Template) renderTreeNode(buf *Buffer, op *Op, node *TreeNode, x int, y *int, level int, render bool, linePrefix []bool) {
+	if node == nil {
+		return
+	}
+
+	if render && level >= 0 {
+		// Draw connecting lines if enabled
+		posX := x
+		if op.TreeShowLines && level > 0 {
+			for i := 0; i < level; i++ {
+				if i < len(linePrefix) && linePrefix[i] {
+					buf.Set(posX, *y, Cell{Rune: '│', Style: op.TreeStyle})
+				}
+				posX += op.TreeIndent
+			}
+		} else {
+			posX += level * op.TreeIndent
+		}
+
+		// Draw indicator
+		var indicator rune
+		if len(node.Children) > 0 {
+			if node.Expanded {
+				indicator = op.TreeExpandedChar
+			} else {
+				indicator = op.TreeCollapsedChar
+			}
+		} else {
+			indicator = op.TreeLeafChar
+		}
+		buf.Set(posX, *y, Cell{Rune: indicator, Style: op.TreeStyle})
+		posX++
+		buf.Set(posX, *y, Cell{Rune: ' ', Style: op.TreeStyle})
+		posX++
+
+		// Draw label
+		buf.WriteStringFast(posX, *y, node.Label, op.TreeStyle, utf8.RuneCountInString(node.Label))
+		(*y)++
+	}
+
+	// Render children if expanded (or if we're at root and not showing it)
+	if node.Expanded || !render {
+		childCount := len(node.Children)
+		for i, child := range node.Children {
+			// Track which levels still have siblings below
+			newPrefix := make([]bool, level+1)
+			copy(newPrefix, linePrefix)
+			if level >= 0 {
+				newPrefix[level] = i < childCount-1
+			}
+			t.renderTreeNode(buf, op, child, x, y, level+1, true, newPrefix)
+		}
+	}
+}
+
+// renderJump renders a jump target and its children.
+func (t *Template) renderJump(buf *Buffer, op *Op, geom *Geom, absX, absY, maxW int16, idx int16) {
+	// Render children first
+	for i := op.ChildStart; i < op.ChildEnd; i++ {
+		childOp := &t.ops[i]
+		if childOp.Parent == idx {
+			t.renderOp(buf, i, absX, absY, maxW)
+		}
+	}
+
+	// If jump mode is active, register this target and draw label
+	if t.app != nil && t.app.JumpModeActive() {
+		t.app.AddJumpTarget(absX, absY, op.JumpOnSelect, op.JumpStyle)
+
+		// Draw label if assigned
+		jm := t.app.JumpMode()
+		for i := len(jm.Targets) - 1; i >= 0; i-- {
+			target := &jm.Targets[i]
+			if target.X == absX && target.Y == absY && target.Label != "" {
+				style := t.app.JumpStyle().LabelStyle
+				if !target.Style.Equal(Style{}) {
+					style = target.Style
+				}
+				for j, r := range target.Label {
+					buf.Set(int(absX)+j, int(absY), Cell{Rune: r, Style: style})
+				}
+				break
+			}
+		}
+	}
+}
+
+func (t *Template) renderTabs(buf *Buffer, op *Op, geom *Geom, absX, absY int16) {
+	selectedIdx := 0
+	if op.TabsSelectedPtr != nil {
+		selectedIdx = *op.TabsSelectedPtr
+	}
+
+	x := int(absX)
+	y := int(absY)
+
+	for i, label := range op.TabsLabels {
+		isSelected := i == selectedIdx
+		style := op.TabsInactiveStyle
+		if isSelected {
+			style = op.TabsActiveStyle
+		}
+
+		labelLen := utf8.RuneCountInString(label)
+
+		switch op.TabsStyleType {
+		case TabsStyleBox:
+			// Draw box around tab
+			// Top border
+			buf.Set(x, y, Cell{Rune: '┌', Style: style})
+			for j := 0; j < labelLen+2; j++ {
+				buf.Set(x+1+j, y, Cell{Rune: '─', Style: style})
+			}
+			buf.Set(x+labelLen+3, y, Cell{Rune: '┐', Style: style})
+			// Content
+			buf.Set(x, y+1, Cell{Rune: '│', Style: style})
+			buf.Set(x+1, y+1, Cell{Rune: ' ', Style: style})
+			buf.WriteStringFast(x+2, y+1, label, style, labelLen)
+			buf.Set(x+labelLen+2, y+1, Cell{Rune: ' ', Style: style})
+			buf.Set(x+labelLen+3, y+1, Cell{Rune: '│', Style: style})
+			// Bottom border
+			buf.Set(x, y+2, Cell{Rune: '└', Style: style})
+			for j := 0; j < labelLen+2; j++ {
+				buf.Set(x+1+j, y+2, Cell{Rune: '─', Style: style})
+			}
+			buf.Set(x+labelLen+3, y+2, Cell{Rune: '┘', Style: style})
+			x += labelLen + 4 + op.TabsGap
+
+		case TabsStyleBracket:
+			buf.Set(x, y, Cell{Rune: '[', Style: style})
+			buf.WriteStringFast(x+1, y, label, style, labelLen)
+			buf.Set(x+1+labelLen, y, Cell{Rune: ']', Style: style})
+			x += labelLen + 2 + op.TabsGap
+
+		default: // TabsStyleUnderline
+			if isSelected {
+				// Write label with underline attribute
+				underlineStyle := style
+				underlineStyle.Attr = underlineStyle.Attr.With(AttrUnderline)
+				buf.WriteStringFast(x, y, label, underlineStyle, labelLen)
+			} else {
+				buf.WriteStringFast(x, y, label, style, labelLen)
+			}
+			x += labelLen + op.TabsGap
+		}
+	}
+}
+
+func (t *Template) renderScrollbar(buf *Buffer, op *Op, geom *Geom, absX, absY int16) {
+	// Calculate scrollbar dimensions
+	length := int(geom.H)
+	if op.ScrollHorizontal {
+		length = int(geom.W)
+	}
+
+	if length == 0 {
+		return
+	}
+
+	// Get scroll position
+	pos := 0
+	if op.ScrollPosPtr != nil {
+		pos = *op.ScrollPosPtr
+	}
+
+	// Calculate thumb size and position
+	contentSize := op.ScrollContentSize
+	viewSize := op.ScrollViewSize
+	if contentSize <= 0 {
+		contentSize = 1
+	}
+	if viewSize <= 0 {
+		viewSize = 1
+	}
+
+	// Thumb size proportional to view/content ratio (minimum 1)
+	thumbSize := (viewSize * length) / contentSize
+	if thumbSize < 1 {
+		thumbSize = 1
+	}
+	if thumbSize > length {
+		thumbSize = length
+	}
+
+	// Thumb position
+	scrollRange := contentSize - viewSize
+	if scrollRange <= 0 {
+		scrollRange = 1
+	}
+	trackSpace := length - thumbSize
+	thumbPos := 0
+	if trackSpace > 0 {
+		thumbPos = (pos * trackSpace) / scrollRange
+		if thumbPos < 0 {
+			thumbPos = 0
+		}
+		if thumbPos > trackSpace {
+			thumbPos = trackSpace
+		}
+	}
+
+	// Draw the scrollbar
+	if op.ScrollHorizontal {
+		// Horizontal scrollbar
+		for i := 0; i < length; i++ {
+			var char rune
+			var style Style
+			if i >= thumbPos && i < thumbPos+thumbSize {
+				char = op.ScrollThumbChar
+				style = op.ScrollThumbStyle
+			} else {
+				char = op.ScrollTrackChar
+				style = op.ScrollTrackStyle
+			}
+			buf.Set(int(absX)+i, int(absY), Cell{Rune: char, Style: style})
+		}
+	} else {
+		// Vertical scrollbar
+		for i := 0; i < length; i++ {
+			var char rune
+			var style Style
+			if i >= thumbPos && i < thumbPos+thumbSize {
+				char = op.ScrollThumbChar
+				style = op.ScrollThumbStyle
+			} else {
+				char = op.ScrollTrackChar
+				style = op.ScrollTrackStyle
+			}
+			buf.Set(int(absX), int(absY)+i, Cell{Rune: char, Style: style})
+		}
+	}
+}
+
+func (t *Template) renderTable(buf *Buffer, op *Op, absX, absY, maxW int16) {
+	if op.TableRowsPtr == nil {
+		return
+	}
+	rows := *op.TableRowsPtr
+	y := int(absY)
+
+	// Render header if enabled
+	if op.TableShowHeader {
+		x := int(absX)
+		for _, col := range op.TableColumns {
+			width := col.Width
+			if width == 0 {
+				width = 10
+			}
+			t.writeTableCell(buf, x, y, col.Header, width, col.Align, op.TableHeaderStyle)
+			x += width
+		}
+		y++
+	}
+
+	// Render data rows
+	for rowIdx, row := range rows {
+		x := int(absX)
+		style := op.TableRowStyle
+		// Alternating row style (check if AltStyle has any non-default values)
+		if rowIdx%2 == 1 && op.TableAltStyle != (Style{}) {
+			style = op.TableAltStyle
+		}
+
+		for colIdx, col := range op.TableColumns {
+			width := col.Width
+			if width == 0 {
+				width = 10
+			}
+			cellText := ""
+			if colIdx < len(row) {
+				cellText = row[colIdx]
+			}
+			t.writeTableCell(buf, x, y, cellText, width, col.Align, style)
+			x += width
+		}
+		y++
+	}
+}
+
+func (t *Template) writeTableCell(buf *Buffer, x, y int, text string, width int, align Align, style Style) {
+	textLen := utf8.RuneCountInString(text)
+	if textLen > width {
+		// Truncate
+		runes := []rune(text)
+		text = string(runes[:width])
+		textLen = width
+	}
+
+	padding := width - textLen
+	var leftPad, rightPad int
+
+	switch align {
+	case AlignRight:
+		leftPad = padding
+	case AlignCenter:
+		leftPad = padding / 2
+		rightPad = padding - leftPad
+	default: // AlignLeft
+		rightPad = padding
+	}
+
+	// Write padding and text
+	pos := x
+	for i := 0; i < leftPad; i++ {
+		buf.Set(pos, y, Cell{Rune: ' ', Style: style})
+		pos++
+	}
+	for _, r := range text {
+		buf.Set(pos, y, Cell{Rune: r, Style: style})
+		pos++
+	}
+	for i := 0; i < rightPad; i++ {
+		buf.Set(pos, y, Cell{Rune: ' ', Style: style})
+		pos++
 	}
 }
 
