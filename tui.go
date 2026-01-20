@@ -276,11 +276,28 @@ type VRule struct {
 }
 
 // Spacer creates empty space with specified dimensions.
-// Useful for layout padding and spacing.
+// If no dimensions are set, Spacer grows to fill available space (implicit Grow(1)).
+// With explicit Width/Height, it becomes a fixed-size spacer.
+//
+// Examples:
+//   - Spacer{}              → fills available space (grows)
+//   - Spacer{Height: 1}     → fixed 1-line vertical gap
+//   - Spacer{Width: 10}     → fixed 10-char horizontal gap
+//   - Spacer{}.Grow(2)      → grows with weight 2
+//   - Spacer{Char: '.'}     → dotted leader (fills with dots)
 type Spacer struct {
-	Width  int16 // fixed width (0 = fill available)
-	Height int16 // fixed height (1 if not specified)
+	flex
+	Width  int16 // fixed width (0 = grow to fill)
+	Height int16 // fixed height (0 = grow to fill, but defaults to 1 in VBox if not growing)
+	Char   rune  // fill character (0 = empty space)
+	Style  Style // style for fill character
 }
+
+// Grow sets flex grow factor for Spacer.
+func (s Spacer) Grow(g float32) Spacer { s.flexGrow = g; return s }
+
+// FG sets the foreground color for the fill character.
+func (s Spacer) FG(c Color) Spacer { s.Style.FG = c; return s }
 
 // Spinner displays an animated loading indicator.
 // The Frame pointer controls which animation frame to show.
@@ -511,13 +528,16 @@ func ForEach(items any, render any) ForEachNode {
 // Render is optional - if nil, items are rendered using fmt.Sprintf("%v", item).
 // Marker defaults to "> " if not specified.
 type SelectionList struct {
-	Items      any    // *[]T - pointer to slice of items
-	Selected   *int   // pointer to selected index
-	Marker     string // selection marker (default "> ")
-	Render     any    // func(*T) any - optional, renders each item
-	MaxVisible int    // max items to show (0 = all)
-	len        int    // cached length for bounds checking
-	offset     int    // scroll offset for windowing
+	Items         any    // *[]T - pointer to slice of items
+	Selected      *int   // pointer to selected index
+	Marker        string // selection marker (default "> ", use " " for no visible marker)
+	MarkerStyle   Style  // style for marker text (merged with SelectedStyle.BG for selected rows)
+	Render        any    // func(*T) any - optional, renders each item
+	MaxVisible    int    // max items to show (0 = all)
+	Style         Style  // default style for non-selected rows (e.g., background)
+	SelectedStyle Style  // style for selected row (e.g., background color)
+	len           int    // cached length for bounds checking
+	offset        int    // scroll offset for windowing
 }
 
 // ensureVisible adjusts scroll offset so selected item is visible.

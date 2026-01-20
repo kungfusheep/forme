@@ -62,6 +62,9 @@ type Template struct {
 	// App reference for jump mode coordination
 	app *App
 
+	// Row background for SelectionList selected rows (merged with cell styles)
+	rowBG Color
+
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
 }
@@ -651,15 +654,23 @@ func (t *Template) compileVRule(v VRule, parent int16, depth int) int16 {
 }
 
 func (t *Template) compileSpacer(v Spacer, parent int16, depth int) int16 {
-	height := v.Height
-	if height == 0 {
-		height = 1
+	// Determine grow value:
+	// - Explicit Grow() takes precedence
+	// - If no dimensions set (Width=0, Height=0), default to grow=1
+	// - Otherwise fixed spacer, no grow
+	grow := v.flexGrow
+	if grow == 0 && v.Width == 0 && v.Height == 0 {
+		grow = 1 // implicit grow when no dimensions specified
 	}
+
 	return t.addOp(Op{
-		Kind:   OpSpacer,
-		Parent: parent,
-		Width:  v.Width,
-		Height: height,
+		Kind:      OpSpacer,
+		Parent:    parent,
+		Width:     v.Width,
+		Height:    v.Height,
+		FlexGrow:  grow,
+		RuleChar:  v.Char,  // reuse RuleChar for fill character
+		RuleStyle: v.Style, // reuse RuleStyle for fill style
 	}, depth)
 }
 
@@ -2193,7 +2204,12 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 
 	case OpSpacer:
-		// Spacer renders nothing (just takes up space)
+		// Spacer renders fill character if specified
+		if op.RuleChar != 0 {
+			for x := int16(0); x < geom.W; x++ {
+				buf.Set(int(absX+x), int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+			}
+		}
 
 	case OpSpinner:
 		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
@@ -2270,13 +2286,19 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			}
 		}
 
+		// Calculate content width (accounting for border)
+		contentW := geom.W
+		if op.Border.Horizontal != 0 {
+			contentW -= 2
+		}
+
 		// Render children with this container's position as their origin
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
 			if childOp.Parent != idx {
 				continue
 			}
-			t.renderOp(buf, i, absX, absY, geom.W)
+			t.renderOp(buf, i, absX, absY, contentW)
 		}
 
 	case OpIf:
@@ -2348,17 +2370,25 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	absX := globalX + geom.LocalX
 	absY := globalY + geom.LocalY
 
+	// Helper to merge row background with text style
+	mergeStyle := func(s Style) Style {
+		if sub.rowBG.Mode != 0 && s.BG.Mode == 0 {
+			s.BG = sub.rowBG
+		}
+		return s
+	}
+
 	switch op.Kind {
 	case OpText:
-		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, op.TextStyle, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, mergeStyle(op.TextStyle), int(maxW))
 
 	case OpTextPtr:
-		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, op.TextStyle, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, mergeStyle(op.TextStyle), int(maxW))
 
 	case OpTextOff:
 		// Offset from element base
 		strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
-		buf.WriteStringFast(int(absX), int(absY), *strPtr, op.TextStyle, int(maxW))
+		buf.WriteStringFast(int(absX), int(absY), *strPtr, mergeStyle(op.TextStyle), int(maxW))
 
 	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
@@ -2424,7 +2454,18 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 
 	case OpSpacer:
-		// Spacer renders nothing
+		// Spacer renders fill character if specified, or just fills background
+		spacerStyle := mergeStyle(op.RuleStyle)
+		if op.RuleChar != 0 {
+			for x := int16(0); x < geom.W; x++ {
+				buf.Set(int(absX+x), int(absY), Cell{Rune: op.RuleChar, Style: spacerStyle})
+			}
+		} else if sub.rowBG.Mode != 0 {
+			// No fill char but we have a row background - fill with spaces
+			for x := int16(0); x < geom.W; x++ {
+				buf.Set(int(absX+x), int(absY), Cell{Rune: ' ', Style: spacerStyle})
+			}
+		}
 
 	case OpSpinner:
 		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
@@ -2501,13 +2542,19 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			}
 		}
 
+		// Calculate content width (accounting for border)
+		contentW := geom.W
+		if op.Border.Horizontal != 0 {
+			contentW -= 2
+		}
+
 		// Recurse into children with this container's position as their origin
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &sub.ops[i]
 			if childOp.Parent != idx {
 				continue
 			}
-			sub.renderSubOp(buf, i, absX, absY, geom.W, elemBase)
+			sub.renderSubOp(buf, i, absX, absY, contentW, elemBase)
 		}
 
 	case OpIf:
@@ -2577,45 +2624,114 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 		spaces += " "
 	}
 
-	contentW := int(maxW) - int(op.MarkerWidth)
+	contentW := int16(maxW) - op.MarkerWidth
+	contentX := absX + op.MarkerWidth
+
+	// Check if we have a complex layout (container) as the first op
+	needsFullPipeline := false
+	if op.IterTmpl != nil && len(op.IterTmpl.ops) > 0 {
+		firstOp := &op.IterTmpl.ops[0]
+		needsFullPipeline = firstOp.Kind == OpContainer || firstOp.Kind == OpLayout || firstOp.Kind == OpJump
+	}
+
+	// Get styles (if any)
+	var defaultStyle, selectedStyle, markerBaseStyle Style
+	if op.SelectionListPtr != nil {
+		defaultStyle = op.SelectionListPtr.Style
+		selectedStyle = op.SelectionListPtr.SelectedStyle
+		markerBaseStyle = op.SelectionListPtr.MarkerStyle
+	}
 
 	// Render visible items
 	y := int(absY)
 	for i := startIdx; i < endIdx; i++ {
-		// Determine marker or spaces
+		isSelected := i == selectedIdx
+
+		// Fill background for row
+		var rowBG Color
+		if isSelected && selectedStyle.BG.Mode != 0 {
+			rowBG = selectedStyle.BG
+		} else if defaultStyle.BG.Mode != 0 {
+			rowBG = defaultStyle.BG
+		}
+		if rowBG.Mode != 0 {
+			for x := int16(0); x < maxW; x++ {
+				buf.Set(int(absX+x), y, Cell{Rune: ' ', Style: Style{BG: rowBG}})
+			}
+		}
+
+		// Determine marker text and style
 		var markerText string
-		if i == selectedIdx {
+		markerStyle := markerBaseStyle
+		if isSelected {
 			markerText = op.Marker
+			// Merge: use MarkerStyle but inherit SelectedStyle background if marker has none
+			if markerStyle.BG.Mode == 0 && selectedStyle.BG.Mode != 0 {
+				markerStyle.BG = selectedStyle.BG
+			}
+			// Also inherit foreground from SelectedStyle if MarkerStyle has none
+			if markerStyle.FG.Mode == 0 && selectedStyle.FG.Mode != 0 {
+				markerStyle.FG = selectedStyle.FG
+			}
 		} else {
 			markerText = spaces
+			// For non-selected rows, inherit from default style
+			if markerStyle.BG.Mode == 0 && defaultStyle.BG.Mode != 0 {
+				markerStyle.BG = defaultStyle.BG
+			}
 		}
 
 		// Write marker first
-		buf.WriteStringFast(int(absX), y, markerText, Style{}, int(maxW))
+		buf.WriteStringFast(int(absX), y, markerText, markerStyle, int(maxW))
 
 		// Get content from iteration template
 		if op.IterTmpl != nil && len(op.IterTmpl.ops) > 0 {
 			elemPtr := unsafe.Pointer(uintptr(sliceHdr.Data) + uintptr(i)*op.ElemSize)
 
-			// Render the first op from iteration template (usually a Text)
-			iterOp := &op.IterTmpl.ops[0]
-			contentX := int(absX) + int(op.MarkerWidth)
+			if needsFullPipeline {
+				// Complex layout: do full width distribution, layout, and render
+				op.IterTmpl.elemBase = elemPtr
+				op.IterTmpl.distributeWidths(contentW, elemPtr)
+				op.IterTmpl.layout(0)
+				// Set row background (used by renderSubOp)
+				if isSelected && selectedStyle.BG.Mode != 0 {
+					op.IterTmpl.rowBG = selectedStyle.BG
+				} else if defaultStyle.BG.Mode != 0 {
+					op.IterTmpl.rowBG = defaultStyle.BG
+				} else {
+					op.IterTmpl.rowBG = Color{}
+				}
+				t.renderSubTemplate(buf, op.IterTmpl, contentX, int16(y), contentW, elemPtr)
+			} else {
+				// Simple text: fast path (no layout needed)
+				iterOp := &op.IterTmpl.ops[0]
 
-			switch iterOp.Kind {
-			case OpText:
-				buf.WriteStringFast(contentX, y, iterOp.StaticStr, iterOp.TextStyle, contentW)
-			case OpTextPtr:
-				buf.WriteStringFast(contentX, y, *iterOp.StrPtr, iterOp.TextStyle, contentW)
-			case OpTextOff:
-				strPtr := (*string)(unsafe.Pointer(uintptr(elemPtr) + iterOp.StrOff))
-				buf.WriteStringFast(contentX, y, *strPtr, iterOp.TextStyle, contentW)
-			case OpRichText:
-				buf.WriteSpans(contentX, y, iterOp.StaticSpans, contentW)
-			case OpRichTextPtr:
-				buf.WriteSpans(contentX, y, *iterOp.SpansPtr, contentW)
-			case OpRichTextOff:
-				spansPtr := (*[]Span)(unsafe.Pointer(uintptr(elemPtr) + iterOp.SpansOff))
-				buf.WriteSpans(contentX, y, *spansPtr, contentW)
+				// Merge text style with row style (selected takes precedence over default)
+				textStyle := iterOp.TextStyle
+				if textStyle.BG.Mode == 0 {
+					if isSelected && selectedStyle.BG.Mode != 0 {
+						textStyle.BG = selectedStyle.BG
+					} else if defaultStyle.BG.Mode != 0 {
+						textStyle.BG = defaultStyle.BG
+					}
+				}
+
+				switch iterOp.Kind {
+				case OpText:
+					buf.WriteStringFast(int(contentX), y, iterOp.StaticStr, textStyle, int(contentW))
+				case OpTextPtr:
+					buf.WriteStringFast(int(contentX), y, *iterOp.StrPtr, textStyle, int(contentW))
+				case OpTextOff:
+					strPtr := (*string)(unsafe.Pointer(uintptr(elemPtr) + iterOp.StrOff))
+					buf.WriteStringFast(int(contentX), y, *strPtr, textStyle, int(contentW))
+				case OpRichText:
+					buf.WriteSpans(int(contentX), y, iterOp.StaticSpans, int(contentW))
+				case OpRichTextPtr:
+					buf.WriteSpans(int(contentX), y, *iterOp.SpansPtr, int(contentW))
+				case OpRichTextOff:
+					spansPtr := (*[]Span)(unsafe.Pointer(uintptr(elemPtr) + iterOp.SpansOff))
+					buf.WriteSpans(int(contentX), y, *spansPtr, int(contentW))
+				}
 			}
 		}
 		y++

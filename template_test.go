@@ -1042,3 +1042,243 @@ func TestJumpInHBoxWithSibling(t *testing.T) {
 		t.Errorf("Line should contain 'Panel 2', got %q", line)
 	}
 }
+
+// TestForEachMultipleStringFields tests ForEach with multiple string field pointers
+// This was reported as a bug: rendering multiple fields from the same struct produces
+// garbled output instead of the correct values.
+func TestForEachMultipleStringFields(t *testing.T) {
+	type Item struct {
+		Icon        string
+		Label       string
+		Description string
+	}
+
+	items := []Item{
+		{Icon: "📁", Label: "Open", Description: "Open a file"},
+		{Icon: "💾", Label: "Save", Description: "Save changes"},
+		{Icon: "🔍", Label: "Find", Description: "Search text"},
+	}
+
+	tmpl := Build(VBox{Children: []any{
+		ForEach(&items, func(item *Item) any {
+			return HBox{Gap: 1, Children: []any{
+				Text{Content: &item.Icon},
+				Text{Content: &item.Label},
+				Text{Content: &item.Description},
+			}}
+		}),
+	}})
+
+	buf := NewBuffer(60, 10)
+	tmpl.Execute(buf, 60, 10)
+
+	// Each line should have: Icon Label Description
+	line0 := buf.GetLine(0)
+	line1 := buf.GetLine(1)
+	line2 := buf.GetLine(2)
+
+	t.Logf("Line 0: %q", line0)
+	t.Logf("Line 1: %q", line1)
+	t.Logf("Line 2: %q", line2)
+
+	// Check that each line contains the expected strings (not garbled)
+	if !strings.Contains(line0, "Open") {
+		t.Errorf("Line 0 should contain 'Open', got %q", line0)
+	}
+	if !strings.Contains(line0, "Open a file") {
+		t.Errorf("Line 0 should contain 'Open a file', got %q", line0)
+	}
+
+	if !strings.Contains(line1, "Save") {
+		t.Errorf("Line 1 should contain 'Save', got %q", line1)
+	}
+	if !strings.Contains(line1, "Save changes") {
+		t.Errorf("Line 1 should contain 'Save changes', got %q", line1)
+	}
+
+	if !strings.Contains(line2, "Find") {
+		t.Errorf("Line 2 should contain 'Find', got %q", line2)
+	}
+	if !strings.Contains(line2, "Search text") {
+		t.Errorf("Line 2 should contain 'Search text', got %q", line2)
+	}
+}
+
+// TestSelectionListMultipleFields tests SelectionList with complex HBox render
+// SelectionList now supports complex layouts (HBox/VBox) in the Render function
+func TestSelectionListMultipleFields(t *testing.T) {
+	type Item struct {
+		Icon        string
+		Label       string
+		Description string
+	}
+
+	items := []Item{
+		{Icon: "F", Label: "Open File", Description: "Opens a file"},
+		{Icon: "S", Label: "Save", Description: "Saves changes"},
+		{Icon: "Z", Label: "Toggle Zen Mode", Description: "Focus mode"},
+	}
+
+	selected := 0
+
+	list := &SelectionList{
+		Items:      &items,
+		Selected:   &selected,
+		Marker:     "> ",
+		MaxVisible: 10,
+		Render: func(item *Item) any {
+			return HBox{Gap: 1, Children: []any{
+				Text{Content: &item.Icon},
+				Text{Content: &item.Label},
+				Text{Content: &item.Description},
+			}}
+		},
+	}
+
+	tmpl := Build(VBox{Children: []any{list}})
+	buf := NewBuffer(60, 10)
+	tmpl.Execute(buf, 60, 10)
+
+	line0 := buf.GetLine(0)
+	line1 := buf.GetLine(1)
+	line2 := buf.GetLine(2)
+
+	t.Logf("SelectionList Line 0: %q", line0)
+	t.Logf("SelectionList Line 1: %q", line1)
+	t.Logf("SelectionList Line 2: %q", line2)
+
+	// Verify that each line contains the expected content
+	// Line 0 is selected, should have "> " marker
+	if !strings.HasPrefix(line0, "> ") {
+		t.Errorf("Line 0 should start with '> ', got %q", line0)
+	}
+	if !strings.Contains(line0, "Open File") {
+		t.Errorf("Line 0 should contain 'Open File', got %q", line0)
+	}
+	if !strings.Contains(line0, "Opens a file") {
+		t.Errorf("Line 0 should contain 'Opens a file', got %q", line0)
+	}
+
+	// Line 1 not selected, should have "  " (spaces)
+	if !strings.HasPrefix(line1, "  ") {
+		t.Errorf("Line 1 should start with spaces, got %q", line1)
+	}
+	if !strings.Contains(line1, "Save") {
+		t.Errorf("Line 1 should contain 'Save', got %q", line1)
+	}
+
+	// Line 2 should have "Toggle Zen Mode"
+	if !strings.Contains(line2, "Toggle Zen Mode") {
+		t.Errorf("Line 2 should contain 'Toggle Zen Mode', got %q", line2)
+	}
+}
+
+// TestSelectionListDefaultStyle tests that Style applies background to non-selected rows
+func TestSelectionListDefaultStyle(t *testing.T) {
+	items := []string{"Apple", "Banana", "Cherry"}
+	selected := 1 // Banana selected
+
+	bgColor := PaletteColor(236)      // Default background
+	selectedBG := PaletteColor(240)   // Selected background
+
+	list := &SelectionList{
+		Items:         &items,
+		Selected:      &selected,
+		Marker:        "> ",
+		Style:         Style{BG: bgColor},
+		SelectedStyle: Style{BG: selectedBG},
+	}
+
+	tmpl := Build(VBox{Children: []any{list}})
+	buf := NewBuffer(20, 3)
+	tmpl.Execute(buf, 20, 3)
+
+	// Line 0 (Apple - non-selected) should have default background
+	cell0 := buf.Get(0, 0)
+	if cell0.Style.BG != bgColor {
+		t.Errorf("Non-selected row (0) should have default BG, got %v", cell0.Style.BG)
+	}
+
+	// Line 1 (Banana - selected) should have selected background
+	cell1 := buf.Get(0, 1)
+	if cell1.Style.BG != selectedBG {
+		t.Errorf("Selected row (1) should have selected BG, got %v", cell1.Style.BG)
+	}
+
+	// Line 2 (Cherry - non-selected) should have default background
+	cell2 := buf.Get(0, 2)
+	if cell2.Style.BG != bgColor {
+		t.Errorf("Non-selected row (2) should have default BG, got %v", cell2.Style.BG)
+	}
+}
+
+// TestSpacerGrow tests that Spacer{} defaults to grow and fills available space
+func TestSpacerGrow(t *testing.T) {
+	// Spacer{} should grow to fill remaining space in HBox
+	tmpl := Build(HBox{Children: []any{
+		Text{Content: "Left"},
+		Spacer{},
+		Text{Content: "Right"},
+	}})
+
+	buf := NewBuffer(20, 1)
+	tmpl.Execute(buf, 20, 1)
+
+	line := buf.GetLine(0)
+	t.Logf("Line: %q", line)
+
+	// "Left" at start, "Right" at end, space in between
+	if !strings.HasPrefix(line, "Left") {
+		t.Errorf("Should start with 'Left', got %q", line)
+	}
+	if !strings.HasSuffix(strings.TrimRight(line, " "), "Right") {
+		t.Errorf("Should end with 'Right', got %q", line)
+	}
+}
+
+// TestSpacerWithChar tests that Spacer{Char: '.'} fills with dots
+func TestSpacerWithChar(t *testing.T) {
+	tmpl := Build(HBox{Children: []any{
+		Text{Content: "A"},
+		Spacer{Char: '.'},
+		Text{Content: "B"},
+	}})
+
+	buf := NewBuffer(10, 1)
+	tmpl.Execute(buf, 10, 1)
+
+	line := buf.GetLine(0)
+	t.Logf("Line: %q", line)
+
+	// Should be "A........B" (8 dots between A and B)
+	if line[0] != 'A' {
+		t.Errorf("Should start with 'A', got %q", line)
+	}
+	if line[9] != 'B' {
+		t.Errorf("Should end with 'B', got %c at position 9", line[9])
+	}
+	// Check for dots in between
+	if !strings.Contains(line, "...") {
+		t.Errorf("Should contain dots, got %q", line)
+	}
+}
+
+// TestSpacerFixed tests that Spacer{Height: 1} is fixed (no grow)
+func TestSpacerFixed(t *testing.T) {
+	tmpl := Build(HBox{Children: []any{
+		Text{Content: "A"},
+		Spacer{Width: 3}, // fixed 3-char spacer
+		Text{Content: "B"},
+	}})
+
+	buf := NewBuffer(20, 1)
+	tmpl.Execute(buf, 20, 1)
+
+	line := buf.GetLine(0)
+	t.Logf("Line: %q", line)
+
+	// Should be "A   B" - exactly 3 spaces between
+	if line != "A   B" {
+		t.Errorf("Expected 'A   B', got %q", line)
+	}
+}
