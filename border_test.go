@@ -10,11 +10,11 @@ func TestIfWithGrowBorder(t *testing.T) {
 	showProcs := true
 
 	// Mimic the dashboard structure:
-	// Col{Grow(1)} containing:
-	//   - Col{Border, Grow(1)} "Timing"
-	//   - If(showProcs).Then(Col{Border, Grow(2)} "Processes")
-	view := Col{Children: []any{
-		Col{
+	// VBox{Grow(1)} containing:
+	//   - VBox{Border, Grow(1)} "Timing"
+	//   - If(showProcs).Then(VBox{Border, Grow(2)} "Processes")
+	view := VBox{Children: []any{
+		VBox{
 			Title:    "Timing",
 			Children: []any{
 				Text{Content: "Line 1"},
@@ -23,7 +23,7 @@ func TestIfWithGrowBorder(t *testing.T) {
 			},
 		}.Border(BorderSingle).BorderFG(Yellow).Grow(1),
 
-		If(&showProcs).Eq(true).Then(Col{
+		If(&showProcs).Eq(true).Then(VBox{
 			Title:    "Processes",
 			Children: []any{
 				Text{Content: "Process 1"},
@@ -94,31 +94,31 @@ func TestDashboardLayoutBorders(t *testing.T) {
 	showGraph := true
 
 	// Full dashboard structure (simplified):
-	// Col{Children: [
+	// VBox{Children: [
 	//   Text "Header"
 	//   Text "Progress bars"
-	//   Row{Children: [Left.Grow(1), Right.Grow(2)]}  // Horizontal flex
-	//   Col{Children: [
+	//   HBox{Children: [Left.Grow(1), Right.Grow(2)]}  // Horizontal flex
+	//   VBox{Children: [
 	//     Col "Timing".Grow(1)
 	//     If.Then(Col "Processes".Grow(2))
 	//   ]}.Grow(1)  // The OUTER Col also has Grow!
 	//   Text "Footer"
 	// ]}
-	view := Col{Children: []any{
+	view := VBox{Children: []any{
 		// Fixed header
 		Text{Content: "Dashboard Header"},
 		Text{Content: "CPU: [████████████________] 60%"},
 
 		// Main content row (horizontal flex)
-		Row{Gap: 1, Children: []any{
-			Col{
+		HBox{Gap: 1, Children: []any{
+			VBox{
 				Title:    "Stats",
 				Children: []any{
 					Text{Content: "Tasks: 100"},
 					Text{Content: "Memory: 4GB"},
 				},
 			}.Border(BorderSingle).BorderFG(Cyan).Grow(1),
-			Col{
+			VBox{
 				Title: "Load",
 				Children: []any{
 					If(&showGraph).Eq(true).Then(
@@ -130,8 +130,8 @@ func TestDashboardLayoutBorders(t *testing.T) {
 
 		// Middle section with vertical flex - THIS IS THE KEY PART
 		// The outer Col has Grow(1), inner children have Grow(1) and Grow(2)
-		Col{Children: []any{
-			Col{
+		VBox{Children: []any{
+			VBox{
 				Title:    "Timing",
 				Children: []any{
 					Text{Content: "Render: 100µs"},
@@ -139,7 +139,7 @@ func TestDashboardLayoutBorders(t *testing.T) {
 				},
 			}.Border(BorderDouble).BorderFG(Yellow).Grow(1),
 
-			If(&showProcs).Eq(true).Then(Col{
+			If(&showProcs).Eq(true).Then(VBox{
 				Title:    "Processes",
 				Children: []any{
 					Text{Content: "PID    NAME     CPU"},

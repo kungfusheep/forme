@@ -155,13 +155,13 @@ func filterItems(state *State) {
 func buildView(state *State) any {
 	// Use fixed slots with pointer bindings
 	// This works because DisplayLines is updated when selection changes
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.Text{Content: "Fuzzy Finder", Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{Content: ""},
 
 		// Query input - GAP: No text input component!
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "> "},
 			tui.Text{Content: &state.Query},
 			tui.Text{Content: "_"}, // Cursor

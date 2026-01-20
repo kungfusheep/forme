@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-// TestRowWithBorderedChildren tests that borders inside Row flex children
+// TestHBoxWithBorderedChildren tests that borders inside HBox flex children
 // are drawn correctly.
-func TestRowWithBorderedChildren(t *testing.T) {
+func TestHBoxWithBorderedChildren(t *testing.T) {
 	// Simplified dashboard structure:
 	// Row {
 	//   Col.Grow(1) {  // Left panel
@@ -17,17 +17,17 @@ func TestRowWithBorderedChildren(t *testing.T) {
 	//     Col "Info".Border()
 	//   }
 	// }
-	view := Row{Gap: 1, Children: []any{
+	view := HBox{Gap: 1, Children: []any{
 		// Left panel
-		Col{Children: []any{
-			Col{
+		VBox{Children: []any{
+			VBox{
 				Title:    "Stats",
 				Children: []any{
 					Text{Content: "Tasks: 142"},
 					Text{Content: "Sleeping: 138"},
 				},
 			}.Border(BorderSingle).BorderFG(Cyan),
-			Col{
+			VBox{
 				Title:    "Load",
 				Children: []any{
 					Text{Content: "1.17, 0.69, 0.85"},
@@ -36,8 +36,8 @@ func TestRowWithBorderedChildren(t *testing.T) {
 		}}.Grow(1),
 
 		// Right panel
-		Col{Children: []any{
-			Col{
+		VBox{Children: []any{
+			VBox{
 				Title:    "Info",
 				Children: []any{
 					Text{Content: "Line 1"},

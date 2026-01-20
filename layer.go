@@ -167,6 +167,17 @@ func (l *Layer) SetLineString(y int, s string, style Style) {
 	l.buffer.WriteStringFast(0, y, s, style, l.buffer.Width())
 }
 
+// SetLineAt updates a line with spans at a given x offset.
+// Clears the entire line with clearStyle first, then writes spans at offset x.
+// Use this to avoid creating padding spans for margins.
+func (l *Layer) SetLineAt(y, x int, spans []Span, clearStyle Style) {
+	if l.buffer == nil || y < 0 || y >= l.buffer.Height() {
+		return
+	}
+	l.buffer.ClearLineWithStyle(y, clearStyle)
+	l.buffer.WriteSpans(x, y, spans, l.buffer.Width()-x)
+}
+
 // EnsureSize ensures the buffer is at least the given size.
 // If the buffer needs to grow, existing content is preserved.
 func (l *Layer) EnsureSize(width, height int) {

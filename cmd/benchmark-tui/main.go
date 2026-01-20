@@ -368,14 +368,14 @@ func buildView() any {
 	cpuCol1 := make([]any, numCPUs/2)
 	cpuCol2 := make([]any, numCPUs/2)
 	for i := 0; i < numCPUs/2; i++ {
-		cpuCol1[i] = tui.Row{Children: []any{
+		cpuCol1[i] = tui.HBox{Children: []any{
 			tui.Text{Content: &state.CPUCores[i].Label},
 			tui.Text{Content: " "},
 			tui.Progress{Value: &state.CPUCores[i].Usage, BarWidth: 20},
 			tui.Text{Content: " "},
 			tui.Text{Content: &state.CPUCores[i].UsageStr},
 		}}
-		cpuCol2[i] = tui.Row{Children: []any{
+		cpuCol2[i] = tui.HBox{Children: []any{
 			tui.Text{Content: &state.CPUCores[i+numCPUs/2].Label},
 			tui.Text{Content: " "},
 			tui.Progress{Value: &state.CPUCores[i+numCPUs/2].Usage, BarWidth: 20},
@@ -389,13 +389,13 @@ func buildView() any {
 	for i := 0; i < numWorkers/2; i++ {
 		w1 := &state.Workers[i]
 		w2 := &state.Workers[i+numWorkers/2]
-		workerRows[i] = tui.Row{Gap: 4, Children: []any{
-			tui.Row{Children: []any{
+		workerRows[i] = tui.HBox{Gap: 4, Children: []any{
+			tui.HBox{Children: []any{
 				tui.Text{Content: fmt.Sprintf("W%02d ", w1.ID)},
 				tui.Progress{Value: &w1.Progress, BarWidth: 12},
 				tui.Text{Content: fmt.Sprintf(" %s", w1.Status)},
 			}},
-			tui.Row{Children: []any{
+			tui.HBox{Children: []any{
 				tui.Text{Content: fmt.Sprintf("W%02d ", w2.ID)},
 				tui.Progress{Value: &w2.Progress, BarWidth: 12},
 				tui.Text{Content: fmt.Sprintf(" %s", w2.Status)},
@@ -403,18 +403,18 @@ func buildView() any {
 		}}
 	}
 
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.RichText{Spans: []tui.Span{
 			{Text: "════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════", Style: tui.Style{FG: tui.Cyan}},
 		}},
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.RichText{Spans: []tui.Span{
 				{Text: "  ", Style: tui.Style{}},
 				{Text: state.Title, Style: tui.Style{FG: tui.BrightWhite, Attr: tui.AttrBold}},
 			}},
 		}},
-		tui.Row{Gap: 4, Children: []any{
+		tui.HBox{Gap: 4, Children: []any{
 			tui.Text{Content: &state.FPSText, Style: tui.Style{FG: tui.Green}},
 			tui.Text{Content: &state.TimeText},
 			tui.Text{Content: &state.Uptime},
@@ -430,11 +430,11 @@ func buildView() any {
 			{Text: "CPU Usage (16 Cores)", Style: tui.Style{FG: tui.BrightBlue, Attr: tui.AttrBold}},
 			{Text: " ─────────────────────────────────────────────────────────────────────────────────────────────┐", Style: tui.Style{FG: tui.Blue}},
 		}},
-		tui.Row{Gap: 8, Children: []any{
-			tui.Col{Children: cpuCol1},
-			tui.Col{Children: cpuCol2},
+		tui.HBox{Gap: 8, Children: []any{
+			tui.VBox{Children: cpuCol1},
+			tui.VBox{Children: cpuCol2},
 			// Temps in the CPU panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.Text{Content: &state.CPUTemp, Style: tui.Style{FG: tui.Yellow}},
 				tui.Text{Content: &state.GPUTemp, Style: tui.Style{FG: tui.Yellow}},
 				tui.Text{Content: &state.SysTemp, Style: tui.Style{FG: tui.Yellow}},
@@ -452,21 +452,21 @@ func buildView() any {
 		tui.Text{},
 
 		// Memory & Process Info Row
-		tui.Row{Gap: 4, Children: []any{
+		tui.HBox{Gap: 4, Children: []any{
 			// Memory Panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.RichText{Spans: []tui.Span{
 					{Text: "┌─ ", Style: tui.Style{FG: tui.Magenta}},
 					{Text: "Memory", Style: tui.Style{FG: tui.BrightMagenta, Attr: tui.AttrBold}},
 					{Text: " ───────────────────────────────┐", Style: tui.Style{FG: tui.Magenta}},
 				}},
-				tui.Row{Children: []any{
+				tui.HBox{Children: []any{
 					tui.Text{Content: "RAM:  "},
 					tui.Progress{Value: &state.MemProgress, BarWidth: 25},
 					tui.Text{Content: " "},
 					tui.Text{Content: &state.MemText},
 				}},
-				tui.Row{Children: []any{
+				tui.HBox{Children: []any{
 					tui.Text{Content: "Swap: "},
 					tui.Progress{Value: &state.SwapProgress, BarWidth: 25},
 					tui.Text{Content: " "},
@@ -477,7 +477,7 @@ func buildView() any {
 				}},
 			}},
 			// Process Panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.RichText{Spans: []tui.Span{
 					{Text: "┌─ ", Style: tui.Style{FG: tui.Green}},
 					{Text: "Processes", Style: tui.Style{FG: tui.BrightGreen, Attr: tui.AttrBold}},
@@ -495,9 +495,9 @@ func buildView() any {
 		tui.Text{},
 
 		// Network & Disk Row
-		tui.Row{Gap: 4, Children: []any{
+		tui.HBox{Gap: 4, Children: []any{
 			// Network Panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.RichText{Spans: []tui.Span{
 					{Text: "┌─ ", Style: tui.Style{FG: tui.Cyan}},
 					{Text: "Network", Style: tui.Style{FG: tui.BrightCyan, Attr: tui.AttrBold}},
@@ -512,7 +512,7 @@ func buildView() any {
 				}},
 			}},
 			// Disk 1 Panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.RichText{Spans: []tui.Span{
 					{Text: "┌─ ", Style: tui.Style{FG: tui.Yellow}},
 					{Text: "Disk: nvme0n1", Style: tui.Style{FG: tui.BrightYellow, Attr: tui.AttrBold}},
@@ -527,7 +527,7 @@ func buildView() any {
 				}},
 			}},
 			// Disk 2 Panel
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.RichText{Spans: []tui.Span{
 					{Text: "┌─ ", Style: tui.Style{FG: tui.Yellow}},
 					{Text: "Disk: sda", Style: tui.Style{FG: tui.BrightYellow, Attr: tui.AttrBold}},
@@ -550,7 +550,7 @@ func buildView() any {
 			{Text: "Worker Pool Status", Style: tui.Style{FG: tui.BrightRed, Attr: tui.AttrBold}},
 			{Text: " ──────────────────────────────────────────────────────────────────────────────────────────────┐", Style: tui.Style{FG: tui.Red}},
 		}},
-		tui.Col{Children: workerRows},
+		tui.VBox{Children: workerRows},
 		tui.RichText{Spans: []tui.Span{
 			{Text: "└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘", Style: tui.Style{FG: tui.Red}},
 		}},

@@ -44,7 +44,7 @@ func testProgress() {
 	}
 
 	app.ClearOnExit(true).Height(1).SetView(
-		tui.Row{
+		tui.HBox{
 			Children: []any{
 				tui.Text{Content: "["},
 				tui.Progress{Value: &progress, BarWidth: 20},
@@ -109,7 +109,7 @@ func testMenu() string {
 	}
 
 	app.ClearOnExit(true).Height(3).SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				tui.Text{Content: &line1},
 				tui.Text{Content: &line2},

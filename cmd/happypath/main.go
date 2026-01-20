@@ -39,7 +39,7 @@ func main() {
 
 	// Set the view - batteries included!
 	app.SetView(
-		tui.Col{Children: []any{
+		tui.VBox{Children: []any{
 			tui.Text{Content: "Happy Path.emo", Style: tui.Style{Attr: tui.AttrBold}},
 			tui.Text{},
 			tui.Text{Content: "Press j/k to change values, q to quit"},
@@ -47,7 +47,7 @@ func main() {
 			tui.Progress{Value: &state.Progress, BarWidth: 40},
 			tui.If(&boolFlag).Eq(true).Then(tui.Text{Content: "Counter would be here"}),
 			tui.Text{},
-			tui.Row{Gap: 2, Children: []any{
+			tui.HBox{Gap: 2, Children: []any{
 				tui.Text{Content: "Counter:"},
 				tui.ForEach(&state.Items, func(item *Item) any {
 					return tui.Text{Content: &item.Name}

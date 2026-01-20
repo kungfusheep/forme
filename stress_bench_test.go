@@ -44,11 +44,11 @@ func init() {
 func BenchmarkStress100Items(b *testing.B) {
 	buf := NewBuffer(80, 120)
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 30},
 				}}
@@ -82,11 +82,11 @@ func BenchmarkStressWideProgress(b *testing.B) {
 		}
 	}
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: "Wide Progress Bars"},
 			ForEach(&items, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 100},
 				}}
@@ -123,11 +123,11 @@ func BenchmarkStressDenseGrid(b *testing.B) {
 		}
 	}
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: "Dense Grid"},
 			ForEach(&rows, func(row *[]StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					ForEach(row, func(item *StressItem) any {
 						return Progress{Value: &item.CPU, BarWidth: 8}
 					}),
@@ -159,13 +159,13 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			Text{Content: "═══════════════════════════════════════════════════════════════"},
 			Text{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -173,7 +173,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -181,7 +181,7 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
@@ -212,7 +212,7 @@ func BenchmarkStressTextHeavy(b *testing.B) {
 		lines[i] = "This is line number " + string(rune('0'+i/10)) + string(rune('0'+i%10)) + " with some extra text to make it longer and stress the text rendering path"
 	}
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: "Text Heavy Benchmark"},
 			ForEach(&lines, func(line *string) any {
@@ -246,13 +246,13 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			Text{Content: "═══════════════════════════════════════════════════════════════"},
 			Text{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -260,7 +260,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -268,7 +268,7 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
@@ -299,13 +299,13 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			Text{Content: "═══════════════════════════════════════════════════════════════"},
 			Text{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -313,7 +313,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 50},
 				}}
@@ -321,7 +321,7 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 			Text{Content: ""},
 			Text{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 40},
 				}}
@@ -348,11 +348,11 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 	pool := NewBufferPool(80, 120)
 	defer pool.Stop()
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 30},
 				}}
@@ -379,11 +379,11 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 func BenchmarkSyncClear100Items(b *testing.B) {
 	buf := NewBuffer(80, 120)
 
-	ui := Col{
+	ui := VBox{
 		Children: []any{
 			Text{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return Row{Children: []any{
+				return HBox{Children: []any{
 					Text{Content: &item.Name},
 					Progress{Value: &item.CPU, BarWidth: 30},
 				}}

@@ -460,6 +460,19 @@ func (b *Buffer) ClearLine(y int) {
 	b.dirtyRows[y] = true
 }
 
+// ClearLineWithStyle clears a single line with a styled space cell.
+func (b *Buffer) ClearLineWithStyle(y int, style Style) {
+	if y < 0 || y >= b.height {
+		return
+	}
+	base := y * b.width
+	cell := Cell{Rune: ' ', Style: style}
+	for x := 0; x < b.width; x++ {
+		b.cells[base+x] = cell
+	}
+	b.dirtyRows[y] = true
+}
+
 // FillRect fills a rectangular region with the given cell.
 func (b *Buffer) FillRect(x, y, width, height int, c Cell) {
 	for dy := 0; dy < height; dy++ {

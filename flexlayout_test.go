@@ -75,7 +75,7 @@ func TestFlexNestedLayout(t *testing.T) {
 		t.Errorf("Root level should be 1, got %d", root.level)
 	}
 	if root.children[0].level != 2 {
-		t.Errorf("Row level should be 2, got %d", root.children[0].level)
+		t.Errorf("HBox level should be 2, got %d", root.children[0].level)
 	}
 	if root.children[0].children[0].level != 3 {
 		t.Errorf("Left text level should be 3, got %d", root.children[0].children[0].level)
@@ -280,8 +280,8 @@ func TestFlexGrow(t *testing.T) {
 func TestFlexGrowWithMultipleChildren(t *testing.T) {
 	// Test flex grow with fixed + flex children
 	root := FCol(
-		FCol(FText("Row 1")).Height(5), // Fixed H=5
-		FCol(FText("Row 2")).Height(5), // Fixed H=5
+		FCol(FText("HBox 1")).Height(5), // Fixed H=5
+		FCol(FText("HBox 2")).Height(5), // Fixed H=5
 		FCol(FText("Log")).Grow(1),     // Should fill remaining
 	)
 

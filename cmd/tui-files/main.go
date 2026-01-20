@@ -349,10 +349,10 @@ func truncate(s string, max int) string {
 }
 
 func buildView(state *State) any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.Text{Content: "File Browser", Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "Path: "},
 			tui.Text{Content: &state.CurrentPath},
 		}},

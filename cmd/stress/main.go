@@ -97,10 +97,10 @@ func main() {
 	}
 
 	// Build the UI template once
-	ui := tui.Col{
+	ui := tui.VBox{
 		Children: []any{
 			tui.Text{Content: &liveData.Title},
-			tui.Row{Children: []any{
+			tui.HBox{Children: []any{
 				tui.Text{Content: "Time: "},
 				tui.Text{Content: &liveData.Time},
 				tui.Text{Content: "  Frame: "},
@@ -111,7 +111,7 @@ func main() {
 			tui.Text{Content: ""},
 			tui.Text{Content: "═══ CPU Cores ═══════════════════════════════════════════════════"},
 			tui.ForEach(&liveData.CPUCores, func(core *Core) any {
-				return tui.Row{Children: []any{
+				return tui.HBox{Children: []any{
 					tui.Text{Content: &core.Name},
 					tui.Text{Content: ": "},
 					tui.Progress{Value: &core.Load, BarWidth: 50},
@@ -120,7 +120,7 @@ func main() {
 			tui.Text{Content: ""},
 			tui.Text{Content: "═══ Processes ═══════════════════════════════════════════════════"},
 			tui.ForEach(&liveData.Processes, func(proc *Process) any {
-				return tui.Row{Children: []any{
+				return tui.HBox{Children: []any{
 					tui.Text{Content: &proc.Name},
 					tui.Text{Content: " CPU:"},
 					tui.Progress{Value: &proc.CPU, BarWidth: 25},

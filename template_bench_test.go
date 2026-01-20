@@ -8,7 +8,7 @@ import (
 func BenchmarkBuildSimple(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Build(Col{Children: []any{
+		_ = Build(VBox{Children: []any{
 			Text{Content: "Header"},
 			Text{Content: "Body"},
 			Text{Content: "Footer"},
@@ -20,14 +20,14 @@ func BenchmarkBuildSimple(b *testing.B) {
 func BenchmarkBuildNested(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Build(Col{Children: []any{
+		_ = Build(VBox{Children: []any{
 			Text{Content: "Header"},
-			Row{Children: []any{
-				Col{Children: []any{
+			HBox{Children: []any{
+				VBox{Children: []any{
 					Text{Content: "Left 1"},
 					Text{Content: "Left 2"},
 				}},
-				Col{Children: []any{
+				VBox{Children: []any{
 					Text{Content: "Right 1"},
 					Text{Content: "Right 2"},
 				}},
@@ -50,7 +50,7 @@ func BenchmarkBuildForEach(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Build(Col{Children: []any{
+		_ = Build(VBox{Children: []any{
 			Text{Content: "Header"},
 			ForEachNode{
 				Items: &items,
@@ -64,7 +64,7 @@ func BenchmarkBuildForEach(b *testing.B) {
 
 // BenchmarkV2ExecuteSimple measures execute time for a simple template.
 func BenchmarkV2ExecuteSimple(b *testing.B) {
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
 		Text{Content: "Body"},
 		Text{Content: "Footer"},
@@ -81,14 +81,14 @@ func BenchmarkV2ExecuteSimple(b *testing.B) {
 
 // BenchmarkV2ExecuteNested measures execute time for nested containers.
 func BenchmarkV2ExecuteNested(b *testing.B) {
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
-		Row{Children: []any{
-			Col{Children: []any{
+		HBox{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Left 1"},
 				Text{Content: "Left 2"},
 			}},
-			Col{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Right 1"},
 				Text{Content: "Right 2"},
 			}},
@@ -111,7 +111,7 @@ func BenchmarkV2ExecuteDynamic(b *testing.B) {
 	status := "Running..."
 	count := 42
 
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: &title},
 		Text{Content: &status},
 		Progress{Value: &count, BarWidth: 20},
@@ -150,7 +150,7 @@ func benchmarkV2ForEach(b *testing.B, n int) {
 		items[i].Name = "Item"
 	}
 
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		ForEachNode{
 			Items: &items,
 			Render: func(item *Item) any {
@@ -171,11 +171,11 @@ func benchmarkV2ForEach(b *testing.B, n int) {
 // BenchmarkV2ExecuteIf measures execute time with conditional.
 func BenchmarkV2ExecuteIf(b *testing.B) {
 	show := true
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
 		IfNode{
 			Cond: &show,
-			Then: Col{Children: []any{
+			Then: VBox{Children: []any{
 				Text{Content: "Detail 1"},
 				Text{Content: "Detail 2"},
 				Text{Content: "Detail 3"},
@@ -211,9 +211,9 @@ func BenchmarkV2ExecuteComplex(b *testing.B) {
 	showCompleted := true
 	progress := 40
 
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: &title},
-		Row{Gap: 2, Children: []any{
+		HBox{Gap: 2, Children: []any{
 			Text{Content: "Status:"},
 			Progress{Value: &progress, BarWidth: 20},
 		}},
@@ -224,7 +224,7 @@ func BenchmarkV2ExecuteComplex(b *testing.B) {
 		ForEachNode{
 			Items: &tasks,
 			Render: func(t *Task) any {
-				return Row{Gap: 1, Children: []any{
+				return HBox{Gap: 1, Children: []any{
 					Text{Content: &t.Name},
 					Text{Content: &t.Status},
 				}}
@@ -243,14 +243,14 @@ func BenchmarkV2ExecuteComplex(b *testing.B) {
 
 // BenchmarkV2WidthDistribution measures just the width phase.
 func BenchmarkV2WidthDistribution(b *testing.B) {
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
-		Row{Children: []any{
-			Col{Children: []any{
+		HBox{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Left 1"},
 				Text{Content: "Left 2"},
 			}},
-			Col{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Right 1"},
 				Text{Content: "Right 2"},
 			}},
@@ -267,14 +267,14 @@ func BenchmarkV2WidthDistribution(b *testing.B) {
 
 // BenchmarkV2Layout measures just the layout phase.
 func BenchmarkV2Layout(b *testing.B) {
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
-		Row{Children: []any{
-			Col{Children: []any{
+		HBox{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Left 1"},
 				Text{Content: "Left 2"},
 			}},
-			Col{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Right 1"},
 				Text{Content: "Right 2"},
 			}},
@@ -292,14 +292,14 @@ func BenchmarkV2Layout(b *testing.B) {
 
 // BenchmarkV2Render measures just the render phase.
 func BenchmarkV2Render(b *testing.B) {
-	tmpl := Build(Col{Children: []any{
+	tmpl := Build(VBox{Children: []any{
 		Text{Content: "Header"},
-		Row{Children: []any{
-			Col{Children: []any{
+		HBox{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Left 1"},
 				Text{Content: "Left 2"},
 			}},
-			Col{Children: []any{
+			VBox{Children: []any{
 				Text{Content: "Right 1"},
 				Text{Content: "Right 2"},
 			}},

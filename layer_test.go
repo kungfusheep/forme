@@ -18,7 +18,7 @@ func TestLayerBlit(t *testing.T) {
 		screen := NewBuffer(20, 10)
 
 		// Build view with layer at position
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			Text{Content: "Header"},
 			LayerView{Layer: layer, ViewHeight: 3},
 			Text{Content: "Footer"},
@@ -76,7 +76,7 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 15)
 
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			Text{Content: "=TOP="},
 			LayerView{Layer: layer1, ViewHeight: 2},
 			Text{Content: "=MID1="},
@@ -130,7 +130,7 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 10)
 
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			LayerView{Layer: layer1, ViewHeight: 3},
 			Text{Content: "---"},
 			LayerView{Layer: layer2, ViewHeight: 3},
@@ -186,7 +186,7 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 5)
 
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			Text{Content: "Before"},
 			LayerView{Layer: layer, ViewHeight: 2},
 			Text{Content: "After"},

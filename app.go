@@ -175,9 +175,13 @@ func (a *App) RunNonInteractive() error {
 func (a *App) SetView(view any) *App {
 	a.template = Build(view)
 	a.template.SetApp(a) // Link for jump mode support
-	// Create buffer pool for async clearing
+	// Create buffer pool for async clearing (or reuse existing)
 	size := a.screen.Size()
-	a.pool = NewBufferPool(size.Width, size.Height)
+	if a.pool == nil {
+		a.pool = NewBufferPool(size.Width, size.Height)
+	} else if a.pool.Width() != size.Width || a.pool.Height() != size.Height {
+		a.pool.Resize(size.Width, size.Height)
+	}
 	return a
 }
 

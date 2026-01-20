@@ -28,13 +28,13 @@ func TestV2SplitLayout(t *testing.T) {
 	spans1 := []Span{{Text: "Status 1"}}
 	spans2 := []Span{{Text: "Status 2"}}
 
-	view := Col{Children: []any{
-		Row{Children: []any{
-			Col{Children: []any{
+	view := VBox{Children: []any{
+		HBox{Children: []any{
+			VBox{Children: []any{
 				LayerView{Layer: layer1, ViewHeight: 5},
 				RichText{Spans: spans1},
 			}},
-			Col{Children: []any{
+			VBox{Children: []any{
 				LayerView{Layer: layer2, ViewHeight: 5},
 				RichText{Spans: spans2},
 			}},

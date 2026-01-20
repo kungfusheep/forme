@@ -88,7 +88,7 @@ func buildLayer(layer *tui.Layer, name string, color tui.Color, lines int) {
 		}},
 	)
 
-	pageContent := tui.Col{Children: children}
+	pageContent := tui.VBox{Children: children}
 	pageTemplate := tui.Build(pageContent)
 
 	// Render to layer with correct height
@@ -159,13 +159,13 @@ func main() {
 }
 
 func labView() any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.Text{Content: &state.Message, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 
 		// Status bar with declarative If conditions for active indicator
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			// Layer 1 indicator - shows ">" when active
 			tui.IfOrd(&state.ActiveLayer).Eq(0).Then(tui.Text{Content: ">"}).Else(tui.Text{Content: " "}),
 			tui.Text{Content: &state.Status1},

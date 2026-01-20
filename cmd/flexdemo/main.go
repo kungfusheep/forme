@@ -96,12 +96,12 @@ func main() {
 func buildUI(state *State) any {
 	dim := tui.RGB(0, 100, 0)
 
-	return tui.Col{
+	return tui.VBox{
 		Children: []any{
 			// TOP ROW: SYSTEM STATUS + ELEC SUBSYS
-			tui.Row{
+			tui.HBox{
 				Children: []any{
-					tui.Col{
+					tui.VBox{
 						Title: "SYSTEM STATUS",
 						Children: []any{
 							tui.Text{Content: tui.LeaderStr("RAM 00064K FRAM-HRC", "PASS", 32)},
@@ -113,20 +113,20 @@ func buildUI(state *State) any {
 						},
 					}.WidthPct(0.5).Height(10).Border(tui.BorderSingle).BorderFG(dim),
 
-					tui.Col{
+					tui.VBox{
 						Title: "ELEC SUBSYS",
 						Children: []any{
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "GEN1 "},
 								tui.Text{Content: tui.Meter(142, 200, 12)},
 								tui.Text{Content: " 142A"},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "GEN2 "},
 								tui.Text{Content: tui.Meter(138, 200, 12)},
 								tui.Text{Content: " 138A"},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "BATT "},
 								tui.Text{Content: tui.Meter(92, 100, 12)},
 								tui.Text{Content: " 24.8V"},
@@ -140,22 +140,22 @@ func buildUI(state *State) any {
 			},
 
 			// MIDDLE ROW: FUEL STATUS + SUBSYSTEMS
-			tui.Row{
+			tui.HBox{
 				Children: []any{
-					tui.Col{
+					tui.VBox{
 						Title: "FUEL STATUS",
 						Children: []any{
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "RES A "},
 								tui.Text{Content: &state.fuelABar},
 								tui.Text{Content: &state.fuelAText},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "RES B "},
 								tui.Text{Content: &state.fuelBBar},
 								tui.Text{Content: &state.fuelBText},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "RES C "},
 								tui.Text{Content: &state.fuelCBar},
 								tui.Text{Content: &state.fuelCText},
@@ -164,28 +164,28 @@ func buildUI(state *State) any {
 						},
 					}.WidthPct(0.5).Height(6).Border(tui.BorderSingle).BorderFG(dim),
 
-					tui.Col{
+					tui.VBox{
 						Title: "SUBSYSTEMS",
 						Children: []any{
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: tui.LED(true)},
 								tui.Text{Content: " GEN1   "},
 								tui.Text{Content: tui.LED(true)},
 								tui.Text{Content: " GEN2"},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: tui.LED(false)},
 								tui.Text{Content: " BACKUP "},
 								tui.Text{Content: tui.LED(true)},
 								tui.Text{Content: " COMM"},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: tui.LED(true)},
 								tui.Text{Content: " RADAR  "},
 								tui.Text{Content: tui.LED(false)},
 								tui.Text{Content: " WPNS"},
 							}},
-							tui.Row{Children: []any{
+							tui.HBox{Children: []any{
 								tui.Text{Content: "RWR: "},
 								tui.Text{Content: &state.rwrIndicator},
 							}},
@@ -195,7 +195,7 @@ func buildUI(state *State) any {
 			},
 
 			// BOTTOM: LOG (fills remaining space)
-			tui.Col{
+			tui.VBox{
 				Title: "LOG",
 				Children: []any{
 					tui.Text{Content: "21:14:32Z TACAN 22.1 ACQUIRED"},
@@ -208,7 +208,7 @@ func buildUI(state *State) any {
 			}.Grow(1).Border(tui.BorderSingle).BorderFG(dim),
 
 			// Status bar
-			tui.Row{
+			tui.HBox{
 				Children: []any{
 					tui.Text{Content: &state.status},
 					tui.Text{Content: " | [Q]UIT | "},

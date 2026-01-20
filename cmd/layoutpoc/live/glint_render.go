@@ -149,10 +149,10 @@ func (t *GlintTemplate) compile(node any, x, y int16, elemBase unsafe.Pointer, e
 		return t.compileText(v, x, y, elemBase, elemSize)
 	case tui.Progress:
 		return t.compileProgress(v, x, y, elemBase, elemSize)
-	case tui.Row:
-		return t.compileRow(v, x, y, elemBase, elemSize)
-	case tui.Col:
-		return t.compileCol(v, x, y, elemBase, elemSize)
+	case tui.HBox:
+		return t.compileHBox(v, x, y, elemBase, elemSize)
+	case tui.VBox:
+		return t.compileVBox(v, x, y, elemBase, elemSize)
 	case tui.ForEachNode:
 		return t.compileForEach(v, x, y, elemBase, elemSize)
 	}
@@ -256,7 +256,7 @@ func (t *GlintTemplate) compileProgress(v tui.Progress, x, y int16, elemBase uns
 	return width, 1
 }
 
-func (t *GlintTemplate) compileRow(v tui.Row, x, y int16, elemBase unsafe.Pointer, elemSize uintptr) (w, h int16) {
+func (t *GlintTemplate) compileHBox(v tui.HBox, x, y int16, elemBase unsafe.Pointer, elemSize uintptr) (w, h int16) {
 	currentX := x
 	maxH := int16(0)
 
@@ -274,7 +274,7 @@ func (t *GlintTemplate) compileRow(v tui.Row, x, y int16, elemBase unsafe.Pointe
 	return currentX - x, maxH
 }
 
-func (t *GlintTemplate) compileCol(v tui.Col, x, y int16, elemBase unsafe.Pointer, elemSize uintptr) (w, h int16) {
+func (t *GlintTemplate) compileVBox(v tui.VBox, x, y int16, elemBase unsafe.Pointer, elemSize uintptr) (w, h int16) {
 	currentY := y
 	maxW := int16(0)
 

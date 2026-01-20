@@ -112,7 +112,7 @@ func rebuildView() {
 	for i, action := range quickActions {
 		idx := i
 		actionChildren = append(actionChildren, tui.Jump{
-			Child: tui.Row{
+			Child: tui.HBox{
 				Children: []any{
 					tui.Text{Content: fmt.Sprintf("[%s %s]", action.icon, action.label), Style: tui.Style{FG: tui.BrightWhite}},
 				},
@@ -136,7 +136,7 @@ func rebuildView() {
 		idx := i
 		indicator := "●"
 		subsystemChildren = append(subsystemChildren, tui.Jump{
-			Child: tui.Row{
+			Child: tui.HBox{
 				Children: []any{
 					tui.Text{Content: indicator + " ", Style: tui.Style{FG: sys.color}},
 					tui.Text{Content: fmt.Sprintf("%-10s", sys.name), Style: tui.Style{FG: tui.White}},
@@ -171,10 +171,10 @@ func rebuildView() {
 	}
 
 	app.SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				// Header
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "Dashboard", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
 						tui.Spacer{},
@@ -185,25 +185,25 @@ func rebuildView() {
 				tui.Spacer{Height: 1},
 
 				// Main layout: sidebar + content
-				tui.Row{
+				tui.HBox{
 					Gap: 2,
 					Children: []any{
 						// Sidebar
-						tui.Col{
+						tui.VBox{
 							Children: menuChildren,
 						}.WidthPct(0.15),
 
 						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
 
 						// Main content area
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								// Quick actions bar
-								tui.Row{Children: actionChildren},
+								tui.HBox{Children: actionChildren},
 								tui.Spacer{Height: 1},
 
 								// Tabs
-								tui.Row{Children: tabChildren},
+								tui.HBox{Children: tabChildren},
 								tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
 								tui.Spacer{Height: 1},
 
@@ -215,7 +215,7 @@ func rebuildView() {
 						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
 
 						// Right sidebar - subsystems
-						tui.Col{
+						tui.VBox{
 							Children: subsystemChildren,
 						}.WidthPct(0.20),
 					},
@@ -231,15 +231,15 @@ func rebuildView() {
 }
 
 // buildTabContent returns different content based on the selected tab
-func buildTabContent(tab int) tui.Col {
+func buildTabContent(tab int) tui.VBox {
 	switch tab {
 	case 0: // Overview
-		return tui.Col{
+		return tui.VBox{
 			Children: []any{
 				tui.Text{Content: "System Overview", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
 				tui.Spacer{Height: 1},
 				// Stats row with jumpable cards
-				tui.Row{
+				tui.HBox{
 					Gap: 2,
 					Children: []any{
 						buildJumpCard("Requests", "1.2M", "/day", tui.Cyan),
@@ -258,11 +258,11 @@ func buildTabContent(tab int) tui.Col {
 		}
 
 	case 1: // Metrics
-		return tui.Col{
+		return tui.VBox{
 			Children: []any{
 				tui.Text{Content: "Performance Metrics", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
 				tui.Spacer{Height: 1},
-				tui.Row{
+				tui.HBox{
 					Gap: 2,
 					Children: []any{
 						buildJumpCard("CPU", "42%", "avg", tui.Cyan),
@@ -278,7 +278,7 @@ func buildTabContent(tab int) tui.Col {
 		}
 
 	case 2: // Logs
-		return tui.Col{
+		return tui.VBox{
 			Children: []any{
 				tui.Text{Content: "Recent Logs", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
 				tui.Spacer{Height: 1},
@@ -292,7 +292,7 @@ func buildTabContent(tab int) tui.Col {
 		}
 
 	case 3: // Alerts
-		return tui.Col{
+		return tui.VBox{
 			Children: []any{
 				tui.Text{Content: "Active Alerts", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
 				tui.Spacer{Height: 1},
@@ -308,7 +308,7 @@ func buildTabContent(tab int) tui.Col {
 		}
 
 	default:
-		return tui.Col{
+		return tui.VBox{
 			Children: []any{
 				tui.Text{Content: "Unknown tab", Style: tui.Style{FG: tui.Red}},
 			},
@@ -319,7 +319,7 @@ func buildTabContent(tab int) tui.Col {
 // buildActivityItem creates a jumpable activity entry
 func buildActivityItem(action, detail, when string, color tui.Color) tui.Jump {
 	return tui.Jump{
-		Child: tui.Row{
+		Child: tui.HBox{
 			Children: []any{
 				tui.Text{Content: fmt.Sprintf("%-12s", action), Style: tui.Style{FG: color}},
 				tui.Text{Content: fmt.Sprintf("%-20s", detail), Style: tui.Style{FG: tui.White}},
@@ -336,7 +336,7 @@ func buildActivityItem(action, detail, when string, color tui.Color) tui.Jump {
 // buildLogEntry creates a jumpable log entry
 func buildLogEntry(level, message string, color tui.Color) tui.Jump {
 	return tui.Jump{
-		Child: tui.Row{
+		Child: tui.HBox{
 			Children: []any{
 				tui.Text{Content: fmt.Sprintf("[%-5s]", level), Style: tui.Style{FG: color, Attr: tui.AttrBold}},
 				tui.Text{Content: " " + message, Style: tui.Style{FG: tui.White}},
@@ -358,7 +358,7 @@ func buildAlertItem(severity, message string, color tui.Color) tui.Jump {
 		icon = "✓"
 	}
 	return tui.Jump{
-		Child: tui.Row{
+		Child: tui.HBox{
 			Children: []any{
 				tui.Text{Content: icon + " ", Style: tui.Style{FG: color}},
 				tui.Text{Content: fmt.Sprintf("%-10s", severity), Style: tui.Style{FG: color, Attr: tui.AttrBold}},
@@ -375,10 +375,10 @@ func buildAlertItem(severity, message string, color tui.Color) tui.Jump {
 // buildJumpCard creates a jumpable stats card
 func buildJumpCard(title, value, unit string, color tui.Color) tui.Jump {
 	return tui.Jump{
-		Child: tui.Col{
+		Child: tui.VBox{
 			Children: []any{
 				tui.Text{Content: title, Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: value, Style: tui.Style{FG: color, Attr: tui.AttrBold}},
 						tui.Text{Content: " " + unit, Style: tui.Style{FG: tui.BrightBlack}},

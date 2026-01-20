@@ -18,7 +18,7 @@ func TestV2LayerBlit(t *testing.T) {
 		screen := NewBuffer(20, 10)
 
 		// Build view with layer using V2Template
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			Text{Content: "Header"},
 			LayerView{Layer: layer, ViewHeight: 3},
 			Text{Content: "Footer"},
@@ -60,7 +60,7 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 10)
 
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			LayerView{Layer: layer, ViewHeight: 3},
 			Text{Content: "---"},
 		}}
@@ -94,7 +94,7 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 5)
 
-		view := Col{Children: []any{
+		view := VBox{Children: []any{
 			Text{Content: "Before"},
 			LayerView{Layer: layer, ViewHeight: 2},
 			Text{Content: "After"},
@@ -126,8 +126,8 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(40, 10)
 
-		view := Col{Children: []any{
-			Col{
+		view := VBox{Children: []any{
+			VBox{
 				Title: "Content",
 				Children: []any{
 					LayerView{Layer: layer, ViewHeight: 3},

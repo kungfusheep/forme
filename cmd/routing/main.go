@@ -92,7 +92,7 @@ func main() {
 }
 
 func homeView() any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		tui.Text{Content: &home.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: "j/k: change counter"},
@@ -105,7 +105,7 @@ func homeView() any {
 }
 
 func settingsView() any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		tui.Text{Content: &settings.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: "j/k: adjust volume"},
@@ -118,7 +118,7 @@ func settingsView() any {
 }
 
 func helpView() any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		tui.Text{Content: &help.Title, Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{},
 		tui.Text{Content: &help.Text},

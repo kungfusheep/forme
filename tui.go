@@ -398,8 +398,8 @@ type LayerView struct {
 // Grow sets the flex grow factor for this layer.
 func (l LayerView) Grow(factor float32) LayerView { l.FlexGrow = factor; return l }
 
-// Row arranges children horizontally.
-type Row struct {
+// HBox arranges children horizontally.
+type HBox struct {
 	flex
 	Children []any
 	Title    string // title for bordered containers
@@ -408,10 +408,11 @@ type Row struct {
 	// Set via chainable methods
 	border   BorderStyle
 	borderFG *Color
+	borderBG *Color
 }
 
-// Col arranges children vertically.
-type Col struct {
+// VBox arranges children vertically.
+type VBox struct {
 	flex
 	Children []any
 	Title    string // title for bordered containers
@@ -420,6 +421,7 @@ type Col struct {
 	// Set via chainable methods
 	border   BorderStyle
 	borderFG *Color
+	borderBG *Color
 }
 
 // flex contains internal layout properties (use chainable methods to set).
@@ -430,45 +432,51 @@ type flex struct {
 	flexGrow     float32
 }
 
-// Chainable layout methods for Row
+// Chainable layout methods for HBox
 
 // WidthPct sets width as percentage of parent (0.5 = 50%).
-func (r Row) WidthPct(pct float32) Row { r.percentWidth = pct; return r }
+func (r HBox) WidthPct(pct float32) HBox { r.percentWidth = pct; return r }
 
 // Width sets explicit width in characters.
-func (r Row) Width(w int16) Row { r.width = w; return r }
+func (r HBox) Width(w int16) HBox { r.width = w; return r }
 
 // Height sets explicit height in lines.
-func (r Row) Height(h int16) Row { r.height = h; return r }
+func (r HBox) Height(h int16) HBox { r.height = h; return r }
 
 // Grow sets flex grow factor.
-func (r Row) Grow(g float32) Row { r.flexGrow = g; return r }
+func (r HBox) Grow(g float32) HBox { r.flexGrow = g; return r }
 
 // Border sets the border style.
-func (r Row) Border(b BorderStyle) Row { r.border = b; return r }
+func (r HBox) Border(b BorderStyle) HBox { r.border = b; return r }
 
 // BorderFG sets the border foreground color.
-func (r Row) BorderFG(c Color) Row { r.borderFG = &c; return r }
+func (r HBox) BorderFG(c Color) HBox { r.borderFG = &c; return r }
 
-// Chainable layout methods for Col
+// BorderBG sets the border background color.
+func (r HBox) BorderBG(c Color) HBox { r.borderBG = &c; return r }
+
+// Chainable layout methods for VBox
 
 // WidthPct sets width as percentage of parent (0.5 = 50%).
-func (c Col) WidthPct(pct float32) Col { c.percentWidth = pct; return c }
+func (c VBox) WidthPct(pct float32) VBox { c.percentWidth = pct; return c }
 
 // Width sets explicit width in characters.
-func (c Col) Width(w int16) Col { c.width = w; return c }
+func (c VBox) Width(w int16) VBox { c.width = w; return c }
 
 // Height sets explicit height in lines.
-func (c Col) Height(h int16) Col { c.height = h; return c }
+func (c VBox) Height(h int16) VBox { c.height = h; return c }
 
 // Grow sets flex grow factor.
-func (c Col) Grow(g float32) Col { c.flexGrow = g; return c }
+func (c VBox) Grow(g float32) VBox { c.flexGrow = g; return c }
 
 // Border sets the border style.
-func (c Col) Border(b BorderStyle) Col { c.border = b; return c }
+func (c VBox) Border(b BorderStyle) VBox { c.border = b; return c }
 
 // BorderFG sets the border foreground color.
-func (c Col) BorderFG(fg Color) Col { c.borderFG = &fg; return c }
+func (c VBox) BorderFG(fg Color) VBox { c.borderFG = &fg; return c }
+
+// BorderBG sets the border background color.
+func (c VBox) BorderBG(bg Color) VBox { c.borderBG = &bg; return c }
 
 // IfNode conditionally renders content.
 type IfNode struct {
@@ -709,15 +717,18 @@ type TextInput struct {
 
 // Overlay displays content floating above the main view.
 // Use for modals, dialogs, and floating windows.
+// Control visibility with tui.If:
+//
+//	tui.If(&showModal).Eq(true).Then(tui.Overlay{Child: ...})
 type Overlay struct {
-	Visible     *bool // nil = always visible, otherwise controlled by pointer
-	Centered    bool  // true = center on screen (default behavior if X/Y not set)
-	X, Y        int   // explicit position (used if Centered is false)
-	Width       int   // explicit width (0 = auto from content)
-	Height      int   // explicit height (0 = auto from content)
-	Backdrop    bool  // draw dimmed backdrop behind overlay
-	BackdropFG  Color // backdrop dim color (default: BrightBlack)
-	Child       any   // overlay content
+	Centered   bool  // true = center on screen (default behavior if X/Y not set)
+	X, Y       int   // explicit position (used if Centered is false)
+	Width      int   // explicit width (0 = auto from content)
+	Height     int   // explicit height (0 = auto from content)
+	Backdrop   bool  // draw dimmed backdrop behind overlay
+	BackdropFG Color // backdrop dim color (default: BrightBlack)
+	BG         Color // background color for overlay content area (fills before rendering child)
+	Child      any   // overlay content
 }
 
 // sliceHeader is the runtime representation of a slice.

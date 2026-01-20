@@ -40,7 +40,7 @@ type Rect struct {
 }
 
 // Box is a container with a custom layout function.
-// Use this when Row/Col don't fit your needs.
+// Use this when HBox/VBox don't fit your needs.
 type Box struct {
 	Layout   LayoutFunc
 	Children []any
@@ -63,7 +63,12 @@ type Template struct {
 	app *App
 
 	// Pending overlays to render after main content (cleared each frame)
-	pendingOverlays []int16
+	pendingOverlays []pendingOverlay
+}
+
+// pendingOverlay stores info needed to render an overlay after main content
+type pendingOverlay struct {
+	op *Op // pointer to the overlay op
 }
 
 // SetApp links this template to an App for jump mode support.
@@ -103,9 +108,10 @@ type Op struct {
 	Gap          int8    // gap between children
 
 	// Container
-	IsRow       bool        // true=Row, false=Col
+	IsRow       bool        // true=HBox, false=VBox
 	Border      BorderStyle // border style
-	BorderFG    *Color      // border color
+	BorderFG    *Color      // border foreground color
+	BorderBG    *Color      // border background color
 	Title       string      // border title
 	ChildStart  int16       // first child op index
 	ChildEnd    int16       // last child op index (exclusive)
@@ -226,11 +232,11 @@ type Op struct {
 	TextInputCursorStyle    Style   // cursor style
 
 	// Overlay
-	OverlayVisiblePtr *bool     // nil = always visible
 	OverlayCentered   bool      // center on screen
 	OverlayX, OverlayY int16    // explicit position
 	OverlayBackdrop   bool      // draw backdrop
 	OverlayBackdropFG Color     // backdrop color
+	OverlayBG         Color     // background fill for overlay content area
 	OverlayChildTmpl  *Template // compiled child content
 }
 
@@ -245,7 +251,7 @@ const (
 	OpProgressPtr
 	OpProgressOff
 
-	OpContainer // Col or Row (determined by IsRow)
+	OpContainer // VBox or HBox (determined by IsRow)
 
 	OpIf
 	OpForEach
@@ -339,10 +345,10 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileText(v, parent, depth, elemBase, elemSize)
 	case Progress:
 		return t.compileProgress(v, parent, depth, elemBase, elemSize)
-	case Row:
-		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, parent, depth, elemBase, elemSize)
-	case Col:
-		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, parent, depth, elemBase, elemSize)
+	case HBox:
+		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, parent, depth, elemBase, elemSize)
+	case VBox:
+		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, parent, depth, elemBase, elemSize)
 	case IfNode:
 		return t.compileIf(v, parent, depth, elemBase, elemSize)
 	case ForEachNode:
@@ -819,12 +825,12 @@ func (t *Template) compileOverlay(v Overlay, parent int16, depth int) int16 {
 		Parent:            parent,
 		Width:             int16(v.Width),
 		Height:            int16(v.Height),
-		OverlayVisiblePtr: v.Visible,
 		OverlayCentered:   centered,
 		OverlayX:          int16(v.X),
 		OverlayY:          int16(v.Y),
 		OverlayBackdrop:   v.Backdrop,
 		OverlayBackdropFG: backdropFG,
+		OverlayBG:         v.BG,
 		OverlayChildTmpl:  childTmpl,
 	}
 
@@ -882,7 +888,7 @@ func (t *Template) compileProgress(v Progress, parent int16, depth int, elemBase
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG *Color, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Kind:         OpContainer,
 		Parent:       parent,
@@ -895,6 +901,7 @@ func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex
 		Border:       border,
 		Title:        title,
 		BorderFG:     borderFG,
+		BorderBG:     borderBG,
 	}
 
 	idx := t.addOp(op, depth)
@@ -1141,8 +1148,12 @@ func (t *Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
 			op := &t.ops[idx]
 			geom := &t.geom[idx]
 
-			if op.Kind == OpContainer {
+			switch op.Kind {
+			case OpContainer:
 				t.distributeWidthsToChildren(idx, op, geom, elemBase)
+			case OpJump:
+				// Jump is a transparent wrapper - distribute full width to children (like VBox)
+				t.distributeVBoxChildWidths(idx, op, geom.W, elemBase)
 			}
 		}
 	}
@@ -1312,14 +1323,14 @@ func (t *Template) distributeWidthsToChildren(idx int16, op *Op, geom *Geom, ele
 	}
 
 	if op.IsRow {
-		t.distributeRowChildWidths(idx, op, contentW, elemBase)
+		t.distributeHBoxChildWidths(idx, op, contentW, elemBase)
 	} else {
-		t.distributeColChildWidths(idx, op, contentW, elemBase)
+		t.distributeVBoxChildWidths(idx, op, contentW, elemBase)
 	}
 }
 
-// distributeColChildWidths sets widths for children of a Col (they fill available width).
-func (t *Template) distributeColChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
+// distributeVBoxChildWidths sets widths for children of a VBox (they fill available width).
+func (t *Template) distributeVBoxChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
 		childOp := &t.ops[i]
 		if childOp.Parent != idx {
@@ -1330,8 +1341,8 @@ func (t *Template) distributeColChildWidths(idx int16, op *Op, availW int16, ele
 	}
 }
 
-// distributeRowChildWidths sets widths for children of a Row using two-pass flex.
-func (t *Template) distributeRowChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
+// distributeHBoxChildWidths sets widths for children of a HBox using two-pass flex.
+func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
 	// Pass 1: Set widths for non-flex children, collect flex children
 	// Containers without explicit width/flex are treated as implicit flex (share remaining space)
 	var usedW int16
@@ -1350,8 +1361,8 @@ func (t *Template) distributeRowChildWidths(idx int16, op *Op, availW int16, ele
 			// Explicit flex child - defer to pass 2
 			totalFlex += childOp.FlexGrow
 			flexChildren = append(flexChildren, i)
-		} else if childOp.Kind == OpContainer && childOp.Width == 0 && childOp.PercentWidth == 0 {
-			// Container without explicit width - treat as implicit flex
+		} else if (childOp.Kind == OpContainer || childOp.Kind == OpJump) && childOp.Width == 0 && childOp.PercentWidth == 0 {
+			// Container/Jump without explicit width - treat as implicit flex
 			implicitFlexChildren = append(implicitFlexChildren, i)
 		} else {
 			// Non-flex child with explicit or content-based width
@@ -1533,7 +1544,7 @@ func (t *Template) layout(_ int16) {
 				geom.ContentH = geom.H
 
 			case OpJump:
-				// Jump's height is sum of children's heights (like a Col)
+				// Jump's height is sum of children's heights (like a VBox)
 				totalH := int16(0)
 				for i := op.ChildStart; i < op.ChildEnd; i++ {
 					childOp := &t.ops[i]
@@ -1797,10 +1808,10 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 
 // distributeFlexGrow distributes remaining space to flex children.
 // Called top-down after layout phase.
-// Vertical containers (Col) distribute height, horizontal containers (Row) distribute width.
-// distributeFlexGrow distributes remaining height to Col flex children.
-// Row flex is handled during width distribution (single pass).
-// Col flex must happen after layout since it needs content heights.
+// Vertical containers (VBox) distribute height, horizontal containers (HBox) distribute width.
+// distributeFlexGrow distributes remaining height to VBox flex children.
+// HBox flex is handled during width distribution (single pass).
+// VBox flex must happen after layout since it needs content heights.
 func (t *Template) distributeFlexGrow(rootH int16) {
 	for depth := 0; depth <= t.maxDepth; depth++ {
 		for _, idx := range t.byDepth[depth] {
@@ -2210,11 +2221,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		t.renderTextInput(buf, op, geom, absX, absY)
 
 	case OpOverlay:
-		// Collect visible overlays for rendering after main content
-		visible := op.OverlayVisiblePtr == nil || *op.OverlayVisiblePtr
-		if visible {
-			t.pendingOverlays = append(t.pendingOverlays, idx)
-		}
+		// Collect overlay for rendering after main content
+		// Visibility is controlled by tui.If wrapping the overlay
+		t.pendingOverlays = append(t.pendingOverlays, pendingOverlay{op: op})
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -2250,6 +2259,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			if op.BorderFG != nil {
 				style.FG = *op.BorderFG
 			}
+			if op.BorderBG != nil {
+				style.BG = *op.BorderBG
+			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
 			if op.Title != "" {
@@ -2271,9 +2283,16 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		// Render active branch if condition is true
 		condTrue := (op.CondPtr != nil && *op.CondPtr) || (op.CondNode != nil && op.CondNode.evaluate())
 		if op.ThenTmpl != nil && condTrue {
+			op.ThenTmpl.app = t.app
+			op.ThenTmpl.pendingOverlays = op.ThenTmpl.pendingOverlays[:0]
 			op.ThenTmpl.render(buf, absX, absY, geom.W)
+			// Propagate overlays from sub-template to main template
+			t.pendingOverlays = append(t.pendingOverlays, op.ThenTmpl.pendingOverlays...)
 		} else if op.ElseTmpl != nil && !condTrue {
+			op.ElseTmpl.app = t.app
+			op.ElseTmpl.pendingOverlays = op.ElseTmpl.pendingOverlays[:0]
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
+			t.pendingOverlays = append(t.pendingOverlays, op.ElseTmpl.pendingOverlays...)
 		}
 
 	case OpForEach:
@@ -2433,11 +2452,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		sub.renderTextInput(buf, op, geom, absX, absY)
 
 	case OpOverlay:
-		// Collect visible overlays for rendering after main content
-		visible := op.OverlayVisiblePtr == nil || *op.OverlayVisiblePtr
-		if visible {
-			sub.pendingOverlays = append(sub.pendingOverlays, idx)
-		}
+		// Collect overlay for rendering after main content
+		// Visibility is controlled by tui.If wrapping the overlay
+		sub.pendingOverlays = append(sub.pendingOverlays, pendingOverlay{op: op})
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -2472,6 +2489,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			style := DefaultStyle()
 			if op.BorderFG != nil {
 				style.FG = *op.BorderFG
+			}
+			if op.BorderBG != nil {
+				style.BG = *op.BorderBG
 			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
@@ -2840,9 +2860,8 @@ func (t *Template) renderTextInput(buf *Buffer, op *Op, geom *Geom, absX, absY i
 
 // renderOverlays renders all collected overlays after main content.
 func (t *Template) renderOverlays(buf *Buffer, screenW, screenH int16) {
-	for _, idx := range t.pendingOverlays {
-		op := &t.ops[idx]
-		t.renderOverlay(buf, op, screenW, screenH)
+	for _, po := range t.pendingOverlays {
+		t.renderOverlay(buf, po.op, screenW, screenH)
 	}
 }
 
@@ -2900,13 +2919,23 @@ func (t *Template) renderOverlay(buf *Buffer, op *Op, screenW, screenH int16) {
 
 	// Draw backdrop if enabled
 	if op.OverlayBackdrop {
-		backdropStyle := Style{FG: op.OverlayBackdropFG, Attr: AttrDim}
 		for y := int16(0); y < screenH; y++ {
 			for x := int16(0); x < screenW; x++ {
 				cell := buf.Get(int(x), int(y))
-				// Dim existing content
-				cell.Style = backdropStyle
+				// Dim existing content - preserve background, only modify FG and attr
+				cell.Style.FG = op.OverlayBackdropFG
+				cell.Style.Attr = AttrDim
 				buf.Set(int(x), int(y), cell)
+			}
+		}
+	}
+
+	// Fill overlay content area with background color if set
+	if op.OverlayBG.Mode != ColorDefault {
+		bgStyle := Style{BG: op.OverlayBG}
+		for y := posY; y < posY+overlayH && y < screenH; y++ {
+			for x := posX; x < posX+overlayW && x < screenW; x++ {
+				buf.Set(int(x), int(y), Cell{Rune: ' ', Style: bgStyle})
 			}
 		}
 	}

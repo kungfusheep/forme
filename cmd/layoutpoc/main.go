@@ -66,13 +66,13 @@ func main() {
 	state.VisibleProcesses = state.AllProcesses[:state.VisibleRows]
 
 	// Build UI declaratively
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.Text{Content: &state.Title},
 		tui.Text{Content: ""},
 
 		// CPU cores - horizontal row (manual since ForEach in Row not supported yet)
 		tui.Text{Content: "CPU Cores:"},
-		tui.Col{Gap: 1, Children: []any{
+		tui.VBox{Gap: 1, Children: []any{
 			tui.Progress{Value: &state.CPUCores[0], BarWidth: 8},
 			tui.Progress{Value: &state.CPUCores[1], BarWidth: 8},
 			tui.Progress{Value: &state.CPUCores[2], BarWidth: 8},
@@ -88,7 +88,7 @@ func main() {
 
 		// Process list - vertical ForEach with Row for each item
 		tui.ForEach(&state.VisibleProcesses, func(p *Process) any {
-			return tui.Row{Gap: 1, Children: []any{
+			return tui.HBox{Gap: 1, Children: []any{
 				tui.Text{Content: &p.Name},
 				tui.Progress{Value: &p.CPU, BarWidth: 15},
 				tui.Progress{Value: &p.Mem, BarWidth: 15},

@@ -71,10 +71,10 @@ func main() {
 
 	// Build the UI
 	app.SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				// Title
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: " TUI Component Showcase "},
 					},
@@ -83,11 +83,11 @@ func main() {
 				tui.Spacer{Height: 1},
 
 				// Main content row
-				tui.Row{
+				tui.HBox{
 					Gap: 2,
 					Children: []any{
 						// Left column - Leader, Sparkline, Spinner
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "Leader:", Style: tui.Style{Attr: tui.AttrBold}},
 								tui.Leader{Label: "Status", Value: "Active", Width: 25, Fill: '.'},
@@ -100,25 +100,25 @@ func main() {
 
 								tui.Spacer{Height: 1},
 								tui.Text{Content: "Spinners:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Row{
+								tui.HBox{
 									Children: []any{
 										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerBraille},
 										tui.Text{Content: " Braille"},
 									},
 								},
-								tui.Row{
+								tui.HBox{
 									Children: []any{
 										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerDots},
 										tui.Text{Content: " Dots"},
 									},
 								},
-								tui.Row{
+								tui.HBox{
 									Children: []any{
 										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerCircle},
 										tui.Text{Content: " Circle"},
 									},
 								},
-								tui.Row{
+								tui.HBox{
 									Children: []any{
 										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerLine},
 										tui.Text{Content: " Line"},
@@ -131,7 +131,7 @@ func main() {
 						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
 
 						// Middle column - Table
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "Table:", Style: tui.Style{Attr: tui.AttrBold}},
 								tui.Table{
@@ -153,7 +153,7 @@ func main() {
 						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
 
 						// Right column - TreeView
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "TreeView:", Style: tui.Style{Attr: tui.AttrBold}},
 								tui.TreeView{
@@ -172,10 +172,10 @@ func main() {
 				tui.Spacer{Height: 1},
 
 				// Bottom section - Tabs and Scrollbar
-				tui.Row{
+				tui.HBox{
 					Gap: 4,
 					Children: []any{
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "Tabs (Underline):", Style: tui.Style{Attr: tui.AttrBold}},
 								tui.Tabs{
@@ -186,7 +186,7 @@ func main() {
 								},
 							},
 						},
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "Tabs (Bracket):", Style: tui.Style{Attr: tui.AttrBold}},
 								tui.Tabs{
@@ -198,10 +198,10 @@ func main() {
 								},
 							},
 						},
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								tui.Text{Content: "Scrollbar:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Row{
+								tui.HBox{
 									Children: []any{
 										tui.Text{Content: "Pos: "},
 										tui.Scrollbar{

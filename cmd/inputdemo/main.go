@@ -28,14 +28,14 @@ func main() {
 
 	// Build view once - all updates via pointers
 	app.SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				tui.Text{Content: "Registration Form", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
 				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
 				tui.Spacer{Height: 1},
 
 				// Name field
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "    Name: "},
 						tui.TextInput{
@@ -50,7 +50,7 @@ func main() {
 				tui.Spacer{Height: 1},
 
 				// Email field
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "   Email: "},
 						tui.TextInput{
@@ -65,7 +65,7 @@ func main() {
 				tui.Spacer{Height: 1},
 
 				// Password field (masked)
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "Password: "},
 						tui.TextInput{

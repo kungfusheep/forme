@@ -99,10 +99,10 @@ func (t *Template) compile(node any, elemBase unsafe.Pointer, elemSize uintptr, 
 		t.compileText(v, elemBase, elemSize)
 	case tui.Progress:
 		t.compileProgress(v, elemBase, elemSize)
-	case tui.Row:
-		t.compileRow(v, elemBase, elemSize)
-	case tui.Col:
-		t.compileCol(v, elemBase, elemSize)
+	case tui.HBox:
+		t.compileHBox(v, elemBase, elemSize)
+	case tui.VBox:
+		t.compileVBox(v, elemBase, elemSize)
 	case tui.ForEachNode:
 		t.compileForEach(v, elemBase, elemSize, horizontal)
 	case tui.Custom:
@@ -164,7 +164,7 @@ func (t *Template) compileProgress(v tui.Progress, elemBase unsafe.Pointer, elem
 	t.instructions = append(t.instructions, inst)
 }
 
-func (t *Template) compileRow(v tui.Row, elemBase unsafe.Pointer, elemSize uintptr) {
+func (t *Template) compileHBox(v tui.HBox, elemBase unsafe.Pointer, elemSize uintptr) {
 	startIdx := len(t.instructions)
 	t.instructions = append(t.instructions, Inst{
 		Kind: KindRowStart,
@@ -181,7 +181,7 @@ func (t *Template) compileRow(v tui.Row, elemBase unsafe.Pointer, elemSize uintp
 	t.instructions[startIdx].ElemCount = len(t.instructions) - startIdx - 2
 }
 
-func (t *Template) compileCol(v tui.Col, elemBase unsafe.Pointer, elemSize uintptr) {
+func (t *Template) compileVBox(v tui.VBox, elemBase unsafe.Pointer, elemSize uintptr) {
 	startIdx := len(t.instructions)
 	t.instructions = append(t.instructions, Inst{
 		Kind: KindColStart,

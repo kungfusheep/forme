@@ -44,7 +44,7 @@ func main() {
 	children = append(children, tui.Spacer{Height: 1})
 	children = append(children, tui.Text{Content: &status, Style: tui.Style{FG: tui.Yellow}})
 
-	app.SetView(tui.Col{Children: children}).
+	app.SetView(tui.VBox{Children: children}).
 		JumpKey("g"). // Register 'g' as jump trigger
 		Handle("q", func(_ riffkey.Match) {
 			app.Stop()

@@ -20,7 +20,7 @@ func main() {
 
 	// Build view once - modal visibility controlled by pointer
 	app.SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				// Main content
 				tui.Text{Content: "Overlay Demo", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
@@ -31,16 +31,16 @@ func main() {
 				tui.Text{Content: "The modal will appear centered over this."},
 				tui.Spacer{Height: 1},
 
-				tui.Row{
+				tui.HBox{
 					Gap: 2,
 					Children: []any{
-						tui.Col{Children: []any{
+						tui.VBox{Children: []any{
 							tui.Text{Content: "Panel 1", Style: tui.Style{FG: tui.Yellow, Attr: tui.AttrBold}},
 							tui.Text{Content: "Some content here"},
 							tui.Text{Content: "More content"},
 						}}.Border(tui.BorderSingle),
 
-						tui.Col{Children: []any{
+						tui.VBox{Children: []any{
 							tui.Text{Content: "Panel 2", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
 							tui.Text{Content: "Different content"},
 							tui.Text{Content: "Even more content"},
@@ -52,23 +52,20 @@ func main() {
 				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
 				tui.Text{Content: "Press 'm' to toggle modal | 'q' to quit", Style: tui.Style{FG: tui.BrightBlack}},
 
-				// Modal overlay - only visible when showModal is true
-				tui.Overlay{
-					Visible:  &showModal,
+				// Modal overlay - controlled by tui.If
+				tui.If(&showModal).Eq(true).Then(tui.Overlay{
 					Backdrop: true,
 					Centered: true,
-					Child: tui.Col{
+					Child: tui.VBox{
 						Children: []any{
-							tui.Spacer{Height: 1},
-							tui.Text{Content: "  Modal Dialog  ", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
+							tui.Text{Content: "Modal Dialog  ", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
 							tui.Spacer{Height: 1},
 							tui.Text{Content: &modalMessage, Style: tui.Style{FG: tui.White}},
 							tui.Spacer{Height: 1},
 							tui.Text{Content: "Press 'm' to close", Style: tui.Style{FG: tui.BrightBlack}},
-							tui.Spacer{Height: 1},
 						},
-					}.Border(tui.BorderDouble),
-				},
+					}.Width(50).Border(tui.BorderRounded),
+				}),
 			},
 		},
 	)

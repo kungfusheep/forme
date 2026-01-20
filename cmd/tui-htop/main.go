@@ -326,18 +326,18 @@ func truncate(s string, max int) string {
 }
 
 func buildView(state *State, processList *tui.SelectionList) any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.Text{Content: "System Monitor", Style: tui.Style{Attr: tui.AttrBold}},
 		tui.Text{Content: ""},
 
 		// System stats
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "CPU: "},
 			tui.Text{Content: &state.CPUPercent},
 			tui.Text{Content: "%"},
 		}},
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "Mem: "},
 			tui.Text{Content: &state.MemUsed},
 			tui.Text{Content: " / "},
@@ -346,7 +346,7 @@ func buildView(state *State, processList *tui.SelectionList) any {
 			tui.Text{Content: &state.MemPercent},
 			tui.Text{Content: "%)"},
 		}},
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "Uptime: "},
 			tui.Text{Content: &state.Uptime},
 		}},

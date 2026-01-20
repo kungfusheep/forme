@@ -7,10 +7,10 @@ import (
 
 func TestSerialFlexPercentWidth(t *testing.T) {
 	// Test that PercentWidth distributes space correctly in a Row
-	tmpl := Build(Row{
+	tmpl := Build(HBox{
 		Children: []any{
-			Col{Children: []any{Text{Content: "Left"}}}.WidthPct(0.5),
-			Col{Children: []any{Text{Content: "Right"}}}.WidthPct(0.5),
+			VBox{Children: []any{Text{Content: "Left"}}}.WidthPct(0.5),
+			VBox{Children: []any{Text{Content: "Right"}}}.WidthPct(0.5),
 		},
 	})
 
@@ -32,10 +32,10 @@ func TestSerialFlexPercentWidth(t *testing.T) {
 
 func TestSerialFlexGrow(t *testing.T) {
 	// Test that FlexGrow distributes remaining space
-	tmpl := Build(Col{
+	tmpl := Build(VBox{
 		Children: []any{
 			Text{Content: "Header"}, // H=1
-			Col{Children: []any{Text{Content: "Content"}}}.Grow(1),
+			VBox{Children: []any{Text{Content: "Content"}}}.Grow(1),
 		},
 	})
 
@@ -57,7 +57,7 @@ func TestSerialFlexGrow(t *testing.T) {
 
 func TestSerialFlexBorder(t *testing.T) {
 	// Test that borders are drawn correctly
-	tmpl := Build(Col{
+	tmpl := Build(VBox{
 		Title: "Panel",
 		Children: []any{
 			Text{Content: "Inside"},
@@ -83,7 +83,7 @@ func TestSerialFlexBorder(t *testing.T) {
 
 func TestSerialFlexExplicitHeight(t *testing.T) {
 	// Test explicit height is respected
-	tmpl := Build(Col{
+	tmpl := Build(VBox{
 		Children: []any{
 			Text{Content: "Line 1"},
 			Text{Content: "Line 2"},
@@ -103,21 +103,21 @@ func TestSerialFlexExplicitHeight(t *testing.T) {
 
 func TestSerialFlexCombined(t *testing.T) {
 	// Test combining PercentWidth, FlexGrow, and Border
-	tmpl := Build(Col{
+	tmpl := Build(VBox{
 		Children: []any{
-			Row{
+			HBox{
 				Children: []any{
-					Col{
+					VBox{
 						Title:    "Left",
 						Children: []any{Text{Content: "L1"}},
 					}.WidthPct(0.5).Border(BorderSingle),
-					Col{
+					VBox{
 						Title:    "Right",
 						Children: []any{Text{Content: "R1"}},
 					}.WidthPct(0.5).Border(BorderSingle),
 				},
 			},
-			Col{
+			VBox{
 				Title:    "Log",
 				Children: []any{Text{Content: "Log entry"}},
 			}.Grow(1).Border(BorderSingle),
@@ -147,12 +147,12 @@ func TestSerialFlexWithPointerBindings(t *testing.T) {
 	status := "OK"
 	level := 75
 
-	tmpl := Build(Col{
+	tmpl := Build(VBox{
 		Children: []any{
-			Row{
+			HBox{
 				Children: []any{
-					Col{Children: []any{Text{Content: &status}}}.WidthPct(0.5),
-					Col{Children: []any{Progress{Value: &level, BarWidth: 10}}}.WidthPct(0.5),
+					VBox{Children: []any{Text{Content: &status}}}.WidthPct(0.5),
+					VBox{Children: []any{Progress{Value: &level, BarWidth: 10}}}.WidthPct(0.5),
 				},
 			},
 		},
@@ -185,7 +185,7 @@ func TestSerialFlexWithPointerBindings(t *testing.T) {
 
 func TestLeaderComponent(t *testing.T) {
 	t.Run("static leader renders correctly", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Leader{Label: "CPU", Value: "75%", Width: 20},
 				Leader{Label: "MEM", Value: "4.2GB", Width: 20},
@@ -212,7 +212,7 @@ func TestLeaderComponent(t *testing.T) {
 
 	t.Run("pointer binding updates dynamically", func(t *testing.T) {
 		value := "PASS"
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Leader{Label: "STATUS", Value: &value, Width: 25},
 			},
@@ -245,7 +245,7 @@ func TestLeaderComponent(t *testing.T) {
 	})
 
 	t.Run("custom fill character", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Leader{Label: "ITEM", Value: "OK", Width: 15, Fill: '-'},
 			},
@@ -263,7 +263,7 @@ func TestLeaderComponent(t *testing.T) {
 	})
 
 	t.Run("leader in bordered panel", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Title: "STATUS",
 			Children: []any{
 				Leader{Label: "RAM", Value: "PASS", Width: 20},
@@ -293,7 +293,7 @@ func TestTableComponent(t *testing.T) {
 			{"Bob", "25", "Designer"},
 			{"Carol", "35", "Manager"},
 		}
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Table{
 					Columns: []TableColumn{
@@ -401,7 +401,7 @@ func TestTableComponent(t *testing.T) {
 func TestSparklineComponent(t *testing.T) {
 	t.Run("basic sparkline renders", func(t *testing.T) {
 		values := []float64{1, 3, 5, 7, 5, 3, 1, 2, 4, 6, 8}
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Text{Content: "CPU:"},
 				Sparkline{Values: values},
@@ -475,7 +475,7 @@ func TestSparklineComponent(t *testing.T) {
 
 func TestHRuleVRuleSpacer(t *testing.T) {
 	t.Run("HRule fills width", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Text{Content: "Above"},
 				HRule{},
@@ -500,7 +500,7 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("HRule custom character", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				HRule{Char: '═'},
 			},
@@ -517,14 +517,14 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("VRule in row with height", func(t *testing.T) {
-		tmpl := Build(Row{
+		tmpl := Build(HBox{
 			Children: []any{
-				Col{Children: []any{
+				VBox{Children: []any{
 					Text{Content: "Left1"},
 					Text{Content: "Left2"},
 				}}.WidthPct(0.4),
 				VRule{},
-				Col{Children: []any{
+				VBox{Children: []any{
 					Text{Content: "Right1"},
 					Text{Content: "Right2"},
 				}}.WidthPct(0.5),
@@ -548,7 +548,7 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("Spacer creates gap", func(t *testing.T) {
-		tmpl := Build(Col{
+		tmpl := Build(VBox{
 			Children: []any{
 				Text{Content: "Line1"},
 				Spacer{Height: 2},
@@ -573,7 +573,7 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 func TestSpinnerComponent(t *testing.T) {
 	t.Run("Spinner renders current frame", func(t *testing.T) {
 		frame := 0
-		tmpl := Build(Row{
+		tmpl := Build(HBox{
 			Children: []any{
 				Spinner{Frame: &frame},
 				Text{Content: " Loading..."},
@@ -664,7 +664,7 @@ func TestSpinnerComponent(t *testing.T) {
 func TestScrollbarComponent(t *testing.T) {
 	t.Run("Vertical scrollbar at top", func(t *testing.T) {
 		pos := 0
-		tmpl := Build(Row{
+		tmpl := Build(HBox{
 			Children: []any{
 				Text{Content: "Content"},
 				Scrollbar{

@@ -78,7 +78,7 @@ type LogMessage struct {
 // Helper to build StatusPanel as TUI components
 // =============================================================================
 
-func buildStatusPanel(sp StatusPanel) tui.Col {
+func buildStatusPanel(sp StatusPanel) tui.VBox {
 	children := make([]any, 0, len(sp.Items)+1)
 
 	// Title
@@ -99,10 +99,10 @@ func buildStatusPanel(sp StatusPanel) tui.Col {
 		})
 	}
 
-	return tui.Col{Children: children}
+	return tui.VBox{Children: children}
 }
 
-func buildGauge(g Gauge) tui.Col {
+func buildGauge(g Gauge) tui.VBox {
 	pct := (g.Value - g.Min) / (g.Max - g.Min)
 	if pct < 0 {
 		pct = 0
@@ -115,7 +115,7 @@ func buildGauge(g Gauge) tui.Col {
 	barWidth := g.Width - len(g.Label) - len(valueStr) - 4
 
 	children := []any{
-		tui.Row{
+		tui.HBox{
 			Children: []any{
 				tui.Text{Content: g.Label, Style: tui.Style{FG: tui.Green}},
 				tui.Text{Content: " "},
@@ -135,10 +135,10 @@ func buildGauge(g Gauge) tui.Col {
 		})
 	}
 
-	return tui.Col{Children: children}
+	return tui.VBox{Children: children}
 }
 
-func buildSubsystemGrid(sg SubsystemGrid) tui.Col {
+func buildSubsystemGrid(sg SubsystemGrid) tui.VBox {
 	children := []any{
 		tui.Text{Content: sg.Title, Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
 	}
@@ -149,7 +149,7 @@ func buildSubsystemGrid(sg SubsystemGrid) tui.Col {
 		indicator := "●"
 		style := statusColor(sys.Status)
 
-		item := tui.Row{
+		item := tui.HBox{
 			Children: []any{
 				tui.Text{Content: indicator + " ", Style: style},
 				tui.Text{Content: sys.Name, Style: tui.Style{FG: tui.Green}},
@@ -159,15 +159,15 @@ func buildSubsystemGrid(sg SubsystemGrid) tui.Col {
 		currentRow = append(currentRow, item)
 
 		if (i+1)%sg.Columns == 0 || i == len(sg.Systems)-1 {
-			children = append(children, tui.Row{Gap: 2, Children: currentRow})
+			children = append(children, tui.HBox{Gap: 2, Children: currentRow})
 			currentRow = nil
 		}
 	}
 
-	return tui.Col{Children: children}
+	return tui.VBox{Children: children}
 }
 
-func buildMessageLog(ml MessageLog) tui.Col {
+func buildMessageLog(ml MessageLog) tui.VBox {
 	children := []any{
 		tui.Text{Content: "MESSAGES", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
 	}
@@ -183,7 +183,7 @@ func buildMessageLog(ml MessageLog) tui.Col {
 		timeStr := msg.Time.Format("15:04:05")
 		style := statusColor(msg.Level)
 
-		children = append(children, tui.Row{
+		children = append(children, tui.HBox{
 			Children: []any{
 				tui.Text{Content: timeStr + " ", Style: tui.Style{FG: tui.BrightBlack}},
 				tui.Text{Content: msg.Message, Style: style},
@@ -191,7 +191,7 @@ func buildMessageLog(ml MessageLog) tui.Col {
 		})
 	}
 
-	return tui.Col{Children: children}
+	return tui.VBox{Children: children}
 }
 
 func statusColor(s Status) tui.Style {
@@ -257,10 +257,10 @@ func main() {
 
 	// Build the avionics display
 	app.SetView(
-		tui.Col{
+		tui.VBox{
 			Children: []any{
 				// Header bar - minimal
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "MFD-1", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
 						tui.Spacer{},
@@ -271,7 +271,7 @@ func main() {
 				tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
 
 				// Mode selector - functional, not decorative
-				tui.Row{
+				tui.HBox{
 					Gap: 1,
 					Children: []any{
 						tui.Tabs{
@@ -287,11 +287,11 @@ func main() {
 				tui.Spacer{Height: 1},
 
 				// Main content - two columns
-				tui.Row{
+				tui.HBox{
 					Gap: 4,
 					Children: []any{
 						// Left column - Primary flight data
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								buildStatusPanel(StatusPanel{
 									Title: "FLIGHT DATA",
@@ -340,7 +340,7 @@ func main() {
 						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
 
 						// Right column - Systems and messages
-						tui.Col{
+						tui.VBox{
 							Children: []any{
 								buildSubsystemGrid(SubsystemGrid{
 									Title:   "SUBSYSTEMS",
@@ -365,7 +365,7 @@ func main() {
 				// Footer
 				tui.Spacer{Height: 1},
 				tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Row{
+				tui.HBox{
 					Children: []any{
 						tui.Text{Content: "N:NAV W:WPN D:DFNS TAB:CYCLE Q:EXIT", Style: tui.Style{FG: tui.BrightBlack}},
 					},

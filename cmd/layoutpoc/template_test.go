@@ -7,7 +7,7 @@ import (
 )
 
 func TestStaticText(t *testing.T) {
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.Text{Content: "Hello"},
 		tui.Text{Content: "World"},
 	}}
@@ -55,9 +55,9 @@ func TestNestedForEach(t *testing.T) {
 		}
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.ForEach(&rows, func(row *[]Item) any {
-			return tui.Row{Children: []any{
+			return tui.HBox{Children: []any{
 				tui.ForEach(row, func(item *Item) any {
 					return tui.Progress{Value: &item.CPU, BarWidth: 8}
 				}),
@@ -78,7 +78,7 @@ func TestNestedForEach(t *testing.T) {
 	}
 }
 
-func TestRowLayout(t *testing.T) {
+func TestHBoxLayout(t *testing.T) {
 	type Item struct {
 		Label string
 		Value int
@@ -89,7 +89,7 @@ func TestRowLayout(t *testing.T) {
 	}
 
 	ui := tui.ForEach(&items, func(item *Item) any {
-		return tui.Row{Gap: 1, Children: []any{
+		return tui.HBox{Gap: 1, Children: []any{
 			tui.Text{Content: &item.Label},
 			tui.Text{Content: &item.Value},
 		}}
@@ -153,7 +153,7 @@ func TestCustomComponent(t *testing.T) {
 		},
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.Text{Content: "Header"},
 		box,
 		tui.Text{Content: "Footer"},
@@ -252,9 +252,9 @@ func TestSliceReassignment(t *testing.T) {
 	}
 }
 
-// TestRowChildPositions tests that Row children are positioned correctly
-func TestRowChildPositions(t *testing.T) {
-	ui := tui.Row{Gap: 1, Children: []any{
+// TestHBoxChildPositions tests that Row children are positioned correctly
+func TestHBoxChildPositions(t *testing.T) {
+	ui := tui.HBox{Gap: 1, Children: []any{
 		tui.Text{Content: "AAA"},
 		tui.Text{Content: "BBB"},
 	}}
@@ -284,7 +284,7 @@ func TestForEachWithRowElements(t *testing.T) {
 	}
 
 	ui := tui.ForEach(&items, func(item *Item) any {
-		return tui.Row{Gap: 1, Children: []any{
+		return tui.HBox{Gap: 1, Children: []any{
 			tui.Text{Content: &item.A},
 			tui.Text{Content: &item.B},
 		}}
@@ -316,7 +316,7 @@ func TestForEachRowWithProgress(t *testing.T) {
 	}
 
 	ui := tui.ForEach(&items, func(item *Item) any {
-		return tui.Row{Gap: 1, Children: []any{
+		return tui.HBox{Gap: 1, Children: []any{
 			tui.Text{Content: &item.Name},
 			tui.Progress{Value: &item.Val, BarWidth: 5},
 		}}
@@ -328,7 +328,7 @@ func TestForEachRowWithProgress(t *testing.T) {
 
 	// Debug: print buffer
 	for y := 0; y < 3; y++ {
-		t.Logf("Row %d: ", y)
+		t.Logf("HBox %d: ", y)
 		for x := 0; x < 20; x++ {
 			r := buf.Get(x, y).Rune
 			if r == 0 {
@@ -369,10 +369,10 @@ func TestProcessListPattern(t *testing.T) {
 	}
 
 	// Build UI with nil VisibleProcesses (like demo)
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.Text{Content: "Header"},
 		tui.ForEach(&state.VisibleProcesses, func(p *Process) any {
-			return tui.Row{Gap: 1, Children: []any{
+			return tui.HBox{Gap: 1, Children: []any{
 				tui.Text{Content: &p.Name},
 				tui.Progress{Value: &p.CPU, BarWidth: 10},
 			}}
@@ -402,11 +402,11 @@ func TestProcessListPattern(t *testing.T) {
 	}
 }
 
-// TestForEachInRow tests horizontal ForEach inside Row
+// TestForEachInRow tests horizontal ForEach inside HBox
 func TestForEachInRow(t *testing.T) {
 	values := []float32{0.5, 0.5, 0.5}
 
-	ui := tui.Row{Children: []any{
+	ui := tui.HBox{Children: []any{
 		tui.ForEach(&values, func(v *float32) any {
 			return tui.Progress{Value: v, BarWidth: 5}
 		}),
@@ -479,9 +479,9 @@ func BenchmarkExecute10x10(b *testing.B) {
 		}
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.ForEach(&rows, func(row *[]Item) any {
-			return tui.Row{Children: []any{
+			return tui.HBox{Children: []any{
 				tui.ForEach(row, func(item *Item) any {
 					return tui.Progress{Value: &item.CPU, BarWidth: 8}
 				}),
@@ -513,9 +513,9 @@ func BenchmarkExecuteWithCulling(b *testing.B) {
 		}
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.ForEach(&rows, func(row *[]Item) any {
-			return tui.Row{Children: []any{
+			return tui.HBox{Children: []any{
 				tui.ForEach(row, func(item *Item) any {
 					return tui.Progress{Value: &item.CPU, BarWidth: 8}
 				}),
@@ -583,7 +583,7 @@ func BenchmarkStress1000Rows(b *testing.B) {
 	}
 
 	ui := tui.ForEach(&procs, func(p *Process) any {
-		return tui.Row{Gap: 1, Children: []any{
+		return tui.HBox{Gap: 1, Children: []any{
 			tui.Text{Content: &p.PID},
 			tui.Text{Content: &p.Name},
 			tui.Progress{Value: &p.CPU, BarWidth: 10},
@@ -626,46 +626,46 @@ func BenchmarkStressDashboard(b *testing.B) {
 	}
 
 	// Dashboard layout: 2x2 grid of panels
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.Text{Content: "=== Dashboard ==="},
-		tui.Row{Gap: 2, Children: []any{
+		tui.HBox{Gap: 2, Children: []any{
 			// Left column
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.Text{Content: "Panel 1"},
 				tui.ForEach(&panels[0], func(m *Metric) any {
-					return tui.Row{Gap: 1, Children: []any{
+					return tui.HBox{Gap: 1, Children: []any{
 						tui.Text{Content: &m.Label},
 						tui.Progress{Value: &m.Value, BarWidth: 15},
 					}}
 				}),
 			}},
 			// Right column
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.Text{Content: "Panel 2"},
 				tui.ForEach(&panels[1], func(m *Metric) any {
-					return tui.Row{Gap: 1, Children: []any{
+					return tui.HBox{Gap: 1, Children: []any{
 						tui.Text{Content: &m.Label},
 						tui.Progress{Value: &m.Value, BarWidth: 15},
 					}}
 				}),
 			}},
 		}},
-		tui.Row{Gap: 2, Children: []any{
+		tui.HBox{Gap: 2, Children: []any{
 			// Left column
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.Text{Content: "Panel 3"},
 				tui.ForEach(&panels[2], func(m *Metric) any {
-					return tui.Row{Gap: 1, Children: []any{
+					return tui.HBox{Gap: 1, Children: []any{
 						tui.Text{Content: &m.Label},
 						tui.Progress{Value: &m.Value, BarWidth: 15},
 					}}
 				}),
 			}},
 			// Right column
-			tui.Col{Children: []any{
+			tui.VBox{Children: []any{
 				tui.Text{Content: "Panel 4"},
 				tui.ForEach(&panels[3], func(m *Metric) any {
-					return tui.Row{Gap: 1, Children: []any{
+					return tui.HBox{Gap: 1, Children: []any{
 						tui.Text{Content: &m.Label},
 						tui.Progress{Value: &m.Value, BarWidth: 15},
 					}}
@@ -699,9 +699,9 @@ func BenchmarkStress10x100Grid(b *testing.B) {
 		}
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.ForEach(&rows, func(row *[]Cell) any {
-			return tui.Row{Children: []any{
+			return tui.HBox{Children: []any{
 				tui.ForEach(row, func(cell *Cell) any {
 					return tui.Progress{Value: &cell.Value, BarWidth: 10}
 				}),
@@ -734,9 +734,9 @@ func BenchmarkStress10x100GridCulled(b *testing.B) {
 		}
 	}
 
-	ui := tui.Col{Children: []any{
+	ui := tui.VBox{Children: []any{
 		tui.ForEach(&rows, func(row *[]Cell) any {
-			return tui.Row{Children: []any{
+			return tui.HBox{Children: []any{
 				tui.ForEach(row, func(cell *Cell) any {
 					return tui.Progress{Value: &cell.Value, BarWidth: 10}
 				}),

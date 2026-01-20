@@ -3509,7 +3509,7 @@ func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, no
 
 // buildWindowView builds the view for a single window
 func buildWindowView(w *Window, focused bool) any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Content area - imperative layer, efficiently updated
 		// Width is set for vertical splits to constrain each window's area
 		tui.LayerView{
@@ -3534,10 +3534,10 @@ func buildNodeView(node *SplitNode, focusedWindow *Window) any {
 
 	if node.Direction == SplitHorizontal {
 		// Stack vertically (Col)
-		return tui.Col{Children: []any{child0, child1}}
+		return tui.VBox{Children: []any{child0, child1}}
 	}
 	// Side by side (Row)
-	return tui.Row{Children: []any{child0, child1}}
+	return tui.HBox{Children: []any{child0, child1}}
 }
 
 func buildView(ed *Editor) any {
@@ -3545,7 +3545,7 @@ func buildView(ed *Editor) any {
 	windowTree := buildNodeView(ed.root, ed.focusedWindow)
 
 	// Wrap in Col to add wildmenu and status line at bottom
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		windowTree,
 		// Wildmenu appears above status line when active
 		tui.IfNode{
@@ -3558,7 +3558,7 @@ func buildView(ed *Editor) any {
 
 // buildFuzzyView creates the declarative fuzzy finder overlay view
 func buildFuzzyView(ed *Editor) any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Prompt line with query
 		tui.Text{Content: &ed.fuzzy.Query, Style: tui.Style{Attr: tui.AttrBold}},
 		// Results list with selection

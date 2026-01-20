@@ -215,10 +215,10 @@ func updateDisplay(state *State) {
 }
 
 func buildView(state *State) any {
-	return tui.Col{Children: []any{
+	return tui.VBox{Children: []any{
 		// Header
 		tui.Text{Content: "Disk Usage Analyzer", Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Row{Children: []any{
+		tui.HBox{Children: []any{
 			tui.Text{Content: "Path: "},
 			tui.Text{Content: &state.CurrentPath},
 		}},

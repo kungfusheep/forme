@@ -50,11 +50,11 @@ func main() {
 	title := fmt.Sprintf("Benchmark: %d items, bar=%d, async=%v", *items, *barWidth, *asyncMode)
 
 	// Build UI
-	ui := tui.Col{
+	ui := tui.VBox{
 		Children: []any{
 			tui.Text{Content: &title},
 			tui.ForEach(&processes, func(p *Process) any {
-				return tui.Row{Children: []any{
+				return tui.HBox{Children: []any{
 					tui.Text{Content: &p.Name},
 					tui.Text{Content: " CPU:"},
 					tui.Progress{Value: &p.CPU, BarWidth: int16(*barWidth)},

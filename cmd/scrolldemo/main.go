@@ -59,14 +59,14 @@ func main() {
 	scrollInfo := fmt.Sprintf("Line 0/%d", contentHeight)
 
 	// Build the view
-	view := tui.Col{Children: []any{
+	view := tui.VBox{Children: []any{
 		tui.Text{Content: "╔══════════════════════════════════════════════════════════════════════════════╗"},
 		tui.Text{Content: "║                    Layer Scrolling Demo - V2Template                         ║"},
 		tui.Text{Content: "╚══════════════════════════════════════════════════════════════════════════════╝"},
 		tui.Text{Content: ""},
 
 		// Main content area with layer - layer grows to fill container
-		tui.Col{
+		tui.VBox{
 			Title: "Scrollable Content",
 			Children: []any{
 				tui.LayerView{Layer: layer}.Grow(1),
@@ -74,7 +74,7 @@ func main() {
 		}.Border(tui.BorderDouble).BorderFG(tui.Cyan).Grow(1),
 
 		tui.Text{Content: ""},
-		tui.Row{Gap: 2, Children: []any{
+		tui.HBox{Gap: 2, Children: []any{
 			tui.Text{Content: &scrollInfo},
 			tui.Text{Content: "│ j/k:line  d/u:half  f/b:page  g/G:top/end  q:quit"},
 		}},

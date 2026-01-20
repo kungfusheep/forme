@@ -8,7 +8,7 @@ func TestV2SelectionListBasic(t *testing.T) {
 	items := []string{"Apple", "Banana", "Cherry"}
 	selected := 1
 
-	view := Col{Children: []any{
+	view := VBox{Children: []any{
 		&SelectionList{
 			Items:    &items,
 			Selected: &selected,
@@ -52,7 +52,7 @@ func TestV2SelectionListWithRender(t *testing.T) {
 	items := []string{"First", "Second", "Third"}
 	selected := 0
 
-	view := Col{Children: []any{
+	view := VBox{Children: []any{
 		&SelectionList{
 			Items:    &items,
 			Selected: &selected,
@@ -90,7 +90,7 @@ func TestV2SelectionListMaxVisible(t *testing.T) {
 		},
 	}
 
-	view := Col{Children: []any{list}}
+	view := VBox{Children: []any{list}}
 
 	tmpl := Build(view)
 	buf := NewBuffer(40, 10)
@@ -133,7 +133,7 @@ func TestV2SelectionListScrolling(t *testing.T) {
 		},
 	}
 
-	view := Col{Children: []any{list}}
+	view := VBox{Children: []any{list}}
 
 	tmpl := Build(view)
 	buf := NewBuffer(40, 10)
