@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/sys/unix"
 )
 
@@ -31,8 +33,11 @@ type Screen struct {
 	sigChan    chan os.Signal
 
 	// Rendering state
-	lastStyle Style      // Last style we emitted (for optimization)
+	lastStyle Style        // Last style we emitted (for optimization)
 	buf       bytes.Buffer // Reusable buffer for building output
+
+	// Synchronization - protects buffer access during resize
+	mu sync.Mutex
 }
 
 // Size represents dimensions.
@@ -139,9 +144,12 @@ func (s *Screen) EnterRawMode() error {
 	signal.Notify(s.sigChan, syscall.SIGWINCH)
 	go s.handleSignals()
 
-	// Enter alternate screen, hide cursor
+	// Enter alternate screen, hide cursor, enable bracketed paste
 	s.writeString("\x1b[?1049h") // Enter alternate screen
+	s.writeString("\x1b[2J")     // Clear screen (ensures front buffer matches actual screen)
+	s.writeString("\x1b[H")      // Move cursor to home position
 	s.writeString("\x1b[?25l")   // Hide cursor
+	s.writeString("\x1b[?2004h") // Enable bracketed paste mode
 
 	return nil
 }
@@ -152,7 +160,8 @@ func (s *Screen) ExitRawMode() error {
 		return nil
 	}
 
-	// Show cursor, exit alternate screen
+	// Disable bracketed paste, show cursor, exit alternate screen
+	s.writeString("\x1b[?2004l") // Disable bracketed paste mode
 	s.writeString("\x1b[?25h")   // Show cursor
 	s.writeString("\x1b[?1049l") // Exit alternate screen
 
@@ -277,6 +286,7 @@ func (s *Screen) handleSignals() {
 			continue
 		}
 		if width != s.width || height != s.height {
+			s.mu.Lock()
 			s.width = width
 			s.height = height
 			s.front.Resize(width, height)
@@ -286,7 +296,8 @@ func (s *Screen) handleSignals() {
 			s.back.Clear()
 			// Clear the actual terminal screen
 			s.writeString("\x1b[2J")
-			// Non-blocking send
+			s.mu.Unlock()
+			// Non-blocking send (outside lock to avoid potential deadlock)
 			select {
 			case s.resizeChan <- Size{Width: width, Height: height}:
 			default:
@@ -309,15 +320,22 @@ func GetFlushStats() FlushStats {
 	return lastFlushStats
 }
 
+// debugFlush enables detailed flush debugging via TUI_DEBUG_FLUSH env var
+var debugFlush = os.Getenv("TUI_DEBUG_FLUSH") != ""
+
 // Flush renders the back buffer to the terminal using per-cell diff.
 // Only cells that actually changed are written, with cursor positioning for each run.
 // Uses dirty row tracking to skip rows that haven't been modified.
 func (s *Screen) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.buf.Reset()
 
 	dirtyCount := 0
 	changedCount := 0
 	cursorX, cursorY := -1, -1
+	positionCount := 0
 
 	for y := 0; y < s.height; y++ {
 		// Fast path: skip rows not marked dirty (no writes since last frame)
@@ -333,6 +351,12 @@ func (s *Screen) Flush() {
 				continue
 			}
 
+			// skip placeholder cells (second half of double-width chars)
+			if backCell.Rune == 0 {
+				s.front.Set(x, y, backCell)
+				continue
+			}
+
 			// Cell changed - need to write it
 			if !rowChanged {
 				rowChanged = true
@@ -341,6 +365,12 @@ func (s *Screen) Flush() {
 
 			// Position cursor if not already there
 			if cursorX != x || cursorY != y {
+				if debugFlush && positionCount < 50 {
+					rw := runewidth.RuneWidth(backCell.Rune)
+					fmt.Fprintf(os.Stderr, "Flush: pos(%d,%d) cursor was (%d,%d) writing '%c' (U+%04X) width=%d\n",
+						x, y, cursorX, cursorY, backCell.Rune, backCell.Rune, rw)
+				}
+				positionCount++
 				s.buf.WriteString("\x1b[")
 				s.writeIntToBuf(y + 1)
 				s.buf.WriteByte(';')
@@ -350,9 +380,19 @@ func (s *Screen) Flush() {
 
 			s.writeCell(&s.buf, backCell)
 			s.front.Set(x, y, backCell)
-			cursorX = x + 1 // cursor advances after write
+			// cursor advances by the display width of the character
+			rw := runewidth.RuneWidth(backCell.Rune)
+			if rw == 0 {
+				rw = 1 // zero-width chars still advance cursor by 1 in most terminals
+			}
+			cursorX = x + rw
 			cursorY = y
 		}
+	}
+
+	if debugFlush {
+		fmt.Fprintf(os.Stderr, "Flush: %d dirty rows, %d changed rows, %d cursor positions, buf size %d\n",
+			dirtyCount, changedCount, positionCount, s.buf.Len())
 	}
 
 	// Reset style at end if we have changes
@@ -393,6 +433,9 @@ func (s *Screen) writeIntToBuf(n int) {
 
 // FlushFull does a complete redraw without diffing.
 func (s *Screen) FlushFull() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.buf.Reset()
 
 	// Clear screen and move to home
@@ -420,6 +463,9 @@ func (s *Screen) FlushFull() {
 // Renders at current cursor position using relative movement.
 // Returns the number of lines rendered for cleanup tracking.
 func (s *Screen) FlushInline(height int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.buf.Reset()
 
 	linesRendered := 0

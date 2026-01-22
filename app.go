@@ -12,11 +12,22 @@ import (
 // Debug timing
 var (
 	DebugTiming      bool
+	DebugFullRedraw  bool // force full redraws instead of diff-based (set TUI_FULL_REDRAW=1 to enable)
+	DebugFlush       bool // dump flush debug info (set TUI_DEBUG_FLUSH=1 to enable)
 	lastBuildTime    time.Duration
 	lastLayoutTime   time.Duration
 	lastRenderTime   time.Duration
 	lastFlushTime    time.Duration
 )
+
+func init() {
+	if os.Getenv("TUI_FULL_REDRAW") != "" {
+		DebugFullRedraw = true
+	}
+	if os.Getenv("TUI_DEBUG_FLUSH") != "" {
+		DebugFlush = true
+	}
+}
 
 // App is a TUI application with integrated input handling via riffkey.
 type App struct {
@@ -448,9 +459,15 @@ rendered:
 		a.linesUsed = a.screen.FlushInline(int(renderHeight))
 		a.pool.Swap() // Queue async clear
 	} else {
-		// Fullscreen mode: diff-based update
-		a.screen.Flush() // Builds buffer but doesn't write
-		a.pool.Swap()    // Queue async clear
+		// Fullscreen mode
+		if DebugFullRedraw {
+			// Full redraw mode - for debugging rendering issues
+			a.screen.FlushFull()
+		} else {
+			// Normal diff-based update
+			a.screen.Flush() // Builds buffer but doesn't write
+		}
+		a.pool.Swap() // Queue async clear
 
 		// Add cursor ops to same buffer - one syscall for everything
 		if a.cursorColorSet {

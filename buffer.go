@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Buffer is a 2D grid of cells representing a drawable surface.
@@ -192,6 +194,7 @@ func (b *Buffer) WriteStringFast(x, y int, s string, style Style, maxWidth int) 
 
 // WriteSpans writes multiple styled text spans sequentially.
 // Each span has its own style. Spans are written left to right.
+// Handles double-width CJK characters correctly.
 func (b *Buffer) WriteSpans(x, y int, spans []Span, maxWidth int) {
 	if y < 0 || y >= b.height {
 		return
@@ -205,14 +208,22 @@ func (b *Buffer) WriteSpans(x, y int, spans []Span, maxWidth int) {
 	written := 0
 	for _, span := range spans {
 		for _, r := range span.Text {
-			if written >= maxWidth || x >= b.width {
+			rw := runewidth.RuneWidth(r)
+			if rw == 0 {
+				rw = 1 // treat zero-width as 1 for positioning
+			}
+			if written+rw > maxWidth || x+rw > b.width {
 				return
 			}
 			if x >= 0 {
 				b.cells[base+x] = Cell{Rune: r, Style: span.Style}
+				// for double-width chars, fill second cell with placeholder
+				if rw == 2 && x+1 < b.width {
+					b.cells[base+x+1] = Cell{Rune: 0, Style: span.Style}
+				}
 			}
-			x++
-			written++
+			x += rw
+			written += rw
 		}
 	}
 }
