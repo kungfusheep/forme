@@ -425,7 +425,7 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case HBoxC:
 		return t.compileHBoxC(v, parent, depth, elemBase, elemSize)
 	case TextC:
-		return t.compileTextC(v, parent, depth)
+		return t.compileTextC(v, parent, depth, elemBase, elemSize)
 	case SpacerC:
 		return t.compileSpacerC(v, parent, depth)
 	case HRuleC:
@@ -450,6 +450,8 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileTabsC(v, parent, depth)
 	case ScrollbarC:
 		return t.compileScrollbarC(v, parent, depth)
+	case AutoTableC:
+		return t.compileAutoTableC(v, parent, depth)
 	case Custom:
 		return t.compileCustom(v, parent, depth)
 	}
@@ -1288,10 +1290,11 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 	)
 }
 
-func (t *Template) compileTextC(v TextC, parent int16, depth int) int16 {
+func (t *Template) compileTextC(v TextC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Parent:    parent,
 		TextStyle: v.style,
+		Width:     v.width,
 	}
 
 	switch val := v.content.(type) {
@@ -1299,8 +1302,14 @@ func (t *Template) compileTextC(v TextC, parent int16, depth int) int16 {
 		op.Kind = OpText
 		op.StaticStr = val
 	case *string:
-		op.Kind = OpTextPtr
-		op.StrPtr = val
+		// Check if pointer is within element range (ForEach/SelectionList iteration)
+		if elemBase != nil && isWithinRange(unsafe.Pointer(val), elemBase, elemSize) {
+			op.Kind = OpTextOff
+			op.StrOff = uintptr(unsafe.Pointer(val)) - uintptr(elemBase)
+		} else {
+			op.Kind = OpTextPtr
+			op.StrPtr = val
+		}
 	}
 
 	return t.addOp(op, depth)
@@ -1556,6 +1565,113 @@ func (t *Template) compileScrollbarC(v ScrollbarC, parent int16, depth int) int1
 	}, depth)
 }
 
+func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int16 {
+	rv := reflect.ValueOf(v.data)
+	if rv.Kind() != reflect.Slice {
+		// not a slice, render error text
+		return t.compileTextC(Text("AutoTable: expected slice"), parent, depth, nil, 0)
+	}
+
+	// get element type (handle pointer elements)
+	elemType := rv.Type().Elem()
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+	if elemType.Kind() != reflect.Struct {
+		return t.compileTextC(Text("AutoTable: expected slice of structs"), parent, depth, nil, 0)
+	}
+
+	// determine columns
+	columns := v.columns
+	if len(columns) == 0 {
+		// use all exported fields
+		for i := 0; i < elemType.NumField(); i++ {
+			f := elemType.Field(i)
+			if f.PkgPath == "" { // exported
+				columns = append(columns, f.Name)
+			}
+		}
+	}
+
+	if len(columns) == 0 {
+		return t.compileTextC(Text("AutoTable: no columns"), parent, depth, nil, 0)
+	}
+
+	// determine headers
+	headers := v.headers
+	if len(headers) == 0 {
+		headers = columns
+	}
+
+	// calculate column widths (max of header and all data)
+	widths := make([]int, len(columns))
+	for i, h := range headers {
+		widths[i] = len(h)
+	}
+
+	for i := 0; i < rv.Len(); i++ {
+		elem := rv.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
+		for j, col := range columns {
+			field := elem.FieldByName(col)
+			if field.IsValid() {
+				str := fmt.Sprintf("%v", field.Interface())
+				if len(str) > widths[j] {
+					widths[j] = len(str)
+				}
+			}
+		}
+	}
+
+	// build rows
+	var rows []any
+
+	// header row
+	var headerCells []any
+	for i, h := range headers {
+		headerCells = append(headerCells, Text(h).Width(int16(widths[i])).Style(v.headerStyle))
+	}
+	rows = append(rows, HBox.Gap(v.gap)(headerCells...))
+
+	// data rows
+	for i := 0; i < rv.Len(); i++ {
+		elem := rv.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
+
+		var cells []any
+		for j, col := range columns {
+			field := elem.FieldByName(col)
+			var str string
+			if field.IsValid() {
+				str = fmt.Sprintf("%v", field.Interface())
+			}
+
+			cell := Text(str).Width(int16(widths[j]))
+			if v.altRowStyle != nil && i%2 == 1 {
+				cell = cell.Style(*v.altRowStyle)
+			} else {
+				cell = cell.Style(v.rowStyle)
+			}
+			cells = append(cells, cell)
+		}
+		rows = append(rows, HBox.Gap(v.gap)(cells...))
+	}
+
+	// wrap in VBox (with optional border)
+	var vbox VBoxC
+	if v.border.Horizontal != 0 {
+		vbox = VBox.Border(v.border)(rows...)
+	} else {
+		vbox = VBox(rows...)
+	}
+
+	return t.compileVBoxC(vbox, parent, depth, nil, 0)
+}
+
 // Execute runs all three phases and renders to the buffer.
 func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 	// Clear pending overlays from previous frame
@@ -1669,13 +1785,23 @@ func (t *Template) computeIntrinsicWidth(idx int16) int16 {
 func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.Pointer) {
 	switch op.Kind {
 	case OpText:
-		geom.W = int16(utf8.RuneCountInString(op.StaticStr))
+		if op.Width > 0 {
+			geom.W = op.Width
+		} else {
+			geom.W = int16(utf8.RuneCountInString(op.StaticStr))
+		}
 
 	case OpTextPtr:
-		geom.W = int16(utf8.RuneCountInString(*op.StrPtr))
+		if op.Width > 0 {
+			geom.W = op.Width
+		} else {
+			geom.W = int16(utf8.RuneCountInString(*op.StrPtr))
+		}
 
 	case OpTextOff:
-		if elemBase != nil {
+		if op.Width > 0 {
+			geom.W = op.Width
+		} else if elemBase != nil {
 			strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
 			geom.W = int16(utf8.RuneCountInString(*strPtr))
 		} else {

@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	"riffkey"
-	. "forme"
+	"github.com/kungfusheep/riffkey"
+	. "github.com/kungfusheep/forme"
 )
 
 // demo showing flex layout with dynamic pointer bindings

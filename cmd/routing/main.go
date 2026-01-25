@@ -3,8 +3,8 @@ package main
 import (
 	"log"
 
-	"riffkey"
-	. "forme"
+	"github.com/kungfusheep/riffkey"
+	. "github.com/kungfusheep/forme"
 )
 
 // Home view state

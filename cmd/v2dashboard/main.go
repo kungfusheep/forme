@@ -9,8 +9,8 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"riffkey"
-	. "forme"
+	"github.com/kungfusheep/riffkey"
+	. "github.com/kungfusheep/forme"
 )
 
 // Grid returns a layout function that arranges children in a grid

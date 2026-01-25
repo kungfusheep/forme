@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "forme"
+	. "github.com/kungfusheep/forme"
 )
 
 func main() {
