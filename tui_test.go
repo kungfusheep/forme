@@ -84,6 +84,39 @@ func TestColor(t *testing.T) {
 			t.Error("expected c1 and c3 to not be equal")
 		}
 	})
+
+	t.Run("LerpColor", func(t *testing.T) {
+		black := RGB(0, 0, 0)
+		white := RGB(255, 255, 255)
+
+		// t=0 should return first color
+		c := LerpColor(black, white, 0)
+		if c.R != 0 || c.G != 0 || c.B != 0 {
+			t.Errorf("t=0: expected black, got %+v", c)
+		}
+
+		// t=1 should return second color
+		c = LerpColor(black, white, 1)
+		if c.R != 255 || c.G != 255 || c.B != 255 {
+			t.Errorf("t=1: expected white, got %+v", c)
+		}
+
+		// t=0.5 should return midpoint
+		c = LerpColor(black, white, 0.5)
+		if c.R != 127 || c.G != 127 || c.B != 127 {
+			t.Errorf("t=0.5: expected gray(127), got %+v", c)
+		}
+
+		// test clamping
+		c = LerpColor(black, white, -1)
+		if c.R != 0 {
+			t.Errorf("t=-1: should clamp to 0, got %+v", c)
+		}
+		c = LerpColor(black, white, 2)
+		if c.R != 255 {
+			t.Errorf("t=2: should clamp to 1, got %+v", c)
+		}
+	})
 }
 
 func TestStyle(t *testing.T) {

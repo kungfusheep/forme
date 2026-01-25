@@ -3115,3 +3115,94 @@ func TestWidgetReceivesAvailWidth(t *testing.T) {
 		}
 	})
 }
+
+func TestAutoTable(t *testing.T) {
+	type Person struct {
+		Name string
+		Age  int
+		City string
+	}
+
+	people := []Person{
+		{"Alice", 30, "NYC"},
+		{"Bob", 25, "LA"},
+		{"Charlie", 35, "Chicago"},
+	}
+
+	t.Run("auto columns from struct", func(t *testing.T) {
+		tmpl := Build(AutoTable(people))
+		buf := NewBuffer(40, 10)
+		tmpl.Execute(buf, 40, 10)
+
+		// Header row should have field names
+		header := buf.GetLine(0)
+		if !containsSubstring(header, "Name") {
+			t.Errorf("header missing 'Name': got %q", header)
+		}
+		if !containsSubstring(header, "Age") {
+			t.Errorf("header missing 'Age': got %q", header)
+		}
+		if !containsSubstring(header, "City") {
+			t.Errorf("header missing 'City': got %q", header)
+		}
+
+		// Data rows
+		row1 := buf.GetLine(1)
+		if !containsSubstring(row1, "Alice") {
+			t.Errorf("row 1 missing 'Alice': got %q", row1)
+		}
+
+		row2 := buf.GetLine(2)
+		if !containsSubstring(row2, "Bob") {
+			t.Errorf("row 2 missing 'Bob': got %q", row2)
+		}
+	})
+
+	t.Run("select columns", func(t *testing.T) {
+		tmpl := Build(AutoTable(people).Columns("Name", "City"))
+		buf := NewBuffer(40, 10)
+		tmpl.Execute(buf, 40, 10)
+
+		header := buf.GetLine(0)
+		if !containsSubstring(header, "Name") {
+			t.Errorf("header missing 'Name': got %q", header)
+		}
+		if !containsSubstring(header, "City") {
+			t.Errorf("header missing 'City': got %q", header)
+		}
+		// Age should NOT be present
+		if containsSubstring(header, "Age") {
+			t.Errorf("header should not have 'Age': got %q", header)
+		}
+	})
+
+	t.Run("custom headers", func(t *testing.T) {
+		tmpl := Build(AutoTable(people).Columns("Name", "Age").Headers("Person", "Years"))
+		buf := NewBuffer(40, 10)
+		tmpl.Execute(buf, 40, 10)
+
+		header := buf.GetLine(0)
+		if !containsSubstring(header, "Person") {
+			t.Errorf("header missing 'Person': got %q", header)
+		}
+		if !containsSubstring(header, "Years") {
+			t.Errorf("header missing 'Years': got %q", header)
+		}
+	})
+
+	t.Run("pointer slice", func(t *testing.T) {
+		ptrs := []*Person{
+			{"Dave", 40, "Boston"},
+			{"Eve", 28, "Seattle"},
+		}
+
+		tmpl := Build(AutoTable(ptrs))
+		buf := NewBuffer(40, 10)
+		tmpl.Execute(buf, 40, 10)
+
+		row1 := buf.GetLine(1)
+		if !containsSubstring(row1, "Dave") {
+			t.Errorf("row 1 missing 'Dave': got %q", row1)
+		}
+	})
+}

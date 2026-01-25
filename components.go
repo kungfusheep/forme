@@ -286,6 +286,7 @@ func Widget(
 type TextC struct {
 	content any // string or *string
 	style   Style
+	width   int16 // explicit width (0 = content-sized)
 }
 
 func Text(content any) TextC {
@@ -334,6 +335,11 @@ func (t TextC) Inverse() TextC {
 
 func (t TextC) Strikethrough() TextC {
 	t.style.Attr |= AttrStrikethrough
+	return t
+}
+
+func (t TextC) Width(w int16) TextC {
+	t.width = w
 	return t
 }
 
@@ -877,4 +883,68 @@ func (s ScrollbarC) TrackStyle(st Style) ScrollbarC {
 func (s ScrollbarC) ThumbStyle(st Style) ScrollbarC {
 	s.thumbStyle = st
 	return s
+}
+
+// ============================================================================
+// AutoTable - Automatic table from slice of structs
+// ============================================================================
+
+type AutoTableC struct {
+	data        any      // slice of structs
+	columns     []string // field names to display (nil = all exported)
+	headers     []string // custom header names (parallel to columns)
+	headerStyle Style
+	rowStyle    Style
+	altRowStyle *Style
+	gap         int8
+	border      BorderStyle
+}
+
+// AutoTable creates a table from a slice of structs.
+// Pass a slice like []MyStruct or []*MyStruct.
+func AutoTable(data any) AutoTableC {
+	return AutoTableC{
+		data:        data,
+		headerStyle: Style{Attr: AttrBold},
+		gap:         1,
+	}
+}
+
+// Columns selects which struct fields to display and in what order.
+// Field names are case-sensitive and must match exported struct fields.
+func (t AutoTableC) Columns(names ...string) AutoTableC {
+	t.columns = names
+	return t
+}
+
+// Headers sets custom header labels for the columns.
+// Must be called after Columns() and have the same number of entries.
+func (t AutoTableC) Headers(names ...string) AutoTableC {
+	t.headers = names
+	return t
+}
+
+func (t AutoTableC) HeaderStyle(s Style) AutoTableC {
+	t.headerStyle = s
+	return t
+}
+
+func (t AutoTableC) RowStyle(s Style) AutoTableC {
+	t.rowStyle = s
+	return t
+}
+
+func (t AutoTableC) AltRowStyle(s Style) AutoTableC {
+	t.altRowStyle = &s
+	return t
+}
+
+func (t AutoTableC) Gap(g int8) AutoTableC {
+	t.gap = g
+	return t
+}
+
+func (t AutoTableC) Border(b BorderStyle) AutoTableC {
+	t.border = b
+	return t
 }

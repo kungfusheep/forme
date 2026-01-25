@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"riffkey"
+	"github.com/kungfusheep/riffkey"
 )
 
 // Debug timing

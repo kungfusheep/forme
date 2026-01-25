@@ -89,6 +89,21 @@ func Hex(hex uint32) Color {
 	}
 }
 
+// LerpColor blends between two colors. t=0 returns a, t=1 returns b.
+func LerpColor(a, b Color, t float64) Color {
+	// Clamp t to 0-1
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	return RGB(
+		uint8(float64(a.R)+t*(float64(b.R)-float64(a.R))),
+		uint8(float64(a.G)+t*(float64(b.G)-float64(a.G))),
+		uint8(float64(a.B)+t*(float64(b.B)-float64(a.B))),
+	)
+}
+
 // Standard basic colors for convenience.
 var (
 	Black   = BasicColor(0)
@@ -119,8 +134,8 @@ func (c Color) Equal(other Color) bool {
 // Style combines foreground, background colors and attributes.
 type Style struct {
 	FG        Color
-	BG        Color         // text background (behind characters)
-	Fill      Color         // container fill (entire area)
+	BG        Color // text background (behind characters)
+	Fill      Color // container fill (entire area)
 	Attr      Attribute
 	Transform TextTransform // text case transformation (uppercase, lowercase, etc.)
 }

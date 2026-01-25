@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"riffkey"
-	. "forme"
+	"github.com/kungfusheep/riffkey"
+	. "github.com/kungfusheep/forme"
 )
 
 func main() {
