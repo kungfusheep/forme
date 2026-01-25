@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 func main() {

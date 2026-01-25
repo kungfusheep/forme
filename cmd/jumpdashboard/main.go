@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 // State - using structs that can be referenced

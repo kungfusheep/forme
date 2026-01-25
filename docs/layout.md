@@ -204,68 +204,113 @@ HBox(
 
 ## Custom Layouts
 
-When VBox/HBox aren't sufficient, use a Layer with direct buffer access.
+When VBox/HBox aren't sufficient, use `Arrange` with a custom `LayoutFunc`:
 
-### Layer with Manual Rendering
+```go
+// LayoutFunc receives child sizes and available space, returns positions
+type LayoutFunc func(children []ChildSize, availW, availH int) []Rect
+
+Arrange(myLayoutFunc)(children...)
+```
+
+### Grid Layout
+
+```go
+func Grid(cols, cellW, cellH int) LayoutFunc {
+    return func(children []ChildSize, availW, availH int) []Rect {
+        rects := make([]Rect, len(children))
+        for i := range children {
+            col := i % cols
+            row := i / cols
+            rects[i] = Rect{
+                X: col * cellW,
+                Y: row * cellH,
+                W: cellW,
+                H: cellH,
+            }
+        }
+        return rects
+    }
+}
+
+// Usage
+Arrange(Grid(3, 20, 5))(  // 3 columns, 20 wide, 5 tall
+    Text("A"), Text("B"), Text("C"),
+    Text("D"), Text("E"), Text("F"),
+)
+```
+
+### Adaptive Layout
+
+```go
+func Masonry(colWidth int) LayoutFunc {
+    return func(children []ChildSize, availW, availH int) []Rect {
+        cols := availW / colWidth
+        if cols < 1 { cols = 1 }
+
+        colHeights := make([]int, cols)
+        rects := make([]Rect, len(children))
+
+        for i, child := range children {
+            // Find shortest column
+            minCol := 0
+            for c := 1; c < cols; c++ {
+                if colHeights[c] < colHeights[minCol] {
+                    minCol = c
+                }
+            }
+
+            rects[i] = Rect{
+                X: minCol * colWidth,
+                Y: colHeights[minCol],
+                W: colWidth,
+                H: child.MinH,
+            }
+            colHeights[minCol] += child.MinH
+        }
+        return rects
+    }
+}
+```
+
+## Direct Drawing
+
+For completely custom rendering (not layout), use Layer with direct buffer access:
 
 ```go
 layer := NewLayer()
 
-// Render function called automatically when viewport changes
 layer.Render = func() {
     buf := layer.Buffer()
-    width, height := buf.Width(), buf.Height()
+    w, h := buf.Width(), buf.Height()
 
-    // Draw custom layout
+    // Absolute positioning
     buf.WriteString(0, 0, "Top-left", Style{})
-    buf.WriteString(width-10, 0, "Top-right", Style{})
-    buf.WriteString(width/2-5, height/2, "Centered", Style{FG: Cyan})
+    buf.WriteString(w-10, 0, "Top-right", Style{})
+
+    // Draw shapes
+    for x := 0; x < 20; x++ {
+        buf.Set(x, 5, Cell{Rune: '─', Style: Style{FG: Yellow}})
+    }
 }
 
-// Use in layout
 VBox(
     Text("Header"),
     LayerView(layer).ViewHeight(20),
 )
 ```
 
-### Direct Buffer Access
-
-```go
-buf := NewBuffer(80, 50)
-
-// Absolute positioning
-buf.WriteString(10, 5, "At position (10, 5)", Style{})
-
-// Draw shapes
-for x := 0; x < 20; x++ {
-    buf.Set(x, 10, Cell{Rune: '─', Style: Style{FG: Yellow}})
-}
-
-// Fill regions
-for y := 0; y < 5; y++ {
-    for x := 0; x < 10; x++ {
-        buf.Set(x, y, Cell{Rune: ' ', Style: Style{BG: Blue}})
-    }
-}
-
-layer := NewLayer()
-layer.SetBuffer(buf)
-```
-
-### Scrollable Custom Content
+### Scrollable Content
 
 ```go
 layer := NewLayer()
 
-// Create content larger than viewport
 buf := NewBuffer(80, 1000)
 for i := 0; i < 1000; i++ {
     buf.WriteString(0, i, fmt.Sprintf("Line %d", i), Style{})
 }
 layer.SetBuffer(buf)
 
-// LayerView handles scrolling
 VBox(
     LayerView(layer).ViewHeight(20),
     Text("j/k to scroll"),

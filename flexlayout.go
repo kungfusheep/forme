@@ -1,4 +1,4 @@
-package tui
+package forme
 
 // Three-phase layout system: Update → Layout → Draw
 //

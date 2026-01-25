@@ -1,4 +1,4 @@
-module tui
+module forme
 
 go 1.25.1
 

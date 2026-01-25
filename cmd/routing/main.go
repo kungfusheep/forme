@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 // Home view state

@@ -264,3 +264,59 @@ TabsStylePipe     // NAV | EDIT | HELP
 TabsStyleNone     // NAV  EDIT  HELP
 ```
 
+## Widget
+
+Fully custom components when you need complete control:
+
+```go
+Widget(
+    // Measure: return natural size given available width
+    func(availW int16) (w, h int16) {
+        return 20, 3
+    },
+    // Render: draw directly to buffer
+    func(buf *Buffer, x, y, w, h int16) {
+        buf.WriteString(int(x), int(y), "Custom content", Style{})
+    },
+)
+```
+
+### Gradient Progress Bar
+
+```go
+progress := 0.65
+
+Widget(
+    func(availW int16) (w, h int16) { return availW, 1 },
+    func(buf *Buffer, x, y, w, h int16) {
+        filled := int(float64(w) * progress)
+        for i := int16(0); i < w; i++ {
+            if int(i) < filled {
+                buf.Set(int(x+i), int(y), Cell{Rune: '█', Style: Style{FG: Green}})
+            } else {
+                buf.Set(int(x+i), int(y), Cell{Rune: '░', Style: Style{FG: BrightBlack}})
+            }
+        }
+    },
+)
+```
+
+### Sparkline
+
+```go
+data := []float64{0.2, 0.5, 0.8, 0.3, 0.9}
+
+Widget(
+    func(availW int16) (w, h int16) { return int16(len(data)), 1 },
+    func(buf *Buffer, x, y, w, h int16) {
+        chars := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+        for i, v := range data {
+            idx := int(v * float64(len(chars)-1))
+            buf.Set(int(x)+i, int(y), Cell{Rune: chars[idx], Style: Style{FG: Cyan}})
+        }
+    },
+)
+```
+
+Use Widget when built-in components don't fit your needs. You handle all measurement and rendering.
+

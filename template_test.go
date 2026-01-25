@@ -1,4 +1,4 @@
-package tui
+package forme
 
 import (
 	"fmt"
@@ -808,7 +808,7 @@ func TestV2ConditionInsideForEach(t *testing.T) {
 }
 
 // TestV2ConditionNodeBuilder tests the builder-style If() conditionals
-// using tui.If(&x).Eq(true).Then(...) syntax
+// using forme.If(&x).Eq(true).Then(...) syntax
 func TestV2ConditionNodeBuilder(t *testing.T) {
 	showGraph := true
 	showProcs := false
@@ -3004,4 +3004,114 @@ func TestFunctionalAPI_ChainedMethods(t *testing.T) {
 	if !strings.Contains(line0, "┌") {
 		t.Errorf("expected border, got %q", line0)
 	}
+}
+
+// TestWidgetReceivesAvailWidth tests that Widget's measure function receives
+// the correct available width from VBox parent.
+func TestWidgetReceivesAvailWidth(t *testing.T) {
+	t.Run("widget fills available width in VBox", func(t *testing.T) {
+		// Track what width the measure function receives
+		var receivedWidth int16
+
+		widget := Widget(
+			func(availW int16) (w, h int16) {
+				receivedWidth = availW
+				return availW, 1 // fill width, 1 line tall
+			},
+			func(buf *Buffer, x, y, w, h int16) {
+				// Draw a bar filling the width
+				for i := int16(0); i < w; i++ {
+					buf.Set(int(x+i), int(y), Cell{Rune: '█', Style: Style{FG: Green}})
+				}
+			},
+		)
+
+		tmpl := Build(VBox(
+			Text("Header"),
+			widget,
+			Text("Footer"),
+		))
+
+		buf := NewBuffer(40, 5)
+		tmpl.Execute(buf, 40, 5)
+
+		// Widget should receive the full width (40)
+		if receivedWidth != 40 {
+			t.Errorf("widget measure received availW=%d, want 40", receivedWidth)
+		}
+
+		// Check that widget rendered something on line 1
+		line1 := buf.GetLine(1)
+		if !strings.Contains(line1, "█") {
+			t.Errorf("widget should render bars, got %q", line1)
+		}
+
+		// Verify widget fills the full width
+		count := strings.Count(line1, "█")
+		if count != 40 {
+			t.Errorf("widget should fill 40 chars, got %d", count)
+		}
+	})
+
+	t.Run("widget with fixed width in HBox", func(t *testing.T) {
+		// Widget that returns fixed width
+		widget := Widget(
+			func(availW int16) (w, h int16) {
+				return 10, 1 // fixed 10 chars wide
+			},
+			func(buf *Buffer, x, y, w, h int16) {
+				for i := int16(0); i < w; i++ {
+					buf.Set(int(x+i), int(y), Cell{Rune: 'X', Style: Style{}})
+				}
+			},
+		)
+
+		tmpl := Build(HBox.Gap(1)(
+			Text("A"),
+			widget,
+			Text("B"),
+		))
+
+		buf := NewBuffer(30, 1)
+		tmpl.Execute(buf, 30, 1)
+
+		line := buf.GetLine(0)
+		t.Logf("line: %q", line)
+
+		// Should have A, then 10 X's, then B
+		if line[0] != 'A' {
+			t.Errorf("expected A at start, got %q", line)
+		}
+		if !strings.Contains(line, "XXXXXXXXXX") {
+			t.Errorf("expected 10 X's, got %q", line)
+		}
+	})
+
+	t.Run("widget inside bordered VBox", func(t *testing.T) {
+		var receivedWidth int16
+
+		widget := Widget(
+			func(availW int16) (w, h int16) {
+				receivedWidth = availW
+				return availW, 1
+			},
+			func(buf *Buffer, x, y, w, h int16) {
+				for i := int16(0); i < w; i++ {
+					buf.Set(int(x+i), int(y), Cell{Rune: '-', Style: Style{}})
+				}
+			},
+		)
+
+		tmpl := Build(VBox.Border(BorderSingle)(
+			widget,
+		))
+
+		buf := NewBuffer(20, 3)
+		tmpl.Execute(buf, 20, 3)
+
+		// Widget should receive width minus border (20 - 2 = 18)
+		if receivedWidth != 18 {
+			t.Errorf("widget measure received availW=%d, want 18", receivedWidth)
+		}
+	})
 }

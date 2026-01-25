@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "tui"
+	. "forme"
 )
 
 func main() {

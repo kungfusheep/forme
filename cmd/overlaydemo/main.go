@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 func main() {

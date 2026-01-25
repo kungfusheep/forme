@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 // demo showing flex layout with dynamic pointer bindings

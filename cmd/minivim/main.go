@@ -1,4 +1,4 @@
-// minivim: A tiny vim-like editor demonstrating riffkey TextInput with tui framework
+// minivim: A tiny vim-like editor demonstrating riffkey TextInput with forme framework
 //
 // Normal mode: j/k=move, i=insert, a=append, o=new line, dd=delete line, q=quit
 // Insert mode: Type text, Esc=back to normal, all standard editing keys work
@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	"forme"
 )
 
 // Layout constants
@@ -104,9 +104,9 @@ type Window struct {
 	visualMode     VisualMode
 
 	// Rendering
-	contentLayer *tui.Layer
+	contentLayer *forme.Layer
 	lineNumWidth int
-	StatusBar    []tui.Span
+	StatusBar    []forme.Span
 	renderedMin  int
 	renderedMax  int
 
@@ -200,7 +200,7 @@ type Editor struct {
 	root          *SplitNode // root of the split tree
 	focusedWindow *Window    // currently focused window
 
-	app *tui.App // reference for cursor control
+	app *forme.App // reference for cursor control
 
 	// Global state
 	Mode       string // "NORMAL", "INSERT", or "VISUAL"
@@ -232,7 +232,7 @@ type Editor struct {
 	cmdMatches          []string   // filtered matches for current input
 	cmdMatchSelected    int        // selected match index
 	cmdCompletionActive bool       // whether completion popup is showing
-	cmdWildmenuSpans    []tui.Span // rendered wildmenu line
+	cmdWildmenuSpans    []forme.Span // rendered wildmenu line
 
 	// Debounce for C-a/C-x
 	lastNumberModify time.Time
@@ -915,7 +915,7 @@ func (ed *Editor) EnterCommand(prompt string) {
 // =============================================================================
 
 // StopMacroRecording stops recording and saves the macro to the register
-func (ed *Editor) StopMacroRecording(app *tui.App) {
+func (ed *Editor) StopMacroRecording(app *forme.App) {
 	macro := app.Input().StopRecording()
 	ed.macros[ed.recordingMacro] = macro
 	ed.StatusLine = fmt.Sprintf("Recorded @%c (%d keys)", ed.recordingMacro, len(macro))
@@ -924,7 +924,7 @@ func (ed *Editor) StopMacroRecording(app *tui.App) {
 }
 
 // StartMacroRecording begins recording keystrokes to the given register
-func (ed *Editor) StartMacroRecording(app *tui.App, reg rune) {
+func (ed *Editor) StartMacroRecording(app *forme.App, reg rune) {
 	ed.recordingMacro = reg
 	app.Input().StartRecording()
 	ed.StatusLine = fmt.Sprintf("Recording @%c...", reg)
@@ -932,7 +932,7 @@ func (ed *Editor) StartMacroRecording(app *tui.App, reg rune) {
 }
 
 // PlayMacro executes the macro stored in the given register
-func (ed *Editor) PlayMacro(app *tui.App, reg rune) {
+func (ed *Editor) PlayMacro(app *forme.App, reg rune) {
 	if macro, ok := ed.macros[reg]; ok && len(macro) > 0 {
 		ed.lastMacro = reg
 		app.Input().ExecuteMacro(macro)
@@ -948,7 +948,7 @@ func (ed *Editor) PlayMacro(app *tui.App, reg rune) {
 // =============================================================================
 
 // promptForRegister pushes a router that waits for a register (a-z) and calls the action
-func (ed *Editor) promptForRegister(app *tui.App, action func(rune)) {
+func (ed *Editor) promptForRegister(app *forme.App, action func(rune)) {
 	router := riffkey.NewRouter()
 	router.HandleUnmatched(func(k riffkey.Key) bool {
 		app.Pop()
@@ -962,7 +962,7 @@ func (ed *Editor) promptForRegister(app *tui.App, action func(rune)) {
 }
 
 // promptForChar pushes a router that waits for any printable character and calls the action
-func (ed *Editor) promptForChar(app *tui.App, action func(rune)) {
+func (ed *Editor) promptForChar(app *forme.App, action func(rune)) {
 	router := riffkey.NewRouter().Name("char-prompt")
 	router.HandleUnmatched(func(k riffkey.Key) bool {
 		if k.Rune != 0 && k.Mod == riffkey.ModNone {
@@ -1131,7 +1131,7 @@ func (ed *Editor) MotionToLineStart() Range {
 // =============================================================================
 
 // ChangeLine clears the current line and enters insert mode (cc, S)
-func (ed *Editor) ChangeLine(app *tui.App) {
+func (ed *Editor) ChangeLine(app *forme.App) {
 	ed.saveUndo()
 	ed.buf().Lines[ed.win().Cursor] = ""
 	ed.win().Col = 0
@@ -1178,7 +1178,7 @@ func (ed *Editor) SwapVisualEnds() {
 }
 
 // VisualDelete deletes the visual selection (d)
-func (ed *Editor) VisualDelete(app *tui.App) {
+func (ed *Editor) VisualDelete(app *forme.App) {
 	ed.saveUndo()
 	r := ed.VisualRange()
 
@@ -1210,7 +1210,7 @@ func (ed *Editor) VisualDelete(app *tui.App) {
 }
 
 // VisualChange deletes selection and enters insert mode (c)
-func (ed *Editor) VisualChange(app *tui.App) {
+func (ed *Editor) VisualChange(app *forme.App) {
 	ed.saveUndo()
 	r := ed.VisualRange()
 
@@ -1269,7 +1269,7 @@ func (ed *Editor) VisualChange(app *tui.App) {
 }
 
 // VisualYank yanks the visual selection (y)
-func (ed *Editor) VisualYank(app *tui.App) {
+func (ed *Editor) VisualYank(app *forme.App) {
 	r := ed.VisualRange()
 
 	switch ed.win().visualMode {
@@ -1325,7 +1325,7 @@ func (ed *Editor) VisualExpandToWordObject(start, end int) {
 
 // VisualBlockInsert inserts text at the start of each line in the block (I)
 // After exiting insert mode, the typed text is replicated to all lines
-func (ed *Editor) VisualBlockInsert(app *tui.App) {
+func (ed *Editor) VisualBlockInsert(app *forme.App) {
 	if ed.win().visualMode != VisualBlock {
 		// Fall back to regular insert at line start for non-block modes
 		ed.exitVisualMode(app)
@@ -1356,7 +1356,7 @@ func (ed *Editor) VisualBlockInsert(app *tui.App) {
 
 // VisualBlockAppend appends text at the end of each line in the block (A)
 // After exiting insert mode, the typed text is replicated to all lines
-func (ed *Editor) VisualBlockAppend(app *tui.App) {
+func (ed *Editor) VisualBlockAppend(app *forme.App) {
 	if ed.win().visualMode != VisualBlock {
 		// Fall back to regular append at line end for non-block modes
 		ed.exitVisualMode(app)
@@ -1565,20 +1565,20 @@ func (ed *Editor) buildWildmenuSpans() {
 	}
 
 	// Style for normal and selected items
-	normalStyle := tui.Style{}
-	selectedStyle := tui.Style{Attr: tui.AttrInverse}
+	normalStyle := forme.Style{}
+	selectedStyle := forme.Style{Attr: forme.AttrInverse}
 
 	// Build spans
-	var spans []tui.Span
+	var spans []forme.Span
 	for i, match := range ed.cmdMatches {
 		if i > 0 {
-			spans = append(spans, tui.Span{Text: " "})
+			spans = append(spans, forme.Span{Text: " "})
 		}
 		style := normalStyle
 		if i == ed.cmdMatchSelected {
 			style = selectedStyle
 		}
-		spans = append(spans, tui.Span{Text: match, Style: style})
+		spans = append(spans, forme.Span{Text: match, Style: style})
 	}
 	ed.cmdWildmenuSpans = spans
 }
@@ -1627,7 +1627,7 @@ func main() {
 		macros:         make(map[rune]riffkey.Macro),
 	}
 
-	app, err := tui.NewApp()
+	app, err := forme.NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1686,7 +1686,7 @@ func main() {
 	}
 
 	// Start with block cursor in normal mode
-	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBlock); app.ShowCursor()
 	ed.updateCursor()
 
 	// Normal mode handlers - movement actions
@@ -1890,14 +1890,14 @@ func main() {
 	}
 }
 
-func (ed *Editor) enterInsertMode(app *tui.App) {
+func (ed *Editor) enterInsertMode(app *forme.App) {
 	ed.Mode = "INSERT"
 	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 	ed.StatusLine = "-- INSERT --"
 	ed.updateDisplay()
 
 	// Switch to bar cursor for insert mode
-	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBar); app.ShowCursor()
 	ed.updateCursor()
 
 	// Create insert mode router (NoCounts so digits aren't count prefixes)
@@ -1965,7 +1965,7 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 	app.Push(insertRouter)
 }
 
-func (ed *Editor) exitInsertMode(app *tui.App) {
+func (ed *Editor) exitInsertMode(app *forme.App) {
 	ed.Mode = "NORMAL"
 	ed.StatusLine = ""
 
@@ -1975,7 +1975,7 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 	}
 
 	// Switch back to block cursor for normal mode
-	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBlock); app.ShowCursor()
 
 	ed.updateDisplay()
 	ed.updateCursor()
@@ -1983,7 +1983,7 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 }
 
 // enterBlockInsertMode is like insert mode but replicates text to all block lines on exit
-func (ed *Editor) enterBlockInsertMode(app *tui.App) {
+func (ed *Editor) enterBlockInsertMode(app *forme.App) {
 	ed.Mode = "INSERT"
 	ed.win().Col = min(ed.win().Col, len(ed.buf().Lines[ed.win().Cursor]))
 	ed.StatusLine = "-- INSERT (block) --"
@@ -1995,7 +1995,7 @@ func (ed *Editor) enterBlockInsertMode(app *tui.App) {
 	insertStartCol := ed.blockInsertCol
 
 	// Switch to bar cursor
-	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBar); app.ShowCursor()
 	ed.updateCursor()
 
 	// Create insert mode router
@@ -2035,7 +2035,7 @@ func (ed *Editor) enterBlockInsertMode(app *tui.App) {
 	app.Push(insertRouter)
 }
 
-func (ed *Editor) exitBlockInsertMode(app *tui.App, originalContent string, insertStartCol int) {
+func (ed *Editor) exitBlockInsertMode(app *forme.App, originalContent string, insertStartCol int) {
 	// Calculate what was inserted by comparing first line to original
 	if len(ed.blockInsertLines) > 1 {
 		firstLine := ed.blockInsertLines[0]
@@ -2081,7 +2081,7 @@ func (ed *Editor) exitBlockInsertMode(app *tui.App, originalContent string, inse
 		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 	}
 
-	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBlock); app.ShowCursor()
 	ed.updateDisplay()
 	ed.updateCursor()
 	app.Pop()
@@ -2387,15 +2387,15 @@ func (ed *Editor) ensureCursorVisible() {
 
 // Style constants for vim-like appearance
 var (
-	lineNumStyle       = tui.Style{Attr: tui.AttrDim}
-	cursorLineNumStyle = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow for current line number
-	cursorLineStyle    = tui.Style{BG: tui.Color{Mode: tui.Color256, Index: 236}}                              // Subtle dark gray background for cursorline
-	tildeStyle         = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 4}}                                 // Blue for ~ lines
-	statusBarStyle     = tui.Style{Attr: tui.AttrInverse}                                                      // Inverse video like vim
-	searchHighlight    = tui.Style{BG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow background for search matches
-	gitAddedStyle      = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 2}}                                 // Green for added lines
-	gitModifiedStyle   = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 3}}                                 // Yellow for modified lines
-	gitRemovedStyle    = tui.Style{FG: tui.Color{Mode: tui.Color16, Index: 1}}                                 // Red for removed lines
+	lineNumStyle       = forme.Style{Attr: forme.AttrDim}
+	cursorLineNumStyle = forme.Style{FG: forme.Color{Mode: forme.Color16, Index: 3}}                                 // Yellow for current line number
+	cursorLineStyle    = forme.Style{BG: forme.Color{Mode: forme.Color256, Index: 236}}                              // Subtle dark gray background for cursorline
+	tildeStyle         = forme.Style{FG: forme.Color{Mode: forme.Color16, Index: 4}}                                 // Blue for ~ lines
+	statusBarStyle     = forme.Style{Attr: forme.AttrInverse}                                                      // Inverse video like vim
+	searchHighlight    = forme.Style{BG: forme.Color{Mode: forme.Color16, Index: 3}}                                 // Yellow background for search matches
+	gitAddedStyle      = forme.Style{FG: forme.Color{Mode: forme.Color16, Index: 2}}                                 // Green for added lines
+	gitModifiedStyle   = forme.Style{FG: forme.Color{Mode: forme.Color16, Index: 3}}                                 // Yellow for modified lines
+	gitRemovedStyle    = forme.Style{FG: forme.Color{Mode: forme.Color16, Index: 1}}                                 // Red for removed lines
 )
 
 // refreshGitSigns updates the git change signs for a buffer by running git diff
@@ -2507,14 +2507,14 @@ func parseRange(s string) (start, count int) {
 }
 
 // getGitSignForLine returns the sign character and style for a line
-func (ed *Editor) getGitSignForLine(lineIdx int) (string, tui.Style) {
+func (ed *Editor) getGitSignForLine(lineIdx int) (string, forme.Style) {
 	return ed.getGitSignForLineBuffer(ed.buf(), lineIdx)
 }
 
 // getGitSignForLineBuffer returns the sign character and style for a line in a specific buffer
-func (ed *Editor) getGitSignForLineBuffer(buf *Buffer, lineIdx int) (string, tui.Style) {
+func (ed *Editor) getGitSignForLineBuffer(buf *Buffer, lineIdx int) (string, forme.Style) {
 	if lineIdx >= len(buf.gitSigns) {
-		return " ", tui.Style{}
+		return " ", forme.Style{}
 	}
 
 	switch buf.gitSigns[lineIdx] {
@@ -2525,17 +2525,17 @@ func (ed *Editor) getGitSignForLineBuffer(buf *Buffer, lineIdx int) (string, tui
 	case GitSignRemoved:
 		return "▁", gitRemovedStyle // Red underscore for deleted below
 	default:
-		return " ", tui.Style{}
+		return " ", forme.Style{}
 	}
 }
 
 // highlightSearchMatches splits a line into spans with search matches highlighted
-func (ed *Editor) highlightSearchMatches(line string) []tui.Span {
+func (ed *Editor) highlightSearchMatches(line string) []forme.Span {
 	if ed.searchPattern == "" || len(line) == 0 {
-		return []tui.Span{{Text: line}}
+		return []forme.Span{{Text: line}}
 	}
 
-	var spans []tui.Span
+	var spans []forme.Span
 	remaining := line
 
 	for {
@@ -2543,32 +2543,32 @@ func (ed *Editor) highlightSearchMatches(line string) []tui.Span {
 		if idx < 0 {
 			// No more matches
 			if len(remaining) > 0 {
-				spans = append(spans, tui.Span{Text: remaining})
+				spans = append(spans, forme.Span{Text: remaining})
 			}
 			break
 		}
 
 		// Add text before match
 		if idx > 0 {
-			spans = append(spans, tui.Span{Text: remaining[:idx]})
+			spans = append(spans, forme.Span{Text: remaining[:idx]})
 		}
 
 		// Add highlighted match
-		spans = append(spans, tui.Span{Text: ed.searchPattern, Style: searchHighlight})
+		spans = append(spans, forme.Span{Text: ed.searchPattern, Style: searchHighlight})
 
 		// Move past match
 		remaining = remaining[idx+len(ed.searchPattern):]
 	}
 
 	if len(spans) == 0 {
-		return []tui.Span{{Text: line}}
+		return []forme.Span{{Text: line}}
 	}
 	return spans
 }
 
 // applyCursorLineStyle applies the cursorline background to spans
-func (ed *Editor) applyCursorLineStyle(spans []tui.Span) []tui.Span {
-	result := make([]tui.Span, len(spans))
+func (ed *Editor) applyCursorLineStyle(spans []forme.Span) []forme.Span {
+	result := make([]forme.Span, len(spans))
 	for i, span := range spans {
 		// Merge cursorline background with existing style
 		// Keep foreground and attributes, add cursorline background if no background set
@@ -2576,7 +2576,7 @@ func (ed *Editor) applyCursorLineStyle(spans []tui.Span) []tui.Span {
 		if newStyle.BG.Mode == 0 { // No background set
 			newStyle.BG = cursorLineStyle.BG
 		}
-		result[i] = tui.Span{Text: span.Text, Style: newStyle}
+		result[i] = forme.Span{Text: span.Text, Style: newStyle}
 	}
 	return result
 }
@@ -2626,7 +2626,7 @@ func (ed *Editor) updateStatusBar() {
 	}
 
 	// Build single span with inverse style
-	ed.win().StatusBar = []tui.Span{
+	ed.win().StatusBar = []forme.Span{
 		{Text: left + middle + right, Style: statusBarStyle},
 	}
 }
@@ -2671,10 +2671,10 @@ func (ed *Editor) updateWindowStatusBar(w *Window, focused bool) {
 	// Use different style for unfocused windows
 	style := statusBarStyle
 	if !focused {
-		style = tui.Style{Attr: tui.AttrDim | tui.AttrInverse} // Dimmer for unfocused
+		style = forme.Style{Attr: forme.AttrDim | forme.AttrInverse} // Dimmer for unfocused
 	}
 
-	w.StatusBar = []tui.Span{
+	w.StatusBar = []forme.Span{
 		{Text: left + middle + right, Style: style},
 	}
 }
@@ -2751,7 +2751,7 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 	lineNumFmt := fmt.Sprintf("%%%dd ", lineNumOnlyWidth-1)
 	tildeFmt := fmt.Sprintf("%%%ds ", w.lineNumWidth-1)
 
-	var spans []tui.Span
+	var spans []forme.Span
 
 	if lineIdx < len(w.buffer.Lines) {
 		// Content line
@@ -2761,7 +2761,7 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 		// Add sign column if enabled
 		if ed.showSignColumn {
 			sign, signStyle := ed.getGitSignForLineBuffer(w.buffer, lineIdx)
-			spans = append(spans, tui.Span{Text: sign + " ", Style: signStyle})
+			spans = append(spans, forme.Span{Text: sign + " ", Style: signStyle})
 		}
 
 		// Calculate displayed line number (absolute or relative)
@@ -2782,7 +2782,7 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 
 		// For the focused window in visual mode, use visual spans
 		if ed.Mode == "VISUAL" && ed.win() == w {
-			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, forme.Span{Text: lineNum, Style: numStyle})
 			spans = append(spans, ed.getVisualSpans(lineIdx, line)...)
 		} else {
 			// Use search highlighting
@@ -2791,12 +2791,12 @@ func (ed *Editor) renderWindowLineToLayer(w *Window, lineIdx int) {
 			if ed.cursorLine && isCursorLine {
 				contentSpans = ed.applyCursorLineStyle(contentSpans)
 			}
-			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, forme.Span{Text: lineNum, Style: numStyle})
 			spans = append(spans, contentSpans...)
 		}
 	} else {
 		// Tilde line (beyond EOF)
-		spans = []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
+		spans = []forme.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
 	}
 
 	w.contentLayer.SetLine(lineIdx, spans)
@@ -2843,7 +2843,7 @@ func (ed *Editor) initLayer(width int) {
 // initWindowLayer sets up a layer for a specific window
 func (ed *Editor) initWindowLayer(w *Window, width int) {
 	w.viewportWidth = width
-	w.contentLayer = tui.NewLayer()
+	w.contentLayer = forme.NewLayer()
 	// Layer holds ALL lines plus some buffer for scrolling
 	w.contentLayer.EnsureSize(width, len(w.buffer.Lines)+w.viewportHeight)
 	// Set viewport dimensions BEFORE rendering so ScrollTo works correctly
@@ -3295,7 +3295,7 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 	lineNumFmt := fmt.Sprintf("%%%dd ", lineNumOnlyWidth-1)
 	tildeFmt := fmt.Sprintf("%%%ds ", ed.win().lineNumWidth-1)
 
-	var spans []tui.Span
+	var spans []forme.Span
 
 	if lineIdx < len(ed.buf().Lines) {
 		// Content line - apply horizontal scroll
@@ -3311,7 +3311,7 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 		// Add sign column if enabled
 		if ed.showSignColumn {
 			sign, signStyle := ed.getGitSignForLine(lineIdx)
-			spans = append(spans, tui.Span{Text: sign + " ", Style: signStyle})
+			spans = append(spans, forme.Span{Text: sign + " ", Style: signStyle})
 		}
 
 		// Calculate displayed line number (absolute or relative)
@@ -3332,7 +3332,7 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 
 		if ed.Mode == "VISUAL" {
 			// Visual mode needs offset-adjusted highlighting
-			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, forme.Span{Text: lineNum, Style: numStyle})
 			spans = append(spans, ed.getVisualSpans(lineIdx, line)...)
 		} else {
 			contentSpans := ed.highlightSearchMatches(line)
@@ -3340,12 +3340,12 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 			if ed.cursorLine && isCursorLine {
 				contentSpans = ed.applyCursorLineStyle(contentSpans)
 			}
-			spans = append(spans, tui.Span{Text: lineNum, Style: numStyle})
+			spans = append(spans, forme.Span{Text: lineNum, Style: numStyle})
 			spans = append(spans, contentSpans...)
 		}
 	} else {
 		// Tilde line (beyond EOF)
-		spans = []tui.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
+		spans = []forme.Span{{Text: fmt.Sprintf(tildeFmt, "~"), Style: tildeStyle}}
 	}
 
 	ed.win().contentLayer.SetLine(lineIdx, spans)
@@ -3380,23 +3380,23 @@ func (ed *Editor) updateCursorHighlight(oldLine int) {
 }
 
 // getVisualSpans splits a line into styled spans for visual mode highlighting
-func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
-	inverseStyle := tui.Style{Attr: tui.AttrInverse}
-	normalStyle := tui.Style{}
+func (ed *Editor) getVisualSpans(lineIdx int, line string) []forme.Span {
+	inverseStyle := forme.Style{Attr: forme.AttrInverse}
+	normalStyle := forme.Style{}
 
 	if len(line) == 0 {
 		if ed.isLineSelected(lineIdx) {
-			return []tui.Span{{Text: " ", Style: inverseStyle}} // Show at least a space for empty lines
+			return []forme.Span{{Text: " ", Style: inverseStyle}} // Show at least a space for empty lines
 		}
-		return []tui.Span{{Text: " ", Style: normalStyle}}
+		return []forme.Span{{Text: " ", Style: normalStyle}}
 	}
 
 	if ed.win().visualMode == VisualLine {
 		// Line mode: entire line is selected or not
 		if ed.isLineSelected(lineIdx) {
-			return []tui.Span{{Text: line, Style: inverseStyle}}
+			return []forme.Span{{Text: line, Style: inverseStyle}}
 		}
-		return []tui.Span{{Text: line, Style: normalStyle}}
+		return []forme.Span{{Text: line, Style: normalStyle}}
 	}
 
 	if ed.win().visualMode == VisualBlock {
@@ -3406,7 +3406,7 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 			endCol := max(ed.win().visualStartCol, ed.win().Col) + 1
 			return ed.buildBlockSelectionSpans(line, startCol, endCol, normalStyle, inverseStyle)
 		}
-		return []tui.Span{{Text: line, Style: normalStyle}}
+		return []forme.Span{{Text: line, Style: normalStyle}}
 	}
 
 	// Character mode: need to calculate per-character selection
@@ -3414,9 +3414,9 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 	if lineIdx != ed.win().Cursor && lineIdx != ed.win().visualStart {
 		// Line is either fully selected or not (if between start and cursor)
 		if ed.isLineSelected(lineIdx) {
-			return []tui.Span{{Text: line, Style: inverseStyle}}
+			return []forme.Span{{Text: line, Style: inverseStyle}}
 		}
-		return []tui.Span{{Text: line, Style: normalStyle}}
+		return []forme.Span{{Text: line, Style: normalStyle}}
 	}
 
 	// This is the line with the cursor or visual start - split into spans
@@ -3454,15 +3454,15 @@ func (ed *Editor) getVisualSpans(lineIdx int, line string) []tui.Span {
 	startCol = max(0, min(startCol, len(line)))
 	endCol = max(0, min(endCol, len(line)))
 
-	var spans []tui.Span
+	var spans []forme.Span
 	if startCol > 0 {
-		spans = append(spans, tui.Span{Text: line[:startCol], Style: normalStyle})
+		spans = append(spans, forme.Span{Text: line[:startCol], Style: normalStyle})
 	}
 	if startCol < endCol {
-		spans = append(spans, tui.Span{Text: line[startCol:endCol], Style: inverseStyle})
+		spans = append(spans, forme.Span{Text: line[startCol:endCol], Style: inverseStyle})
 	}
 	if endCol < len(line) {
-		spans = append(spans, tui.Span{Text: line[endCol:], Style: normalStyle})
+		spans = append(spans, forme.Span{Text: line[endCol:], Style: normalStyle})
 	}
 	return spans
 }
@@ -3475,33 +3475,33 @@ func (ed *Editor) isLineSelected(lineIdx int) bool {
 }
 
 // buildBlockSelectionSpans builds spans for block (column) visual selection
-func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, normalStyle, inverseStyle tui.Style) []tui.Span {
+func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, normalStyle, inverseStyle forme.Style) []forme.Span {
 	// Clamp columns to line length
 	lineLen := len(line)
 	startCol = max(0, min(startCol, lineLen))
 	endCol = max(0, min(endCol, lineLen))
 
-	var spans []tui.Span
+	var spans []forme.Span
 
 	// Before selection
 	if startCol > 0 {
-		spans = append(spans, tui.Span{Text: line[:startCol], Style: normalStyle})
+		spans = append(spans, forme.Span{Text: line[:startCol], Style: normalStyle})
 	}
 
 	// Selected block region
 	if startCol < endCol {
-		spans = append(spans, tui.Span{Text: line[startCol:endCol], Style: inverseStyle})
+		spans = append(spans, forme.Span{Text: line[startCol:endCol], Style: inverseStyle})
 	} else if startCol == endCol && startCol < lineLen {
 		// Single column - still highlight one character
-		spans = append(spans, tui.Span{Text: string(line[startCol]), Style: inverseStyle})
+		spans = append(spans, forme.Span{Text: string(line[startCol]), Style: inverseStyle})
 	} else if startCol >= lineLen {
 		// Selection extends beyond line - show virtual space
-		spans = append(spans, tui.Span{Text: " ", Style: inverseStyle})
+		spans = append(spans, forme.Span{Text: " ", Style: inverseStyle})
 	}
 
 	// After selection
 	if endCol < lineLen {
-		spans = append(spans, tui.Span{Text: line[endCol:], Style: normalStyle})
+		spans = append(spans, forme.Span{Text: line[endCol:], Style: normalStyle})
 	}
 
 	return spans
@@ -3509,16 +3509,16 @@ func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, no
 
 // buildWindowView builds the view for a single window
 func buildWindowView(w *Window, focused bool) any {
-	return tui.VBoxNode{Children: []any{
+	return forme.VBoxNode{Children: []any{
 		// Content area - imperative layer, efficiently updated
 		// Width is set for vertical splits to constrain each window's area
-		tui.LayerViewNode{
+		forme.LayerViewNode{
 			Layer:      w.contentLayer,
 			ViewHeight: int16(w.viewportHeight),
 			ViewWidth:  int16(w.viewportWidth),
 		},
 		// Vim-style status bar (inverse video, shows filename and position)
-		tui.RichTextNode{Spans: &w.StatusBar},
+		forme.RichTextNode{Spans: &w.StatusBar},
 	}}
 }
 
@@ -3534,10 +3534,10 @@ func buildNodeView(node *SplitNode, focusedWindow *Window) any {
 
 	if node.Direction == SplitHorizontal {
 		// Stack vertically (Col)
-		return tui.VBoxNode{Children: []any{child0, child1}}
+		return forme.VBoxNode{Children: []any{child0, child1}}
 	}
 	// Side by side (Row)
-	return tui.HBoxNode{Children: []any{child0, child1}}
+	return forme.HBoxNode{Children: []any{child0, child1}}
 }
 
 func buildView(ed *Editor) any {
@@ -3545,34 +3545,34 @@ func buildView(ed *Editor) any {
 	windowTree := buildNodeView(ed.root, ed.focusedWindow)
 
 	// Wrap in Col to add wildmenu and status line at bottom
-	return tui.VBoxNode{Children: []any{
+	return forme.VBoxNode{Children: []any{
 		windowTree,
 		// Wildmenu appears above status line when active
-		tui.IfNode{
+		forme.IfNode{
 			Cond: &ed.cmdCompletionActive,
-			Then: tui.RichTextNode{Spans: &ed.cmdWildmenuSpans},
+			Then: forme.RichTextNode{Spans: &ed.cmdWildmenuSpans},
 		},
-		tui.TextNode{Content: &ed.StatusLine},
+		forme.TextNode{Content: &ed.StatusLine},
 	}}
 }
 
 // buildFuzzyView creates the declarative fuzzy finder overlay view
 func buildFuzzyView(ed *Editor) any {
-	return tui.VBoxNode{Children: []any{
+	return forme.VBoxNode{Children: []any{
 		// Prompt line with query
-		tui.TextNode{Content: &ed.fuzzy.Query, Style: tui.Style{Attr: tui.AttrBold}},
+		forme.TextNode{Content: &ed.fuzzy.Query, Style: forme.Style{Attr: forme.AttrBold}},
 		// Results list with selection
-		&tui.SelectionList{
+		&forme.SelectionList{
 			Items:      &ed.fuzzy.Matches,
 			Selected:   &ed.fuzzy.Selected,
 			Marker:     "> ",
 			MaxVisible: 20,
 			Render: func(s *string) any {
-				return tui.TextNode{Content: s}
+				return forme.TextNode{Content: s}
 			},
 		},
 		// Status line
-		tui.TextNode{Content: &ed.StatusLine},
+		forme.TextNode{Content: &ed.StatusLine},
 	}}
 }
 
@@ -3583,10 +3583,10 @@ type TextObjectFunc func(line string, col int) (start, end int)
 type MultiLineTextObjectFunc func(ed *Editor) Range
 
 // OperatorFunc 's act on a range within a single line
-type OperatorFunc func(ed *Editor, app *tui.App, start, end int)
+type OperatorFunc func(ed *Editor, app *forme.App, start, end int)
 
 // MultiLineOperatorFunc functions act on a Range across lines
-type MultiLineOperatorFunc func(ed *Editor, app *tui.App, r Range)
+type MultiLineOperatorFunc func(ed *Editor, app *forme.App, r Range)
 
 // Shared text object definitions - used by both normal mode operators and visual mode
 type mlTextObjectDef struct {
@@ -3625,7 +3625,7 @@ func initTextObjectDefs() {
 }
 
 // registerOperatorTextObjects sets up all operator+textobject combinations
-func registerOperatorTextObjects(app *tui.App, ed *Editor) {
+func registerOperatorTextObjects(app *forme.App, ed *Editor) {
 	operators := []struct {
 		key string
 		fn  OperatorFunc
@@ -3671,7 +3671,7 @@ func registerOperatorTextObjects(app *tui.App, ed *Editor) {
 }
 
 // Operators
-func opDelete(ed *Editor, app *tui.App, start, end int) {
+func opDelete(ed *Editor, app *forme.App, start, end int) {
 	ed.saveUndo()
 	line := ed.buf().Lines[ed.win().Cursor]
 	ed.buf().Lines[ed.win().Cursor] = line[:start] + line[end:]
@@ -3683,7 +3683,7 @@ func opDelete(ed *Editor, app *tui.App, start, end int) {
 	ed.updateCursor()
 }
 
-func opChange(ed *Editor, app *tui.App, start, end int) {
+func opChange(ed *Editor, app *forme.App, start, end int) {
 	ed.saveUndo()
 	line := ed.buf().Lines[ed.win().Cursor]
 	ed.buf().Lines[ed.win().Cursor] = line[:start] + line[end:]
@@ -3694,7 +3694,7 @@ func opChange(ed *Editor, app *tui.App, start, end int) {
 
 var yankRegister string
 
-func opYank(ed *Editor, app *tui.App, start, end int) {
+func opYank(ed *Editor, app *forme.App, start, end int) {
 	line := ed.buf().Lines[ed.win().Cursor]
 	yankRegister = line[start:end]
 	ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
@@ -3803,7 +3803,7 @@ func isSentenceEnd(c byte) bool {
 }
 
 // Multi-line text objects (paragraphs, sentences)
-func registerParagraphTextObjects(app *tui.App, ed *Editor) {
+func registerParagraphTextObjects(app *forme.App, ed *Editor) {
 	// Multi-line operators
 	mlOperators := []struct {
 		key string
@@ -3902,7 +3902,7 @@ func (ed *Editor) findAParagraph() (startLine, endLine int) {
 }
 
 // Multi-line operators
-func mlOpDelete(ed *Editor, app *tui.App, r Range) {
+func mlOpDelete(ed *Editor, app *forme.App, r Range) {
 	ed.saveUndo()
 
 	// Extract the text being deleted for yank register
@@ -3915,7 +3915,7 @@ func mlOpDelete(ed *Editor, app *tui.App, r Range) {
 	ed.updateCursor()
 }
 
-func mlOpChange(ed *Editor, app *tui.App, r Range) {
+func mlOpChange(ed *Editor, app *forme.App, r Range) {
 	ed.saveUndo()
 
 	// Extract for yank register
@@ -3928,7 +3928,7 @@ func mlOpChange(ed *Editor, app *tui.App, r Range) {
 	ed.enterInsertMode(app)
 }
 
-func mlOpYank(ed *Editor, app *tui.App, r Range) {
+func mlOpYank(ed *Editor, app *forme.App, r Range) {
 	yankRegister = ed.extractRange(r)
 	ed.StatusLine = fmt.Sprintf("Yanked: %q", yankRegister)
 	ed.updateDisplay()
@@ -4546,7 +4546,7 @@ func (ed *Editor) redo() {
 }
 
 // Visual mode implementation
-func (ed *Editor) enterVisualMode(app *tui.App, mode VisualMode) {
+func (ed *Editor) enterVisualMode(app *forme.App, mode VisualMode) {
 	ed.Mode = "VISUAL"
 	ed.win().visualStart = ed.win().Cursor
 	ed.win().visualStartCol = ed.win().Col
@@ -4647,7 +4647,7 @@ func (ed *Editor) enterVisualMode(app *tui.App, mode VisualMode) {
 	app.Push(visualRouter)
 }
 
-func (ed *Editor) exitVisualMode(app *tui.App) {
+func (ed *Editor) exitVisualMode(app *forme.App) {
 	ed.Mode = "NORMAL"
 	ed.StatusLine = ""
 	ed.updateDisplay()
@@ -4655,7 +4655,7 @@ func (ed *Editor) exitVisualMode(app *tui.App) {
 }
 
 // Command line mode (for :, /, ?)
-func (ed *Editor) enterCommandMode(app *tui.App, prompt string) {
+func (ed *Editor) enterCommandMode(app *forme.App, prompt string) {
 	ed.cmdLineActive = true
 	ed.cmdLinePrompt = prompt
 	ed.cmdLineInput = ""
@@ -4663,7 +4663,7 @@ func (ed *Editor) enterCommandMode(app *tui.App, prompt string) {
 	ed.updateDisplay()
 
 	// Move cursor to command line
-	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBar); app.ShowCursor()
 	ed.updateCmdLineCursor()
 
 	// Create command line router (NoCounts so digits work in commands)
@@ -4739,18 +4739,18 @@ func (ed *Editor) updateCmdLineCursor() {
 	ed.app.SetCursor(1+len(ed.cmdLineInput), size.Height-1)
 }
 
-func (ed *Editor) exitCommandMode(app *tui.App) {
+func (ed *Editor) exitCommandMode(app *forme.App) {
 	ed.cmdLineActive = false
 	ed.cmdCompletionActive = false
 	ed.cmdMatches = nil
 	ed.StatusLine = ""
-	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
+	app.SetCursorStyle(forme.CursorBlock); app.ShowCursor()
 	ed.updateDisplay()
 	ed.updateCursor()
 	app.Pop()
 }
 
-func (ed *Editor) executeCommand(app *tui.App, prompt, cmd string) {
+func (ed *Editor) executeCommand(app *forme.App, prompt, cmd string) {
 	switch prompt {
 	case ":":
 		ed.executeColonCommand(app, cmd)
@@ -4761,7 +4761,7 @@ func (ed *Editor) executeCommand(app *tui.App, prompt, cmd string) {
 	}
 }
 
-func (ed *Editor) executeColonCommand(app *tui.App, cmd string) {
+func (ed *Editor) executeColonCommand(app *forme.App, cmd string) {
 	// Store for @: repeat
 	if cmd != "" {
 		ed.lastColonCmd = cmd
@@ -4951,7 +4951,7 @@ func (ed *Editor) searchNext(direction int) {
 }
 
 // f/F/t/T implementation - find character on line
-func registerFindChar(app *tui.App, ed *Editor) {
+func registerFindChar(app *forme.App, ed *Editor) {
 	app.Handle("f", func(_ riffkey.Match) { ed.promptForChar(app, ed.FindChar) })
 	app.Handle("F", func(_ riffkey.Match) { ed.promptForChar(app, ed.FindCharBack) })
 	app.Handle("t", func(_ riffkey.Match) { ed.promptForChar(app, ed.TillChar) })
@@ -5201,7 +5201,7 @@ func (ed *Editor) isNetrw() bool {
 }
 
 // netrwEnter handles Enter key in netrw - opens file or enters directory
-func (ed *Editor) netrwEnter(app *tui.App) {
+func (ed *Editor) netrwEnter(app *forme.App) {
 	if !ed.isNetrw() {
 		return
 	}
@@ -5293,7 +5293,7 @@ func (ed *Editor) netrwToggleHidden() {
 // ============================================================================
 
 // openFuzzyFinder opens a fuzzy file finder as a pushed view overlay
-func (ed *Editor) openFuzzyFinder(app *tui.App) {
+func (ed *Editor) openFuzzyFinder(app *forme.App) {
 	// Save current buffer state for restoration on cancel
 	ed.fuzzy.PrevBuffer = ed.buf()
 	ed.fuzzy.PrevCursor = ed.win().Cursor
@@ -5427,7 +5427,7 @@ func (ed *Editor) fuzzyDown() {
 }
 
 // fuzzySelect opens the selected file
-func (ed *Editor) fuzzySelect(app *tui.App) {
+func (ed *Editor) fuzzySelect(app *forme.App) {
 	if !ed.fuzzy.Active || len(ed.fuzzy.Matches) == 0 {
 		ed.fuzzyCancel(app)
 		return
@@ -5466,7 +5466,7 @@ func (ed *Editor) fuzzySelect(app *tui.App) {
 }
 
 // fuzzyCancel cancels the fuzzy finder and restores previous state
-func (ed *Editor) fuzzyCancel(app *tui.App) {
+func (ed *Editor) fuzzyCancel(app *forme.App) {
 	if !ed.fuzzy.Active {
 		return
 	}

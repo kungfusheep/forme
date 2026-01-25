@@ -1,4 +1,4 @@
-package tui
+package forme
 
 import (
 	"fmt"
@@ -450,6 +450,8 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileTabsC(v, parent, depth)
 	case ScrollbarC:
 		return t.compileScrollbarC(v, parent, depth)
+	case Custom:
+		return t.compileCustom(v, parent, depth)
 	}
 
 	// Check for ForEachC[T] via interface
@@ -475,6 +477,55 @@ func (t *Template) compileRenderer(r Renderer, parent int16, depth int) int16 {
 		Kind:           OpCustom,
 		Parent:         parent,
 		CustomRenderer: r,
+	}, depth)
+}
+
+// customWrapper adapts the Custom struct to the Renderer interface
+type customWrapper struct {
+	measure func(availW int16) (w, h int16)
+	render  func(buf *Buffer, x, y, w, h int16)
+}
+
+func (c *customWrapper) MinSize() (width, height int) {
+	if c.measure == nil {
+		return 0, 0
+	}
+	// Pass -1 to signal "fill available" - widget should return desired minimum
+	// or pass back -1 to indicate it wants to fill
+	w, h := c.measure(-1)
+	if w < 0 {
+		w = 0 // will be expanded by parent layout
+	}
+	return int(w), int(h)
+}
+
+// MeasureWithAvail calls measure with actual available width
+func (c *customWrapper) MeasureWithAvail(availW int16) (w, h int16) {
+	if c.measure == nil {
+		return 0, 0
+	}
+	w, h = c.measure(availW)
+	if w < 0 {
+		w = availW
+	}
+	return w, h
+}
+
+func (c *customWrapper) Render(buf *Buffer, x, y, w, h int) {
+	if c.render != nil {
+		c.render(buf, int16(x), int16(y), int16(w), int16(h))
+	}
+}
+
+func (t *Template) compileCustom(v Custom, parent int16, depth int) int16 {
+	wrapper := &customWrapper{
+		measure: v.Measure,
+		render:  v.Render,
+	}
+	return t.addOp(Op{
+		Kind:           OpCustom,
+		Parent:         parent,
+		CustomRenderer: wrapper,
 	}, depth)
 }
 
@@ -1719,8 +1770,14 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 
 	case OpCustom:
 		if op.CustomRenderer != nil {
-			w, _ := op.CustomRenderer.MinSize()
-			geom.W = int16(w)
+			// Check if it's a customWrapper that can use availW
+			if cw, ok := op.CustomRenderer.(*customWrapper); ok {
+				w, _ := cw.MeasureWithAvail(availW)
+				geom.W = w
+			} else {
+				w, _ := op.CustomRenderer.MinSize()
+				geom.W = int16(w)
+			}
 		}
 
 	case OpLayout:
@@ -2077,8 +2134,14 @@ func (t *Template) layout(_ int16) {
 			case OpCustom:
 				// Custom renderer provides its own size
 				if op.CustomRenderer != nil {
-					_, h := op.CustomRenderer.MinSize()
-					geom.H = int16(h)
+					// Use customWrapper with computed width for better sizing
+					if cw, ok := op.CustomRenderer.(*customWrapper); ok {
+						_, h := cw.MeasureWithAvail(geom.W)
+						geom.H = h
+					} else {
+						_, h := op.CustomRenderer.MinSize()
+						geom.H = int16(h)
+					}
 				}
 
 			case OpLayer:

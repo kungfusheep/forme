@@ -1,4 +1,4 @@
-package tui
+package forme
 
 // JumpStyle configures the appearance of jump labels.
 type JumpStyle struct {

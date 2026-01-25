@@ -1,4 +1,4 @@
-package tui
+package forme
 
 // Theme provides a set of styles for consistent UI appearance.
 // Use InheritStyle on containers to apply theme styles to children.

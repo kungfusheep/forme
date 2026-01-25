@@ -1,4 +1,4 @@
-package tui
+package forme
 
 // Cursor represents a cursor position and style.
 // Use this to read full cursor state. For setting, use the individual

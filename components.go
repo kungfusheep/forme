@@ -1,4 +1,4 @@
-package tui
+package forme
 
 // ============================================================================
 // Functional Component API
@@ -240,6 +240,43 @@ func (f HBoxFn) Grow(g float32) HBoxFn {
 // HBox is the horizontal container constructor
 var HBox HBoxFn = func(children ...any) HBoxC {
 	return HBoxC{children: children}
+}
+
+// ============================================================================
+// Arrange - Container with custom layout function
+// ============================================================================
+
+// Arrange creates a container with a custom layout function.
+// The layout function receives child sizes and available space, returns positions.
+//
+//	Arrange(Grid(3, 20, 5))(
+//	    Text("A"), Text("B"), Text("C"),
+//	    Text("D"), Text("E"), Text("F"),
+//	)
+func Arrange(layout LayoutFunc) func(children ...any) Box {
+	return func(children ...any) Box {
+		return Box{Layout: layout, Children: children}
+	}
+}
+
+// ============================================================================
+// Widget - Fully custom component
+// ============================================================================
+
+// Widget creates a fully custom component with explicit measure and render functions.
+// Use this when you need complete control over sizing and drawing.
+//
+//	Widget(
+//	    func(availW int16) (w, h int16) { return 20, 3 },
+//	    func(buf *Buffer, x, y, w, h int16) {
+//	        buf.WriteString(int(x), int(y), "Custom!", Style{})
+//	    },
+//	)
+func Widget(
+	measure func(availW int16) (w, h int16),
+	render func(buf *Buffer, x, y, w, h int16),
+) Custom {
+	return Custom{Measure: measure, Render: render}
 }
 
 // ============================================================================

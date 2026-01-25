@@ -1,5 +1,5 @@
 // Package tui provides a high-performance terminal UI framework.
-package tui
+package forme
 
 import "unsafe"
 
@@ -769,9 +769,9 @@ type TextInput struct {
 
 // Overlay displays content floating above the main view.
 // Use for modals, dialogs, and floating windows.
-// Control visibility with tui.If:
+// Control visibility with forme.If:
 //
-//	tui.If(&showModal).Eq(true).Then(tui.Overlay{Child: ...})
+//	forme.If(&showModal).Eq(true).Then(forme.Overlay{Child: ...})
 type OverlayNode struct {
 	Centered   bool  // true = center on screen (default behavior if X/Y not set)
 	X, Y       int   // explicit position (used if Centered is false)

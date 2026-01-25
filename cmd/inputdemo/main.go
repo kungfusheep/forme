@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"riffkey"
-	. "tui"
+	. "forme"
 )
 
 func main() {
