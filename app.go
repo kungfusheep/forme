@@ -63,6 +63,12 @@ type App struct {
 	// Resize callback
 	onResize func(width, height int)
 
+	// After-render callback (for cursor updates after layout is known)
+	onAfterRender func()
+
+	// Active layer for cursor (set during template render)
+	activeLayer *Layer
+
 	// Inline mode
 	inline         bool
 	clearOnExit    bool
@@ -73,6 +79,10 @@ type App struct {
 	// Jump labels
 	jumpMode  *JumpMode
 	jumpStyle JumpStyle
+
+	// SetView limit (for catching anti-patterns)
+	setViewCount int
+	setViewLimit int // 0 = unlimited
 }
 
 // NewApp creates a new TUI application (fullscreen, alternate buffer).
@@ -171,6 +181,22 @@ func (a *App) RunNonInteractive() error {
 	return nil
 }
 
+// SetViewLimit sets the maximum number of times SetView can be called.
+// Panics if exceeded. Use this to catch anti-patterns where SetView is called
+// repeatedly instead of using reactive updates via pointers.
+//
+// Example:
+//
+//	app.SetViewLimit(1) // Panic if SetView called more than once
+//	app.SetView(myView) // OK
+//	app.SetView(other)  // PANIC: SetView called 2 times, limit is 1
+//
+// Set to 0 (default) for unlimited calls.
+func (a *App) SetViewLimit(n int) *App {
+	a.setViewLimit = n
+	return a
+}
+
 // SetView sets a declarative view for fast rendering.
 // Pointers in the view are captured at compile time - just mutate your state.
 //
@@ -184,6 +210,11 @@ func (a *App) RunNonInteractive() error {
 //	    }},
 //	)
 func (a *App) SetView(view any) *App {
+	a.setViewCount++
+	if a.setViewLimit > 0 && a.setViewCount > a.setViewLimit {
+		panic(fmt.Sprintf("SetView called %d times, limit is %d. Use reactive updates via pointers instead of calling SetView repeatedly.", a.setViewCount, a.setViewLimit))
+	}
+
 	a.template = Build(view)
 	a.template.SetApp(a) // Link for jump mode support
 	// Create buffer pool for async clearing (or reuse existing)
@@ -351,10 +382,14 @@ func (a *App) SetCursor(x, y int) {
 	a.cursorY = y
 }
 
-// ShowCursor makes the cursor visible with the given shape.
-func (a *App) ShowCursor(shape CursorShape) {
+// SetCursorStyle sets the cursor visual style.
+func (a *App) SetCursorStyle(style CursorShape) {
+	a.cursorShape = style
+}
+
+// ShowCursor makes the cursor visible.
+func (a *App) ShowCursor() {
 	a.cursorVisible = true
-	a.cursorShape = shape
 }
 
 // HideCursor hides the cursor.
@@ -369,11 +404,33 @@ func (a *App) SetCursorColor(c Color) {
 	a.cursorColorSet = true
 }
 
+// Cursor returns the current cursor state.
+func (a *App) Cursor() Cursor {
+	return Cursor{
+		X:       a.cursorX,
+		Y:       a.cursorY,
+		Style:   a.cursorShape,
+		Visible: a.cursorVisible,
+	}
+}
+
 // OnResize sets a callback to be called when the terminal is resized.
 // The callback receives the new width and height.
 // Use this to update viewport dimensions, reinitialize layers, etc.
 func (a *App) OnResize(fn func(width, height int)) {
 	a.onResize = fn
+}
+
+// OnAfterRender sets a callback to be called after each render completes.
+// Use this to update cursor position after layout is known.
+func (a *App) OnAfterRender(fn func()) {
+	a.onAfterRender = fn
+}
+
+// Template returns the current template for debugging.
+// Use with Template().DebugDump("") to inspect the op tree.
+func (a *App) Template() *Template {
+	return a.template
 }
 
 // RequestRender marks that a render is needed.
@@ -406,6 +463,9 @@ func (a *App) render() {
 	if a.pool == nil {
 		return // No pool
 	}
+
+	// clear active layer before render (will be set if a layer has visible cursor)
+	a.activeLayer = nil
 
 	size := a.screen.Size()
 	buf := a.pool.Current()
@@ -443,6 +503,21 @@ func (a *App) render() {
 	}
 
 rendered:
+
+	// apply layer cursor if one was set during template render
+	if a.activeLayer != nil {
+		if x, y, visible := a.activeLayer.ScreenCursor(); visible {
+			a.cursorX = x
+			a.cursorY = y
+			a.cursorVisible = true
+			a.cursorShape = a.activeLayer.cursor.Style
+		}
+	}
+
+	// call after-render callback (e.g., for additional cursor customization)
+	if a.onAfterRender != nil {
+		a.onAfterRender()
+	}
 
 	if DebugTiming {
 		t1 = time.Now()

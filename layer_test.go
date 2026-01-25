@@ -18,10 +18,10 @@ func TestLayerBlit(t *testing.T) {
 		screen := NewBuffer(20, 10)
 
 		// Build view with layer at position
-		view := VBox{Children: []any{
-			Text{Content: "Header"},
-			LayerView{Layer: layer, ViewHeight: 3},
-			Text{Content: "Footer"},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "Header"},
+			LayerViewNode{Layer: layer, ViewHeight: 3},
+			TextNode{Content: "Footer"},
 		}}
 
 		tmpl := Build(view)
@@ -76,14 +76,14 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 15)
 
-		view := VBox{Children: []any{
-			Text{Content: "=TOP="},
-			LayerView{Layer: layer1, ViewHeight: 2},
-			Text{Content: "=MID1="},
-			LayerView{Layer: layer2, ViewHeight: 2},
-			Text{Content: "=MID2="},
-			LayerView{Layer: layer3, ViewHeight: 2},
-			Text{Content: "=BOT="},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "=TOP="},
+			LayerViewNode{Layer: layer1, ViewHeight: 2},
+			TextNode{Content: "=MID1="},
+			LayerViewNode{Layer: layer2, ViewHeight: 2},
+			TextNode{Content: "=MID2="},
+			LayerViewNode{Layer: layer3, ViewHeight: 2},
+			TextNode{Content: "=BOT="},
 		}}
 
 		tmpl := Build(view)
@@ -130,10 +130,10 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 10)
 
-		view := VBox{Children: []any{
-			LayerView{Layer: layer1, ViewHeight: 3},
-			Text{Content: "---"},
-			LayerView{Layer: layer2, ViewHeight: 3},
+		view := VBoxNode{Children: []any{
+			LayerViewNode{Layer: layer1, ViewHeight: 3},
+			TextNode{Content: "---"},
+			LayerViewNode{Layer: layer2, ViewHeight: 3},
 		}}
 
 		tmpl := Build(view)
@@ -186,10 +186,10 @@ func TestLayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 5)
 
-		view := VBox{Children: []any{
-			Text{Content: "Before"},
-			LayerView{Layer: layer, ViewHeight: 2},
-			Text{Content: "After"},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "Before"},
+			LayerViewNode{Layer: layer, ViewHeight: 2},
+			TextNode{Content: "After"},
 		}}
 
 		tmpl := Build(view)
@@ -264,4 +264,83 @@ func TestLayerScrollBounds(t *testing.T) {
 			t.Errorf("after ScrollToTop: got %d, want 0", got)
 		}
 	})
+}
+
+// BenchmarkLayerWithCursor measures rendering a layer with cursor tracking.
+func BenchmarkLayerWithCursor(b *testing.B) {
+	layer := NewLayer()
+	buf := NewBuffer(80, 100)
+	for y := 0; y < 100; y++ {
+		buf.WriteStringFast(0, y, "Line content here", Style{}, 80)
+	}
+	layer.SetBuffer(buf)
+	layer.SetViewport(80, 24)
+	layer.ShowCursor()
+	layer.SetCursorStyle(CursorBlock)
+
+	screen := NewBuffer(80, 24)
+
+	view := VBoxNode{Children: []any{
+		LayerViewNode{Layer: layer, ViewHeight: 24},
+	}}
+	tmpl := Build(view)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// simulate cursor movement each frame
+		layer.SetCursor(i%80, (i/80)%100)
+		screen.ClearDirty()
+		tmpl.Execute(screen, 80, 24)
+	}
+}
+
+// BenchmarkLayerScrollingWithCursor measures scrolling + cursor updates.
+func BenchmarkLayerScrollingWithCursor(b *testing.B) {
+	layer := NewLayer()
+	buf := NewBuffer(80, 1000)
+	for y := 0; y < 1000; y++ {
+		buf.WriteStringFast(0, y, "Line content that we scroll through", Style{}, 80)
+	}
+	layer.SetBuffer(buf)
+	layer.SetViewport(80, 24)
+	layer.ShowCursor()
+
+	screen := NewBuffer(80, 24)
+
+	view := VBoxNode{Children: []any{
+		LayerViewNode{Layer: layer, ViewHeight: 24},
+	}}
+	tmpl := Build(view)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		layer.ScrollTo(i % 976) // scroll within bounds
+		layer.SetCursor(i%80, layer.ScrollY()+(i%24))
+		screen.ClearDirty()
+		tmpl.Execute(screen, 80, 24)
+	}
+}
+
+// BenchmarkLayerCursorScreenTranslation measures ScreenCursor() translation.
+func BenchmarkLayerCursorScreenTranslation(b *testing.B) {
+	layer := NewLayer()
+	layer.SetViewport(80, 24)
+	layer.ShowCursor()
+
+	// simulate being positioned at screen offset
+	layer.screenX = 10
+	layer.screenY = 5
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		layer.SetCursor(i%80, i%100)
+		layer.scrollY = (i / 10) % 50
+		_, _, _ = layer.ScreenCursor()
+	}
 }

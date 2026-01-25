@@ -18,10 +18,10 @@ func TestV2LayerBlit(t *testing.T) {
 		screen := NewBuffer(20, 10)
 
 		// Build view with layer using V2Template
-		view := VBox{Children: []any{
-			Text{Content: "Header"},
-			LayerView{Layer: layer, ViewHeight: 3},
-			Text{Content: "Footer"},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "Header"},
+			LayerViewNode{Layer: layer, ViewHeight: 3},
+			TextNode{Content: "Footer"},
 		}}
 
 		tmpl := Build(view)
@@ -60,9 +60,9 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 10)
 
-		view := VBox{Children: []any{
-			LayerView{Layer: layer, ViewHeight: 3},
-			Text{Content: "---"},
+		view := VBoxNode{Children: []any{
+			LayerViewNode{Layer: layer, ViewHeight: 3},
+			TextNode{Content: "---"},
 		}}
 
 		tmpl := Build(view)
@@ -94,10 +94,10 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(20, 5)
 
-		view := VBox{Children: []any{
-			Text{Content: "Before"},
-			LayerView{Layer: layer, ViewHeight: 2},
-			Text{Content: "After"},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "Before"},
+			LayerViewNode{Layer: layer, ViewHeight: 2},
+			TextNode{Content: "After"},
 		}}
 
 		tmpl := Build(view)
@@ -126,11 +126,11 @@ func TestV2LayerBlit(t *testing.T) {
 
 		screen := NewBuffer(40, 10)
 
-		view := VBox{Children: []any{
-			VBox{
+		view := VBoxNode{Children: []any{
+			VBoxNode{
 				Title: "Content",
 				Children: []any{
-					LayerView{Layer: layer, ViewHeight: 3},
+					LayerViewNode{Layer: layer, ViewHeight: 3},
 				},
 			}.Border(BorderSingle),
 		}}

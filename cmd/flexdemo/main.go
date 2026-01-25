@@ -6,11 +6,10 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
-// Demo showing flex layout using the standard App pattern.
-// The UI is compiled once, pointer bindings update dynamically.
+// demo showing flex layout with dynamic pointer bindings
 
 func main() {
 	state := &State{
@@ -29,20 +28,18 @@ func main() {
 		clock:    time.Now().Format("15:04:05Z"),
 	}
 
-	// Precomputed display strings (pointer bindings)
-	state.fuelABar = tui.Bar(state.fuelA/10, 10)
-	state.fuelBBar = tui.Bar(state.fuelB/10, 10)
-	state.fuelCBar = tui.Bar(state.fuelC/10, 10)
+	state.fuelABar = Bar(state.fuelA/10, 10)
+	state.fuelBBar = Bar(state.fuelB/10, 10)
+	state.fuelCBar = Bar(state.fuelC/10, 10)
 	state.fuelAText = fmt.Sprintf(" %3d%%", state.fuelA)
 	state.fuelBText = fmt.Sprintf(" %3d%%", state.fuelB)
 	state.fuelCText = fmt.Sprintf(" %3d%%", state.fuelC)
 	state.fuelWarning = ""
-	state.rwrIndicator = tui.LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
+	state.rwrIndicator = LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
 
-	// Build UI with pointer bindings - compiled once!
 	ui := buildUI(state)
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -52,7 +49,6 @@ func main() {
 		app.Stop()
 	})
 
-	// Update state periodically
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
@@ -69,7 +65,7 @@ func main() {
 					if state.fuelC < 0 {
 						state.fuelC = 100
 					}
-					state.fuelCBar = tui.Bar(state.fuelC/10, 10)
+					state.fuelCBar = Bar(state.fuelC/10, 10)
 					state.fuelCText = fmt.Sprintf(" %3d%%", state.fuelC)
 					if state.fuelC < 50 {
 						state.fuelWarning = "*** LOW FUEL WARNING ***"
@@ -79,7 +75,7 @@ func main() {
 				}
 				if state.tick%7 == 0 {
 					state.rwr = (state.rwr + 1) % 5
-					state.rwrIndicator = tui.LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
+					state.rwrIndicator = LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
 				}
 
 				app.RequestRender()
@@ -94,129 +90,64 @@ func main() {
 }
 
 func buildUI(state *State) any {
-	dim := tui.RGB(0, 100, 0)
+	dim := RGB(0, 100, 0)
 
-	return tui.VBox{
-		Children: []any{
-			// TOP ROW: SYSTEM STATUS + ELEC SUBSYS
-			tui.HBox{
-				Children: []any{
-					tui.VBox{
-						Title: "SYSTEM STATUS",
-						Children: []any{
-							tui.Text{Content: tui.LeaderStr("RAM 00064K FRAM-HRC", "PASS", 32)},
-							tui.Text{Content: tui.LeaderStr("MPS 00016K RMU-INIT", "PASS", 32)},
-							tui.Text{Content: tui.LeaderStr("ECC 00004K FRAM-ERR", "PASS", 32)},
-							tui.Text{Content: tui.LeaderStr("I/O CTRL 8251A", "READY", 32)},
-							tui.Text{Content: tui.LeaderStr("NVRAM BATTERY 3.2V", "OK", 32)},
-							tui.Text{Content: tui.LeaderStr("CRYPTO KG-84A KEY", "LOADED", 32)},
-						},
-					}.WidthPct(0.5).Height(10).Border(tui.BorderSingle).BorderFG(dim),
+	return VBox(
+		// top row: system status + elec subsys
+		HBox(
+			VBox.WidthPct(0.5).Height(10).Border(BorderSingle).BorderFG(dim).Title("SYSTEM STATUS")(
+				Text(LeaderStr("RAM 00064K FRAM-HRC", "PASS", 32)),
+				Text(LeaderStr("MPS 00016K RMU-INIT", "PASS", 32)),
+				Text(LeaderStr("ECC 00004K FRAM-ERR", "PASS", 32)),
+				Text(LeaderStr("I/O CTRL 8251A", "READY", 32)),
+				Text(LeaderStr("NVRAM BATTERY 3.2V", "OK", 32)),
+				Text(LeaderStr("CRYPTO KG-84A KEY", "LOADED", 32)),
+			),
 
-					tui.VBox{
-						Title: "ELEC SUBSYS",
-						Children: []any{
-							tui.HBox{Children: []any{
-								tui.Text{Content: "GEN1 "},
-								tui.Text{Content: tui.Meter(142, 200, 12)},
-								tui.Text{Content: " 142A"},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: "GEN2 "},
-								tui.Text{Content: tui.Meter(138, 200, 12)},
-								tui.Text{Content: " 138A"},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: "BATT "},
-								tui.Text{Content: tui.Meter(92, 100, 12)},
-								tui.Text{Content: " 24.8V"},
-							}},
-							tui.Text{Content: ""},
-							tui.Text{Content: "LOAD: NOMINAL 280A"},
-							tui.Text{Content: "INV-A 115VAC 400HZ OK"},
-						},
-					}.WidthPct(0.5).Height(10).Border(tui.BorderSingle).BorderFG(dim),
-				},
-			},
+			VBox.WidthPct(0.5).Height(10).Border(BorderSingle).BorderFG(dim).Title("ELEC SUBSYS")(
+				HBox(Text("GEN1 "), Text(Meter(142, 200, 12)), Text(" 142A")),
+				HBox(Text("GEN2 "), Text(Meter(138, 200, 12)), Text(" 138A")),
+				HBox(Text("BATT "), Text(Meter(92, 100, 12)), Text(" 24.8V")),
+				Text(""),
+				Text("LOAD: NOMINAL 280A"),
+				Text("INV-A 115VAC 400HZ OK"),
+			),
+		),
 
-			// MIDDLE ROW: FUEL STATUS + SUBSYSTEMS
-			tui.HBox{
-				Children: []any{
-					tui.VBox{
-						Title: "FUEL STATUS",
-						Children: []any{
-							tui.HBox{Children: []any{
-								tui.Text{Content: "RES A "},
-								tui.Text{Content: &state.fuelABar},
-								tui.Text{Content: &state.fuelAText},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: "RES B "},
-								tui.Text{Content: &state.fuelBBar},
-								tui.Text{Content: &state.fuelBText},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: "RES C "},
-								tui.Text{Content: &state.fuelCBar},
-								tui.Text{Content: &state.fuelCText},
-							}},
-							tui.Text{Content: &state.fuelWarning, Style: tui.Style{Attr: tui.AttrBold}},
-						},
-					}.WidthPct(0.5).Height(6).Border(tui.BorderSingle).BorderFG(dim),
+		// middle row: fuel status + subsystems
+		HBox(
+			VBox.WidthPct(0.5).Height(6).Border(BorderSingle).BorderFG(dim).Title("FUEL STATUS")(
+				HBox(Text("RES A "), Text(&state.fuelABar), Text(&state.fuelAText)),
+				HBox(Text("RES B "), Text(&state.fuelBBar), Text(&state.fuelBText)),
+				HBox(Text("RES C "), Text(&state.fuelCBar), Text(&state.fuelCText)),
+				Text(&state.fuelWarning).Bold(),
+			),
 
-					tui.VBox{
-						Title: "SUBSYSTEMS",
-						Children: []any{
-							tui.HBox{Children: []any{
-								tui.Text{Content: tui.LED(true)},
-								tui.Text{Content: " GEN1   "},
-								tui.Text{Content: tui.LED(true)},
-								tui.Text{Content: " GEN2"},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: tui.LED(false)},
-								tui.Text{Content: " BACKUP "},
-								tui.Text{Content: tui.LED(true)},
-								tui.Text{Content: " COMM"},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: tui.LED(true)},
-								tui.Text{Content: " RADAR  "},
-								tui.Text{Content: tui.LED(false)},
-								tui.Text{Content: " WPNS"},
-							}},
-							tui.HBox{Children: []any{
-								tui.Text{Content: "RWR: "},
-								tui.Text{Content: &state.rwrIndicator},
-							}},
-						},
-					}.WidthPct(0.5).Height(6).Border(tui.BorderSingle).BorderFG(dim),
-				},
-			},
+			VBox.WidthPct(0.5).Height(6).Border(BorderSingle).BorderFG(dim).Title("SUBSYSTEMS")(
+				HBox(Text(LED(true)), Text(" GEN1   "), Text(LED(true)), Text(" GEN2")),
+				HBox(Text(LED(false)), Text(" BACKUP "), Text(LED(true)), Text(" COMM")),
+				HBox(Text(LED(true)), Text(" RADAR  "), Text(LED(false)), Text(" WPNS")),
+				HBox(Text("RWR: "), Text(&state.rwrIndicator)),
+			),
+		),
 
-			// BOTTOM: LOG (fills remaining space)
-			tui.VBox{
-				Title: "LOG",
-				Children: []any{
-					tui.Text{Content: "21:14:32Z TACAN 22.1 ACQUIRED"},
-					tui.Text{Content: "21:14:35Z RAD CH9 482.160 TX 15.2W"},
-					tui.Text{Content: "21:14:37Z UHF 243.0 GRD ACTIVE"},
-					tui.Text{Content: "21:14:38Z TADIL BUS A ONLINE"},
-					tui.Text{Content: "21:14:40Z ENCR KEY 07A 1.2 SYNC"},
-					tui.Text{Content: "21:14:42Z ESM RWR STANDBY"},
-				},
-			}.Grow(1).Border(tui.BorderSingle).BorderFG(dim),
+		// bottom: log (fills remaining space)
+		VBox.Grow(1).Border(BorderSingle).BorderFG(dim).Title("LOG")(
+			Text("21:14:32Z TACAN 22.1 ACQUIRED"),
+			Text("21:14:35Z RAD CH9 482.160 TX 15.2W"),
+			Text("21:14:37Z UHF 243.0 GRD ACTIVE"),
+			Text("21:14:38Z TADIL BUS A ONLINE"),
+			Text("21:14:40Z ENCR KEY 07A 1.2 SYNC"),
+			Text("21:14:42Z ESM RWR STANDBY"),
+		),
 
-			// Status bar
-			tui.HBox{
-				Children: []any{
-					tui.Text{Content: &state.status},
-					tui.Text{Content: " | [Q]UIT | "},
-					tui.Text{Content: &state.clock},
-				},
-			},
-		},
-	}
+		// status bar
+		HBox(
+			Text(&state.status),
+			Text(" | [Q]UIT | "),
+			Text(&state.clock),
+		),
+	)
 }
 
 type State struct {
@@ -227,7 +158,6 @@ type State struct {
 	rwr                 int
 	tick                int
 
-	// Display strings (bound via pointers)
 	status       string
 	clock        string
 	fuelABar     string

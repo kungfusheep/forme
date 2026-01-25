@@ -1,0 +1,279 @@
+# Layout
+
+## Container Direction
+
+`VBox` lays out children vertically (top to bottom).
+`HBox` lays out children horizontally (left to right).
+
+```go
+VBox(A, B, C)    HBox(A, B, C)
+
+┌───┐            ┌───┬───┬───┐
+│ A │            │ A │ B │ C │
+├───┤            └───┴───┴───┘
+│ B │
+├───┤
+│ C │
+└───┘
+```
+
+## Gap
+
+Space between children:
+
+```go
+VBox.Gap(1)(A, B, C)
+
+┌───┐
+│ A │
+│   │  ← 1 line gap
+├───┤
+│ B │
+│   │  ← 1 line gap
+├───┤
+│ C │
+└───┘
+```
+
+## Fixed Dimensions
+
+```go
+VBox.Width(40)(...)   // 40 characters wide
+VBox.Height(10)(...)  // 10 lines tall
+```
+
+## Percentage Width
+
+```go
+HBox(
+    VBox.WidthPct(0.3)(...),  // 30% of parent
+    VBox.WidthPct(0.7)(...),  // 70% of parent
+)
+```
+
+## Flex Grow
+
+Distribute remaining space:
+
+```go
+HBox(
+    Text("Fixed"),
+    Space(),           // Takes remaining space (default grow=1)
+    Text("Fixed"),
+)
+```
+
+Custom grow factors:
+
+```go
+HBox(
+    VBox.Grow(1)(...),  // 1 part
+    VBox.Grow(2)(...),  // 2 parts (twice as wide)
+    VBox.Grow(1)(...),  // 1 part
+)
+```
+
+Spacers with grow:
+
+```go
+HBox(
+    Text("A"),
+    Space().Grow(1),    // 1x space
+    Text("B"),
+    Space().Grow(2),    // 2x space (wider)
+    Text("C"),
+)
+```
+
+## Borders
+
+```go
+VBox.Border(BorderSingle)(...)
+VBox.Border(BorderDouble)(...)
+VBox.Border(BorderRounded)(...)
+VBox.Border(BorderThick)(...)
+```
+
+```
+BorderSingle    BorderDouble    BorderRounded   BorderThick
+┌─────────┐     ╔═════════╗     ╭─────────╮     ┏━━━━━━━━━┓
+│ content │     ║ content ║     │ content │     ┃ content ┃
+└─────────┘     ╚═════════╝     ╰─────────╯     ┗━━━━━━━━━┛
+```
+
+Border styling:
+
+```go
+VBox.Border(BorderRounded).BorderFG(Cyan).Title("Panel")(...)
+
+╭─Panel────────╮
+│ content      │
+╰──────────────╯
+```
+
+## Nesting
+
+Containers nest freely:
+
+```go
+VBox(
+    HBox(
+        VBox.Border(BorderSingle)(
+            Text("Panel 1"),
+        ),
+        VBox.Border(BorderSingle)(
+            Text("Panel 2"),
+        ),
+    ),
+    HRule(),
+    Text("Footer"),
+)
+```
+
+## Common Patterns
+
+### Sidebar + Content
+
+```go
+HBox(
+    VBox.Width(25).Border(BorderSingle)(
+        Text("Sidebar"),
+    ),
+    VBox.Grow(1)(
+        Text("Main content"),
+    ),
+)
+```
+
+### Header + Content + Footer
+
+```go
+VBox(
+    Text("Header").Bold(),
+    HRule(),
+    VBox.Grow(1)(
+        Text("Content"),
+    ),
+    HRule(),
+    Text("Footer"),
+)
+```
+
+### Centered Content
+
+```go
+HBox(
+    Space(),
+    VBox(
+        Text("Centered"),
+    ),
+    Space(),
+)
+```
+
+### Right-Aligned
+
+```go
+HBox(
+    Space(),
+    Text("Right"),
+)
+```
+
+### Space Between
+
+```go
+HBox(
+    Text("Left"),
+    Space(),
+    Text("Right"),
+)
+```
+
+### Even Distribution
+
+```go
+HBox(
+    Text("A"),
+    Space(),
+    Text("B"),
+    Space(),
+    Text("C"),
+)
+```
+
+## Custom Layouts
+
+When VBox/HBox aren't sufficient, use a Layer with direct buffer access.
+
+### Layer with Manual Rendering
+
+```go
+layer := NewLayer()
+
+// Render function called automatically when viewport changes
+layer.Render = func() {
+    buf := layer.Buffer()
+    width, height := buf.Width(), buf.Height()
+
+    // Draw custom layout
+    buf.WriteString(0, 0, "Top-left", Style{})
+    buf.WriteString(width-10, 0, "Top-right", Style{})
+    buf.WriteString(width/2-5, height/2, "Centered", Style{FG: Cyan})
+}
+
+// Use in layout
+VBox(
+    Text("Header"),
+    LayerView(layer).ViewHeight(20),
+)
+```
+
+### Direct Buffer Access
+
+```go
+buf := NewBuffer(80, 50)
+
+// Absolute positioning
+buf.WriteString(10, 5, "At position (10, 5)", Style{})
+
+// Draw shapes
+for x := 0; x < 20; x++ {
+    buf.Set(x, 10, Cell{Rune: '─', Style: Style{FG: Yellow}})
+}
+
+// Fill regions
+for y := 0; y < 5; y++ {
+    for x := 0; x < 10; x++ {
+        buf.Set(x, y, Cell{Rune: ' ', Style: Style{BG: Blue}})
+    }
+}
+
+layer := NewLayer()
+layer.SetBuffer(buf)
+```
+
+### Scrollable Custom Content
+
+```go
+layer := NewLayer()
+
+// Create content larger than viewport
+buf := NewBuffer(80, 1000)
+for i := 0; i < 1000; i++ {
+    buf.WriteString(0, i, fmt.Sprintf("Line %d", i), Style{})
+}
+layer.SetBuffer(buf)
+
+// LayerView handles scrolling
+VBox(
+    LayerView(layer).ViewHeight(20),
+    Text("j/k to scroll"),
+)
+
+// Scroll handlers
+app.Handle("j", func(_ riffkey.Match) { layer.ScrollDown(1) })
+app.Handle("k", func(_ riffkey.Match) { layer.ScrollUp(1) })
+```
+
+See [api.md](api.md#buffer) for Buffer methods.

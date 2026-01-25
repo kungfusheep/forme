@@ -44,13 +44,13 @@ func init() {
 func BenchmarkStress100Items(b *testing.B) {
 	buf := NewBuffer(80, 120)
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
+			TextNode{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 30},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},
@@ -82,13 +82,13 @@ func BenchmarkStressWideProgress(b *testing.B) {
 		}
 	}
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: "Wide Progress Bars"},
+			TextNode{Content: "Wide Progress Bars"},
 			ForEach(&items, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 100},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 100},
 				}}
 			}),
 		},
@@ -123,13 +123,13 @@ func BenchmarkStressDenseGrid(b *testing.B) {
 		}
 	}
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: "Dense Grid"},
+			TextNode{Content: "Dense Grid"},
 			ForEach(&rows, func(row *[]StressItem) any {
-				return HBox{Children: []any{
+				return HBoxNode{Children: []any{
 					ForEach(row, func(item *StressItem) any {
-						return Progress{Value: &item.CPU, BarWidth: 8}
+						return ProgressNode{Value: &item.CPU, BarWidth: 8}
 					}),
 				}}
 			}),
@@ -159,31 +159,31 @@ func BenchmarkStressHeavyDashboard(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
-			Text{Content: "═══════════════════════════════════════════════════════════════"},
-			Text{Content: "CPU Cores"},
+			TextNode{Content: &stressData.Title},
+			TextNode{Content: "═══════════════════════════════════════════════════════════════"},
+			TextNode{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Memory Banks"},
+			TextNode{Content: ""},
+			TextNode{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Process List"},
+			TextNode{Content: ""},
+			TextNode{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 40},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -212,11 +212,11 @@ func BenchmarkStressTextHeavy(b *testing.B) {
 		lines[i] = "This is line number " + string(rune('0'+i/10)) + string(rune('0'+i%10)) + " with some extra text to make it longer and stress the text rendering path"
 	}
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: "Text Heavy Benchmark"},
+			TextNode{Content: "Text Heavy Benchmark"},
 			ForEach(&lines, func(line *string) any {
-				return Text{Content: line}
+				return TextNode{Content: line}
 			}),
 		},
 	}
@@ -246,31 +246,31 @@ func BenchmarkAsyncClearHeavy(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
-			Text{Content: "═══════════════════════════════════════════════════════════════"},
-			Text{Content: "CPU Cores"},
+			TextNode{Content: &stressData.Title},
+			TextNode{Content: "═══════════════════════════════════════════════════════════════"},
+			TextNode{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Memory Banks"},
+			TextNode{Content: ""},
+			TextNode{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Process List"},
+			TextNode{Content: ""},
+			TextNode{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 40},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -299,31 +299,31 @@ func BenchmarkSyncClearHeavy(b *testing.B) {
 	memBanks := stressData.Items[8:16]
 	procList := stressData.Items[16:50]
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
-			Text{Content: "═══════════════════════════════════════════════════════════════"},
-			Text{Content: "CPU Cores"},
+			TextNode{Content: &stressData.Title},
+			TextNode{Content: "═══════════════════════════════════════════════════════════════"},
+			TextNode{Content: "CPU Cores"},
 			ForEach(&cpuCores, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Memory Banks"},
+			TextNode{Content: ""},
+			TextNode{Content: "Memory Banks"},
 			ForEach(&memBanks, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 50},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 50},
 				}}
 			}),
-			Text{Content: ""},
-			Text{Content: "Process List"},
+			TextNode{Content: ""},
+			TextNode{Content: "Process List"},
 			ForEach(&procList, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 40},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 40},
 				}}
 			}),
 		},
@@ -348,13 +348,13 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 	pool := NewBufferPool(80, 120)
 	defer pool.Stop()
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
+			TextNode{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 30},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},
@@ -379,13 +379,13 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 func BenchmarkSyncClear100Items(b *testing.B) {
 	buf := NewBuffer(80, 120)
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: &stressData.Title},
+			TextNode{Content: &stressData.Title},
 			ForEach(&stressData.Items, func(item *StressItem) any {
-				return HBox{Children: []any{
-					Text{Content: &item.Name},
-					Progress{Value: &item.CPU, BarWidth: 30},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &item.Name},
+					ProgressNode{Value: &item.CPU, BarWidth: 30},
 				}}
 			}),
 		},

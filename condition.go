@@ -37,6 +37,20 @@ func (c *Condition[T]) Ne(val T) *ConditionEval[T] {
 	}
 }
 
+// Then is shorthand for checking truthiness (not equal to zero value).
+// For bool: If(&flag).Then(node) renders when flag is true
+// For int: If(&count).Then(node) renders when count is non-zero
+// For string: If(&str).Then(node) renders when str is non-empty
+func (c *Condition[T]) Then(node any) *ConditionEval[T] {
+	var zero T
+	return &ConditionEval[T]{
+		ptr:  c.ptr,
+		op:   condOpNe,
+		val:  zero,
+		then: node,
+	}
+}
+
 // OrdCondition extends Condition for ordered types (int, float, string).
 type OrdCondition[T cmp.Ordered] struct {
 	ptr *T

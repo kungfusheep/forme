@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 // Grid returns a layout function that arranges children in a grid
 // If cellH is 0, it uses each child's natural height
-func Grid(cols, cellW, cellH int) tui.LayoutFunc {
-	return func(children []tui.ChildSize, availW, availH int) []tui.Rect {
-		rects := make([]tui.Rect, len(children))
+func Grid(cols, cellW, cellH int) LayoutFunc {
+	return func(children []ChildSize, availW, availH int) []Rect {
+		rects := make([]Rect, len(children))
 
 		// Calculate row heights (max height of items in each row)
 		numRows := (len(children) + cols - 1) / cols
@@ -49,7 +49,7 @@ func Grid(cols, cellW, cellH int) tui.LayoutFunc {
 			if h == 0 {
 				h = children[i].MinH
 			}
-			rects[i] = tui.Rect{
+			rects[i] = Rect{
 				X: col * cellW,
 				Y: rowY[row],
 				W: cellW,
@@ -65,7 +65,7 @@ type MiniGraph struct {
 	Values *[]float64
 	Width  int
 	Height int
-	Style  tui.Style
+	Style  Style
 }
 
 func (g MiniGraph) MinSize() (width, height int) {
@@ -76,7 +76,7 @@ func (g MiniGraph) MinSize() (width, height int) {
 	return g.Width, h
 }
 
-func (g MiniGraph) Render(buf *tui.Buffer, x, y, w, h int) {
+func (g MiniGraph) Render(buf *Buffer, x, y, w, h int) {
 	if g.Values == nil || len(*g.Values) == 0 {
 		return
 	}
@@ -113,7 +113,7 @@ func (g MiniGraph) Render(buf *tui.Buffer, x, y, w, h int) {
 				char = ' '
 			}
 
-			buf.Set(x+i, rowY, tui.Cell{Rune: char, Style: g.Style})
+			buf.Set(x+i, rowY, Cell{Rune: char, Style: g.Style})
 		}
 	}
 }
@@ -208,9 +208,9 @@ func main() {
 	}()
 
 	// Enable debug timing
-	tui.DebugTiming = true
+	DebugTiming = true
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -282,66 +282,66 @@ func main() {
 		state.CPUHistory[i] = float64(state.CPUTotal)
 	}
 
-	cpuStyle := tui.Style{FG: tui.Color{Mode: tui.ColorRGB, R: 80, G: 200, B: 120}}
-	renderStyle := tui.Style{FG: tui.Color{Mode: tui.ColorRGB, R: 255, G: 180, B: 80}} // Orange
-	flushStyle := tui.Style{FG: tui.Color{Mode: tui.ColorRGB, R: 80, G: 180, B: 255}}  // Blue
-	warnStyle := tui.Style{FG: tui.Yellow}
-	critStyle := tui.Style{FG: tui.Red, Attr: tui.AttrBold}
+	cpuStyle := Style{FG: Color{Mode: ColorRGB, R: 80, G: 200, B: 120}}
+	renderStyle := Style{FG: Color{Mode: ColorRGB, R: 255, G: 180, B: 80}} // Orange
+	flushStyle := Style{FG: Color{Mode: ColorRGB, R: 80, G: 180, B: 255}}  // Blue
+	warnStyle := Style{FG: Yellow}
+	critStyle := Style{FG: Red, Attr: AttrBold}
 
 	// Build UI with conditionals (using V2 template for Box, custom Renderer support)
 	// Layout uses Grow() to push footer to bottom of screen
-	app.SetView(tui.VBox{Children: []any{
+	app.SetView(VBoxNode{Children: []any{
 		// ══════════════════════════════════════════════════════════════
 		// HEADER SECTION (fixed height)
 		// ══════════════════════════════════════════════════════════════
-		tui.HBox{Gap: 2, Children: []any{
-			tui.Text{Content: &state.Hostname},
-			tui.Text{Content: "Uptime:"},
-			tui.Text{Content: &state.Uptime},
+		HBoxNode{Gap: 2, Children: []any{
+			TextNode{Content: &state.Hostname},
+			TextNode{Content: "Uptime:"},
+			TextNode{Content: &state.Uptime},
 			// HORIZONTAL GROW: Spacer pushes mode indicator to right side
-			tui.VBox{}.Grow(1),
-			tui.Text{Content: "Mode:"},
+			VBoxNode{}.Grow(1),
+			TextNode{Content: "Mode:"},
 			// SWITCH/CASE: Display different text based on ViewMode
-			tui.Switch(&state.ViewMode).
-				Case("all", tui.Text{Content: "[ALL]"}).
-				Case("compact", tui.Text{Content: "[COMPACT]"}).
-				Case("graphs", tui.Text{Content: "[GRAPHS]"}).
-				Default(tui.Text{Content: "[?]"}),
+			Switch(&state.ViewMode).
+				Case("all", TextNode{Content: "[ALL]"}).
+				Case("compact", TextNode{Content: "[COMPACT]"}).
+				Case("graphs", TextNode{Content: "[GRAPHS]"}).
+				Default(TextNode{Content: "[?]"}),
 		}},
 
 		// Resource bars with threshold indicators
-		tui.HBox{Gap: 1, Children: []any{
-			tui.Text{Content: "CPU:"},
-			tui.Progress{Value: &state.CPUTotal, BarWidth: 25},
+		HBoxNode{Gap: 1, Children: []any{
+			TextNode{Content: "CPU:"},
+			ProgressNode{Value: &state.CPUTotal, BarWidth: 25},
 			// IfOrd.Gt: Show warning indicator when CPU > 50%
-			tui.IfOrd(&state.CPUTotal).Gt(50).Then(
-				tui.IfOrd(&state.CPUTotal).Gt(80).Then(
-					tui.Text{Content: "CRIT", Style: tui.Style{FG: critStyle.FG, Attr: tui.AttrBold}},
+			IfOrd(&state.CPUTotal).Gt(50).Then(
+				IfOrd(&state.CPUTotal).Gt(80).Then(
+					TextNode{Content: "CRIT", Style: Style{FG: critStyle.FG, Attr: AttrBold}},
 				).Else(
-					tui.Text{Content: "WARN", Style: tui.Style{FG: warnStyle.FG}},
+					TextNode{Content: "WARN", Style: Style{FG: warnStyle.FG}},
 				),
 			).Else(
-				tui.Text{Content: "    "},
+				TextNode{Content: "    "},
 			),
 		}},
-		tui.HBox{Gap: 1, Children: []any{
-			tui.Text{Content: "MEM:"},
-			tui.Progress{Value: &state.MemTotal, BarWidth: 25},
+		HBoxNode{Gap: 1, Children: []any{
+			TextNode{Content: "MEM:"},
+			ProgressNode{Value: &state.MemTotal, BarWidth: 25},
 			// IfOrd.Gte: Show warning at >= 60%
-			tui.IfOrd(&state.MemTotal).Gte(60).Then(
-				tui.Text{Content: "HIGH", Style: tui.Style{FG: warnStyle.FG}},
+			IfOrd(&state.MemTotal).Gte(60).Then(
+				TextNode{Content: "HIGH", Style: Style{FG: warnStyle.FG}},
 			).Else(
-				tui.Text{Content: "    "},
+				TextNode{Content: "    "},
 			),
 		}},
-		tui.HBox{Gap: 1, Children: []any{
-			tui.Text{Content: "SWP:"},
-			tui.Progress{Value: &state.SwapTotal, BarWidth: 25},
+		HBoxNode{Gap: 1, Children: []any{
+			TextNode{Content: "SWP:"},
+			ProgressNode{Value: &state.SwapTotal, BarWidth: 25},
 			// IfOrd.Lt: Show "LOW" when swap < 20% (inverse logic demo)
-			tui.IfOrd(&state.SwapTotal).Lt(20).Then(
-				tui.Text{Content: " OK "},
+			IfOrd(&state.SwapTotal).Lt(20).Then(
+				TextNode{Content: " OK "},
 			).Else(
-				tui.Text{Content: "USED", Style: tui.Style{FG: warnStyle.FG}},
+				TextNode{Content: "USED", Style: Style{FG: warnStyle.FG}},
 			),
 		}},
 
@@ -349,71 +349,71 @@ func main() {
 		// MAIN CONTENT - HORIZONTAL GROW: Two columns with weighted widths
 		// Left panel Grow(1), Right panel Grow(2) = 1:2 width ratio
 		// ══════════════════════════════════════════════════════════════
-		tui.HBox{Gap: 1, Children: []any{
+		HBoxNode{Gap: 1, Children: []any{
 			// LEFT PANEL: Grow(1) - gets 1/3 of width
-			tui.VBox{Children: []any{
+			VBoxNode{Children: []any{
 				// BORDERED PANEL: Stats with single border
-				tui.VBox{
+				VBoxNode{
 					Title: "Stats",
 					Children: []any{
-						tui.Box{
+						Box{
 							Layout: Grid(2, 15, 0), // Wider cells to fit "Sleeping: 139"
 							Children: []any{
-								tui.Text{Content: &state.Tasks},
-								tui.Text{Content: &state.Running},
-								tui.Text{Content: &state.Sleeping},
-								tui.Text{Content: &state.Stopped},
+								TextNode{Content: &state.Tasks},
+								TextNode{Content: &state.Running},
+								TextNode{Content: &state.Sleeping},
+								TextNode{Content: &state.Stopped},
 							},
 						},
 					},
-				}.Border(tui.BorderSingle).BorderFG(tui.Cyan),
+				}.Border(BorderSingle).BorderFG(Cyan),
 
 				// BORDERED PANEL: Load with rounded border
-				tui.VBox{
+				VBoxNode{
 					Title: "Load",
 					Children: []any{
-						tui.Text{Content: &state.Load},
+						TextNode{Content: &state.Load},
 					},
-				}.Border(tui.BorderRounded).BorderFG(tui.Green),
+				}.Border(BorderRounded).BorderFG(Green),
 			}}.Grow(1),
 
 			// RIGHT PANEL: Grow(2) - gets 2/3 of width
-			tui.VBox{Children: []any{
+			VBoxNode{Children: []any{
 				// SWITCH/CASE: Show different content based on ViewMode
-				tui.Switch(&state.ViewMode).
-					Case("all", tui.VBox{
+				Switch(&state.ViewMode).
+					Case("all", VBoxNode{
 						Title: "All Stats",
 						Children: []any{
-							tui.Box{
+							Box{
 								Layout: Grid(3, 15, 1),
 								Children: []any{
-									tui.Text{Content: &state.Tasks},
-									tui.Text{Content: &state.Threads},
-									tui.Text{Content: &state.Running},
-									tui.Text{Content: &state.Sleeping},
-									tui.Text{Content: &state.Stopped},
-									tui.Text{Content: &state.Zombie},
+									TextNode{Content: &state.Tasks},
+									TextNode{Content: &state.Threads},
+									TextNode{Content: &state.Running},
+									TextNode{Content: &state.Sleeping},
+									TextNode{Content: &state.Stopped},
+									TextNode{Content: &state.Zombie},
 								},
 							},
 						},
-					}.Border(tui.BorderSingle).BorderFG(tui.Magenta)).
-					Case("compact", tui.HBox{Gap: 2, Children: []any{
-						tui.Text{Content: &state.Tasks},
-						tui.Text{Content: &state.Running},
-						tui.Text{Content: "Load:"},
-						tui.Text{Content: &state.Load},
+					}.Border(BorderSingle).BorderFG(Magenta)).
+					Case("compact", HBoxNode{Gap: 2, Children: []any{
+						TextNode{Content: &state.Tasks},
+						TextNode{Content: &state.Running},
+						TextNode{Content: "Load:"},
+						TextNode{Content: &state.Load},
 					}}).
-					Case("graphs", tui.Text{Content: "─── Graphs Mode ───"}).
-					Default(tui.Text{Content: "Unknown view mode"}),
+					Case("graphs", TextNode{Content: "─── Graphs Mode ───"}).
+					Default(TextNode{Content: "Unknown view mode"}),
 
 				// Conditional: CPU Graph (If.Eq demo)
-				tui.If(&state.ShowGraph).Eq(true).Then(
-					tui.VBox{
+				If(&state.ShowGraph).Eq(true).Then(
+					VBoxNode{
 						Title: "CPU History",
 						Children: []any{
 							MiniGraph{Values: &state.CPUHistory, Width: 60, Height: 4, Style: cpuStyle},
 						},
-					}.Border(tui.BorderRounded).BorderFG(cpuStyle.FG),
+					}.Border(BorderRounded).BorderFG(cpuStyle.FG),
 				),
 			}}.Grow(2),
 		}},
@@ -422,71 +422,71 @@ func main() {
 		// MIDDLE SECTION - VERTICAL GROW with weighted children
 		// Graphs Grow(1), Process list Grow(2) = 1:2 height ratio
 		// ══════════════════════════════════════════════════════════════
-		tui.VBox{Children: []any{
+		VBoxNode{Children: []any{
 			// GRAPHS SECTION: Grow(1) - gets 1/3 of remaining height
-			tui.VBox{
+			VBoxNode{
 				Title: "Timing",
 				Children: []any{
-					tui.HBox{Gap: 1, Children: []any{
-						tui.Text{Content: &state.RenderLabel},
+					HBoxNode{Gap: 1, Children: []any{
+						TextNode{Content: &state.RenderLabel},
 						MiniGraph{Values: &state.RenderHistory, Width: 60, Height: 2, Style: renderStyle},
 					}},
-					tui.HBox{Gap: 1, Children: []any{
-						tui.Text{Content: &state.FlushLabel},
+					HBoxNode{Gap: 1, Children: []any{
+						TextNode{Content: &state.FlushLabel},
 						MiniGraph{Values: &state.FlushHistory, Width: 60, Height: 2, Style: flushStyle},
 					}},
-					tui.HBox{Gap: 2, Children: []any{
-						tui.Text{Content: &state.RowStats},
-						tui.Text{Content: &state.FPSLabel},
+					HBoxNode{Gap: 2, Children: []any{
+						TextNode{Content: &state.RowStats},
+						TextNode{Content: &state.FPSLabel},
 					}},
 				},
-			}.Border(tui.BorderDouble).BorderFG(tui.Yellow).Grow(1),
+			}.Border(BorderDouble).BorderFG(Yellow).Grow(1),
 
 			// PROCESS LIST: Grow(2) - gets 2/3 of remaining height
-			tui.If(&state.ShowProcs).Eq(true).Then(tui.VBox{
+			If(&state.ShowProcs).Eq(true).Then(VBoxNode{
 				Title: "Processes",
 				Children: []any{
 					// Show "PAUSED" header when paused (If.Ne demo)
-					tui.If(&state.Paused).Ne(false).Then(
-						tui.Text{Content: "=== PAUSED ===", Style: tui.Style{FG: warnStyle.FG}},
+					If(&state.Paused).Ne(false).Then(
+						TextNode{Content: "=== PAUSED ===", Style: Style{FG: warnStyle.FG}},
 					),
-					tui.HBox{Gap: 2, Children: []any{
-						tui.Text{Content: " "},
-						tui.Text{Content: "  PID"},
-						tui.Text{Content: "NAME        "},
-						tui.Text{Content: "  CPU"},
-						tui.Text{Content: "  MEM"},
-						tui.Text{Content: "STATUS  "},
+					HBoxNode{Gap: 2, Children: []any{
+						TextNode{Content: " "},
+						TextNode{Content: "  PID"},
+						TextNode{Content: "NAME        "},
+						TextNode{Content: "  CPU"},
+						TextNode{Content: "  MEM"},
+						TextNode{Content: "STATUS  "},
 					}},
 					// ForEach demo with nested conditionals
-					tui.ForEach(&state.Processes, func(p *Process) any {
-						return tui.HBox{Gap: 2, Children: []any{
-							tui.If(&p.Selected).Eq(true).Then(
-								tui.Text{Content: ">"},
+					ForEach(&state.Processes, func(p *Process) any {
+						return HBoxNode{Gap: 2, Children: []any{
+							If(&p.Selected).Eq(true).Then(
+								TextNode{Content: ">"},
 							).Else(
-								tui.Text{Content: " "},
+								TextNode{Content: " "},
 							),
-							tui.Text{Content: &p.PID},
-							tui.Text{Content: &p.Name},
-							tui.Text{Content: &p.CPU},
-							tui.Text{Content: &p.Mem},
-							tui.Text{Content: &p.Status},
+							TextNode{Content: &p.PID},
+							TextNode{Content: &p.Name},
+							TextNode{Content: &p.CPU},
+							TextNode{Content: &p.Mem},
+							TextNode{Content: &p.Status},
 						}}
 					}),
 				},
-			}.Border(tui.BorderSingle).BorderFG(tui.BrightBlue).Grow(2)),
+			}.Border(BorderSingle).BorderFG(BrightBlue).Grow(2)),
 		}}.Grow(1), // <-- OUTER GROW: This whole section expands vertically
 
 		// ══════════════════════════════════════════════════════════════
 		// FOOTER SECTION (fixed height, stays at bottom)
 		// ══════════════════════════════════════════════════════════════
 		// Conditional: Help bar
-		tui.If(&state.ShowHelp).Eq(true).Then(
-			tui.Text{Content: &state.HelpText},
+		If(&state.ShowHelp).Eq(true).Then(
+			TextNode{Content: &state.HelpText},
 		),
 
 		// Render stats (always at bottom)
-		tui.Text{Content: &state.Timing},
+		TextNode{Content: &state.Timing},
 	}}).
 		// Key handlers
 		Handle("q", func(_ riffkey.Match) {
@@ -592,10 +592,10 @@ func main() {
 			state.Sleeping = fmt.Sprintf("Sleeping: %3d", sleeping)
 
 			// Update timing stats
-			state.Timing = tui.TimingString()
+			state.Timing = TimingString()
 
 			// Capture timing history for graphs
-			timings := tui.GetTimings()
+			timings := GetTimings()
 			// Scale: 100 = 1000µs (1ms), so divide by 10 to get percentage
 			copy(state.RenderHistory, state.RenderHistory[1:])
 			copy(state.FlushHistory, state.FlushHistory[1:])
@@ -607,7 +607,7 @@ func main() {
 			state.FlushLabel = fmt.Sprintf("Flush:  %5.0fµs", timings.FlushUs)
 
 			// Get row stats from flush
-			flushStats := tui.GetFlushStats()
+			flushStats := GetFlushStats()
 			state.RowStats = fmt.Sprintf("Rows: %d dirty, %d changed", flushStats.DirtyRows, flushStats.ChangedRows)
 
 			// Track actual FPS

@@ -5,11 +5,10 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 func main() {
-	// State
 	spinnerFrame := 0
 	scrollPos := 25
 	selectedTab := 0
@@ -25,24 +24,23 @@ func main() {
 		{"TreeView", "Hierarchical", "Done"},
 	}
 
-	// TreeView data
-	tree := &tui.TreeNode{
+	tree := &TreeNode{
 		Label:    "Components",
 		Expanded: true,
-		Children: []*tui.TreeNode{
+		Children: []*TreeNode{
 			{
 				Label:    "Layout",
 				Expanded: true,
-				Children: []*tui.TreeNode{
-					{Label: "Row"},
-					{Label: "Col"},
+				Children: []*TreeNode{
+					{Label: "VBox"},
+					{Label: "HBox"},
 					{Label: "Box"},
 				},
 			},
 			{
 				Label:    "Display",
 				Expanded: true,
-				Children: []*tui.TreeNode{
+				Children: []*TreeNode{
 					{Label: "Text"},
 					{Label: "Progress"},
 					{Label: "RichText"},
@@ -54,7 +52,7 @@ func main() {
 			{
 				Label:    "Widgets",
 				Expanded: false,
-				Children: []*tui.TreeNode{
+				Children: []*TreeNode{
 					{Label: "Spinner"},
 					{Label: "Scrollbar"},
 					{Label: "Tabs"},
@@ -64,177 +62,122 @@ func main() {
 		},
 	}
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Build the UI
 	app.SetView(
-		tui.VBox{
-			Children: []any{
-				// Title
-				tui.HBox{
-					Children: []any{
-						tui.Text{Content: " TUI Component Showcase "},
+		VBox(
+			// title
+			HBox.Border(BorderDouble)(Text(" TUI Component Showcase ")),
+
+			SpaceH(1),
+
+			// main content row
+			HBox.Gap(2)(
+				// left column
+				VBox.WidthPct(0.30)(
+					Text("Leader:").Bold(),
+					Leader("Status", "Active").Width(25).Fill('.'),
+					Leader("Memory", "1.2GB").Width(25).Fill('-'),
+					Leader("CPU", "45%").Width(25),
+
+					SpaceH(1),
+					Text("Sparkline:").Bold(),
+					Sparkline(&sparkData).Width(25).Style(Style{FG: Cyan}),
+
+					SpaceH(1),
+					Text("Spinners:").Bold(),
+					HBox(Spinner(&spinnerFrame).Frames(SpinnerBraille), Text(" Braille")),
+					HBox(Spinner(&spinnerFrame).Frames(SpinnerDots), Text(" Dots")),
+					HBox(Spinner(&spinnerFrame).Frames(SpinnerCircle), Text(" Circle")),
+					HBox(Spinner(&spinnerFrame).Frames(SpinnerLine), Text(" Line")),
+				),
+
+				VRule().Style(Style{FG: BrightBlack}),
+
+				// middle column - table
+				VBox.WidthPct(0.35)(
+					Text("Table:").Bold(),
+					Table{
+						Columns: []TableColumn{
+							{Header: "Component", Width: 12, Align: AlignLeft},
+							{Header: "Description", Width: 16, Align: AlignLeft},
+							{Header: "Status", Width: 8, Align: AlignCenter},
+						},
+						Rows:        &tableRows,
+						ShowHeader:  true,
+						HeaderStyle: Style{FG: Yellow, Attr: AttrBold},
+						RowStyle:    Style{FG: White},
+						AltRowStyle: Style{FG: BrightBlack},
 					},
-				}.Border(tui.BorderDouble),
+				),
 
-				tui.Spacer{Height: 1},
+				VRule().Style(Style{FG: BrightBlack}),
 
-				// Main content row
-				tui.HBox{
-					Gap: 2,
-					Children: []any{
-						// Left column - Leader, Sparkline, Spinner
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "Leader:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Leader{Label: "Status", Value: "Active", Width: 25, Fill: '.'},
-								tui.Leader{Label: "Memory", Value: "1.2GB", Width: 25, Fill: '-'},
-								tui.Leader{Label: "CPU", Value: "45%", Width: 25},
-
-								tui.Spacer{Height: 1},
-								tui.Text{Content: "Sparkline:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Sparkline{Values: &sparkData, Width: 25, Style: tui.Style{FG: tui.Cyan}},
-
-								tui.Spacer{Height: 1},
-								tui.Text{Content: "Spinners:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.HBox{
-									Children: []any{
-										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerBraille},
-										tui.Text{Content: " Braille"},
-									},
-								},
-								tui.HBox{
-									Children: []any{
-										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerDots},
-										tui.Text{Content: " Dots"},
-									},
-								},
-								tui.HBox{
-									Children: []any{
-										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerCircle},
-										tui.Text{Content: " Circle"},
-									},
-								},
-								tui.HBox{
-									Children: []any{
-										tui.Spinner{Frame: &spinnerFrame, Frames: tui.SpinnerLine},
-										tui.Text{Content: " Line"},
-									},
-								},
-							},
-						}.WidthPct(0.30),
-
-						// Vertical divider
-						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
-
-						// Middle column - Table
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "Table:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Table{
-									Columns: []tui.TableColumn{
-										{Header: "Component", Width: 12, Align: tui.AlignLeft},
-										{Header: "Description", Width: 16, Align: tui.AlignLeft},
-										{Header: "Status", Width: 8, Align: tui.AlignCenter},
-									},
-									Rows:        &tableRows,
-									ShowHeader:  true,
-									HeaderStyle: tui.Style{FG: tui.Yellow, Attr: tui.AttrBold},
-									RowStyle:    tui.Style{FG: tui.White},
-									AltRowStyle: tui.Style{FG: tui.BrightBlack},
-								},
-							},
-						}.WidthPct(0.35),
-
-						// Vertical divider
-						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
-
-						// Right column - TreeView
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "TreeView:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.TreeView{
-									Root:     tree,
-									ShowRoot: true,
-									Indent:   2,
-									Style:    tui.Style{FG: tui.Green},
-								},
-							},
-						},
+				// right column - tree
+				VBox(
+					Text("TreeView:").Bold(),
+					TreeView{
+						Root:     tree,
+						ShowRoot: true,
+						Indent:   2,
+						Style:    Style{FG: Green},
 					},
-				},
+				),
+			),
 
-				tui.Spacer{Height: 1},
-				tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Spacer{Height: 1},
+			SpaceH(1),
+			HRule().Style(Style{FG: BrightBlack}),
+			SpaceH(1),
 
-				// Bottom section - Tabs and Scrollbar
-				tui.HBox{
-					Gap: 4,
-					Children: []any{
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "Tabs (Underline):", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Tabs{
-									Labels:        []string{"Home", "Settings", "Help"},
-									Selected:      &selectedTab,
-									ActiveStyle:   tui.Style{FG: tui.Cyan},
-									InactiveStyle: tui.Style{FG: tui.White},
-								},
-							},
-						},
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "Tabs (Bracket):", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.Tabs{
-									Labels:        []string{"Files", "Edit", "View"},
-									Selected:      &selectedTab,
-									Style:         tui.TabsStyleBracket,
-									ActiveStyle:   tui.Style{FG: tui.Green},
-									InactiveStyle: tui.Style{FG: tui.White},
-								},
-							},
-						},
-						tui.VBox{
-							Children: []any{
-								tui.Text{Content: "Scrollbar:", Style: tui.Style{Attr: tui.AttrBold}},
-								tui.HBox{
-									Children: []any{
-										tui.Text{Content: "Pos: "},
-										tui.Scrollbar{
-											ContentSize: 100,
-											ViewSize:    20,
-											Position:    &scrollPos,
-											Length:      10,
-											ThumbStyle:  tui.Style{FG: tui.Cyan},
-										},
-									},
-								},
-							},
-						},
+			// bottom section - tabs and scrollbar
+			HBox.Gap(4)(
+				VBox(
+					Text("Tabs (Underline):").Bold(),
+					TabsNode{
+						Labels:        []string{"Home", "Settings", "Help"},
+						Selected:      &selectedTab,
+						ActiveStyle:   Style{FG: Cyan},
+						InactiveStyle: Style{FG: White},
 					},
-				},
+				),
+				VBox(
+					Text("Tabs (Bracket):").Bold(),
+					TabsNode{
+						Labels:        []string{"Files", "Edit", "View"},
+						Selected:      &selectedTab,
+						Style:         TabsStyleBracket,
+						ActiveStyle:   Style{FG: Green},
+						InactiveStyle: Style{FG: White},
+					},
+				),
+				VBox(
+					Text("Scrollbar:").Bold(),
+					HBox(
+						Text("Pos: "),
+						Scroll(100, 20, &scrollPos).Length(10).ThumbStyle(Style{FG: Cyan}),
+					),
+				),
+			),
 
-				tui.Spacer{Height: 1},
+			SpaceH(1),
 
-				// Box style tabs
-				tui.Text{Content: "Tabs (Box style):", Style: tui.Style{Attr: tui.AttrBold}},
-				tui.Tabs{
-					Labels:        []string{"Dashboard", "Analytics", "Reports"},
-					Selected:      &selectedTab,
-					Style:         tui.TabsStyleBox,
-					ActiveStyle:   tui.Style{FG: tui.Magenta},
-					InactiveStyle: tui.Style{FG: tui.BrightBlack},
-				},
-
-				tui.Spacer{Height: 1},
-				tui.HRule{},
-				tui.Text{Content: "Keys: Tab=cycle tabs | j/k=scroll | Space=toggle tree | q=quit"},
+			// box style tabs
+			Text("Tabs (Box style):").Bold(),
+			TabsNode{
+				Labels:        []string{"Dashboard", "Analytics", "Reports"},
+				Selected:      &selectedTab,
+				Style:         TabsStyleBox,
+				ActiveStyle:   Style{FG: Magenta},
+				InactiveStyle: Style{FG: BrightBlack},
 			},
-		},
+
+			SpaceH(1),
+			HRule(),
+			Text("Keys: Tab=cycle tabs | j/k=scroll | Space=toggle tree | q=quit"),
+		),
 	).
 		Handle("q", func(m riffkey.Match) {
 			app.Stop()
@@ -253,13 +196,11 @@ func main() {
 			}
 		}).
 		Handle("<Space>", func(m riffkey.Match) {
-			// Toggle "Widgets" expansion
 			if len(tree.Children) > 2 {
 				tree.Children[2].Expanded = !tree.Children[2].Expanded
 			}
 		})
 
-	// Animation ticker
 	go func() {
 		ticker := time.NewTicker(80 * time.Millisecond)
 		defer ticker.Stop()
@@ -267,12 +208,9 @@ func main() {
 		for range ticker.C {
 			frame++
 			spinnerFrame = frame
-
-			// Rotate sparkline data
 			first := sparkData[0]
 			copy(sparkData, sparkData[1:])
 			sparkData[len(sparkData)-1] = first
-
 			app.RenderNow()
 		}
 	}()

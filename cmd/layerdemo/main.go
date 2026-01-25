@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"tui"
+	. "tui"
 )
 
 func main() {
@@ -13,13 +13,13 @@ func main() {
 
 	// Create a small "layer" - imagine this is a webpage that's been rendered
 	// The layer is TALLER than what fits on screen
-	layer := tui.NewBuffer(40, 20) // 40 wide, 20 tall
+	layer := NewBuffer(40, 20) // 40 wide, 20 tall
 
 	// Fill the layer with distinct content so we can see scrolling
 	for y := 0; y < 20; y++ {
 		// Each line has a clear line number and pattern
 		line := fmt.Sprintf("│ Line %02d: %s │", y, strings.Repeat("█", 25))
-		layer.WriteStringFast(0, y, line, tui.Style{}, 40)
+		layer.WriteStringFast(0, y, line, Style{}, 40)
 	}
 
 	fmt.Println("LAYER (the full pre-rendered content - 20 lines tall):")
@@ -30,7 +30,7 @@ func main() {
 
 	// Create a "screen" - this is what the user actually sees
 	// It's SHORTER than the layer (like a viewport)
-	screen := tui.NewBuffer(40, 8) // Only 8 lines tall!
+	screen := NewBuffer(40, 8) // Only 8 lines tall!
 
 	fmt.Println("\n\nSCREEN (viewport - only 8 lines tall):")
 	fmt.Println("This is what the user actually sees on their terminal.")
@@ -64,7 +64,7 @@ func main() {
 	fmt.Println("• Scrolling = changing srcY, no re-rendering needed!")
 }
 
-func printBuffer(b *tui.Buffer) {
+func printBuffer(b *Buffer) {
 	for y := 0; y < b.Height(); y++ {
 		for x := 0; x < b.Width(); x++ {
 			cell := b.Get(x, y)

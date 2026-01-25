@@ -15,7 +15,7 @@ import (
 	"sort"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 const maxVisible = 20
@@ -53,7 +53,7 @@ func main() {
 	}
 	scanDirectory(state)
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -215,39 +215,39 @@ func updateDisplay(state *State) {
 }
 
 func buildView(state *State) any {
-	return tui.VBox{Children: []any{
+	return VBoxNode{Children: []any{
 		// Header
-		tui.Text{Content: "Disk Usage Analyzer", Style: tui.Style{Attr: tui.AttrBold}},
-		tui.HBox{Children: []any{
-			tui.Text{Content: "Path: "},
-			tui.Text{Content: &state.CurrentPath},
+		TextNode{Content: "Disk Usage Analyzer", Style: Style{Attr: AttrBold}},
+		HBoxNode{Children: []any{
+			TextNode{Content: "Path: "},
+			TextNode{Content: &state.CurrentPath},
 		}},
-		tui.Text{Content: ""},
+		TextNode{Content: ""},
 
 		// Entries - using fixed slots
-		tui.Text{Content: &state.DisplayLines[0]},
-		tui.Text{Content: &state.DisplayLines[1]},
-		tui.Text{Content: &state.DisplayLines[2]},
-		tui.Text{Content: &state.DisplayLines[3]},
-		tui.Text{Content: &state.DisplayLines[4]},
-		tui.Text{Content: &state.DisplayLines[5]},
-		tui.Text{Content: &state.DisplayLines[6]},
-		tui.Text{Content: &state.DisplayLines[7]},
-		tui.Text{Content: &state.DisplayLines[8]},
-		tui.Text{Content: &state.DisplayLines[9]},
-		tui.Text{Content: &state.DisplayLines[10]},
-		tui.Text{Content: &state.DisplayLines[11]},
-		tui.Text{Content: &state.DisplayLines[12]},
-		tui.Text{Content: &state.DisplayLines[13]},
-		tui.Text{Content: &state.DisplayLines[14]},
-		tui.Text{Content: &state.DisplayLines[15]},
-		tui.Text{Content: &state.DisplayLines[16]},
-		tui.Text{Content: &state.DisplayLines[17]},
-		tui.Text{Content: &state.DisplayLines[18]},
-		tui.Text{Content: &state.DisplayLines[19]},
+		TextNode{Content: &state.DisplayLines[0]},
+		TextNode{Content: &state.DisplayLines[1]},
+		TextNode{Content: &state.DisplayLines[2]},
+		TextNode{Content: &state.DisplayLines[3]},
+		TextNode{Content: &state.DisplayLines[4]},
+		TextNode{Content: &state.DisplayLines[5]},
+		TextNode{Content: &state.DisplayLines[6]},
+		TextNode{Content: &state.DisplayLines[7]},
+		TextNode{Content: &state.DisplayLines[8]},
+		TextNode{Content: &state.DisplayLines[9]},
+		TextNode{Content: &state.DisplayLines[10]},
+		TextNode{Content: &state.DisplayLines[11]},
+		TextNode{Content: &state.DisplayLines[12]},
+		TextNode{Content: &state.DisplayLines[13]},
+		TextNode{Content: &state.DisplayLines[14]},
+		TextNode{Content: &state.DisplayLines[15]},
+		TextNode{Content: &state.DisplayLines[16]},
+		TextNode{Content: &state.DisplayLines[17]},
+		TextNode{Content: &state.DisplayLines[18]},
+		TextNode{Content: &state.DisplayLines[19]},
 
 		// Status
-		tui.Text{Content: ""},
-		tui.Text{Content: &state.StatusLine},
+		TextNode{Content: ""},
+		TextNode{Content: &state.StatusLine},
 	}}
 }

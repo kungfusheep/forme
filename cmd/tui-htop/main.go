@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 type Process struct {
@@ -51,16 +51,16 @@ func main() {
 	refreshData(state)
 
 	// Create SelectionList for processes
-	processList := &tui.SelectionList{
+	processList := &SelectionList{
 		Items:      &state.Processes,
 		Selected:   &state.SelectedIdx,
 		MaxVisible: 15, // Limit to 15 visible items with scrolling
 		Render: func(p *Process) any {
-			return tui.Text{Content: &p.Display}
+			return TextNode{Content: &p.Display}
 		},
 	}
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -325,42 +325,42 @@ func truncate(s string, max int) string {
 	return s[:max-1] + "~"
 }
 
-func buildView(state *State, processList *tui.SelectionList) any {
-	return tui.VBox{Children: []any{
+func buildView(state *State, processList *SelectionList) any {
+	return VBoxNode{Children: []any{
 		// Header
-		tui.Text{Content: "System Monitor", Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Text{Content: ""},
+		TextNode{Content: "System Monitor", Style: Style{Attr: AttrBold}},
+		TextNode{Content: ""},
 
 		// System stats
-		tui.HBox{Children: []any{
-			tui.Text{Content: "CPU: "},
-			tui.Text{Content: &state.CPUPercent},
-			tui.Text{Content: "%"},
+		HBoxNode{Children: []any{
+			TextNode{Content: "CPU: "},
+			TextNode{Content: &state.CPUPercent},
+			TextNode{Content: "%"},
 		}},
-		tui.HBox{Children: []any{
-			tui.Text{Content: "Mem: "},
-			tui.Text{Content: &state.MemUsed},
-			tui.Text{Content: " / "},
-			tui.Text{Content: &state.MemTotal},
-			tui.Text{Content: " ("},
-			tui.Text{Content: &state.MemPercent},
-			tui.Text{Content: "%)"},
+		HBoxNode{Children: []any{
+			TextNode{Content: "Mem: "},
+			TextNode{Content: &state.MemUsed},
+			TextNode{Content: " / "},
+			TextNode{Content: &state.MemTotal},
+			TextNode{Content: " ("},
+			TextNode{Content: &state.MemPercent},
+			TextNode{Content: "%)"},
 		}},
-		tui.HBox{Children: []any{
-			tui.Text{Content: "Uptime: "},
-			tui.Text{Content: &state.Uptime},
+		HBoxNode{Children: []any{
+			TextNode{Content: "Uptime: "},
+			TextNode{Content: &state.Uptime},
 		}},
-		tui.Text{Content: ""},
+		TextNode{Content: ""},
 
 		// Process header
-		tui.Text{Content: "   PID    CPU%   MEM%  COMMAND"},
-		tui.Text{Content: "  ─────  ─────  ─────  ────────────────────"},
+		TextNode{Content: "   PID    CPU%   MEM%  COMMAND"},
+		TextNode{Content: "  ─────  ─────  ─────  ────────────────────"},
 
 		// Process list - using SelectionList!
 		processList,
 
 		// Status
-		tui.Text{Content: ""},
-		tui.Text{Content: &state.StatusLine},
+		TextNode{Content: ""},
+		TextNode{Content: &state.StatusLine},
 	}}
 }

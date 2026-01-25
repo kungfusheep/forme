@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 const maxVisible = 15 // Max items to show
@@ -48,7 +48,7 @@ func main() {
 	}
 	updateDisplayLines(state)
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -155,38 +155,38 @@ func filterItems(state *State) {
 func buildView(state *State) any {
 	// Use fixed slots with pointer bindings
 	// This works because DisplayLines is updated when selection changes
-	return tui.VBox{Children: []any{
+	return VBoxNode{Children: []any{
 		// Header
-		tui.Text{Content: "Fuzzy Finder", Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Text{Content: ""},
+		TextNode{Content: "Fuzzy Finder", Style: Style{Attr: AttrBold}},
+		TextNode{Content: ""},
 
 		// Query input - GAP: No text input component!
-		tui.HBox{Children: []any{
-			tui.Text{Content: "> "},
-			tui.Text{Content: &state.Query},
-			tui.Text{Content: "_"}, // Cursor
+		HBoxNode{Children: []any{
+			TextNode{Content: "> "},
+			TextNode{Content: &state.Query},
+			TextNode{Content: "_"}, // Cursor
 		}},
-		tui.Text{Content: ""},
+		TextNode{Content: ""},
 
 		// Results - fixed slots bound to pointers
-		tui.Text{Content: &state.DisplayLines[0]},
-		tui.Text{Content: &state.DisplayLines[1]},
-		tui.Text{Content: &state.DisplayLines[2]},
-		tui.Text{Content: &state.DisplayLines[3]},
-		tui.Text{Content: &state.DisplayLines[4]},
-		tui.Text{Content: &state.DisplayLines[5]},
-		tui.Text{Content: &state.DisplayLines[6]},
-		tui.Text{Content: &state.DisplayLines[7]},
-		tui.Text{Content: &state.DisplayLines[8]},
-		tui.Text{Content: &state.DisplayLines[9]},
-		tui.Text{Content: &state.DisplayLines[10]},
-		tui.Text{Content: &state.DisplayLines[11]},
-		tui.Text{Content: &state.DisplayLines[12]},
-		tui.Text{Content: &state.DisplayLines[13]},
-		tui.Text{Content: &state.DisplayLines[14]},
+		TextNode{Content: &state.DisplayLines[0]},
+		TextNode{Content: &state.DisplayLines[1]},
+		TextNode{Content: &state.DisplayLines[2]},
+		TextNode{Content: &state.DisplayLines[3]},
+		TextNode{Content: &state.DisplayLines[4]},
+		TextNode{Content: &state.DisplayLines[5]},
+		TextNode{Content: &state.DisplayLines[6]},
+		TextNode{Content: &state.DisplayLines[7]},
+		TextNode{Content: &state.DisplayLines[8]},
+		TextNode{Content: &state.DisplayLines[9]},
+		TextNode{Content: &state.DisplayLines[10]},
+		TextNode{Content: &state.DisplayLines[11]},
+		TextNode{Content: &state.DisplayLines[12]},
+		TextNode{Content: &state.DisplayLines[13]},
+		TextNode{Content: &state.DisplayLines[14]},
 
 		// Status
-		tui.Text{Content: ""},
-		tui.Text{Content: &state.StatusLine},
+		TextNode{Content: ""},
+		TextNode{Content: &state.StatusLine},
 	}}
 }

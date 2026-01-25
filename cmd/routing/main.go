@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 // Home view state
@@ -35,7 +35,7 @@ var help = struct {
 }
 
 func main() {
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -92,35 +92,35 @@ func main() {
 }
 
 func homeView() any {
-	return tui.VBox{Children: []any{
-		tui.Text{Content: &home.Title, Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Text{},
-		tui.Text{Content: "j/k: change counter"},
-		tui.Text{Content: "s: go to settings"},
-		tui.Text{Content: "?: help"},
-		tui.Text{Content: "q: quit"},
-		tui.Text{},
-		tui.Progress{Value: &home.Counter, BarWidth: 30},
+	return VBoxNode{Children: []any{
+		TextNode{Content: &home.Title, Style: Style{Attr: AttrBold}},
+		TextNode{},
+		TextNode{Content: "j/k: change counter"},
+		TextNode{Content: "s: go to settings"},
+		TextNode{Content: "?: help"},
+		TextNode{Content: "q: quit"},
+		TextNode{},
+		ProgressNode{Value: &home.Counter, BarWidth: 30},
 	}}
 }
 
 func settingsView() any {
-	return tui.VBox{Children: []any{
-		tui.Text{Content: &settings.Title, Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Text{},
-		tui.Text{Content: "j/k: adjust volume"},
-		tui.Text{Content: "Esc: back to home"},
-		tui.Text{Content: "?: help"},
-		tui.Text{},
-		tui.Text{Content: "Volume:"},
-		tui.Progress{Value: &settings.Volume, BarWidth: 30},
+	return VBoxNode{Children: []any{
+		TextNode{Content: &settings.Title, Style: Style{Attr: AttrBold}},
+		TextNode{},
+		TextNode{Content: "j/k: adjust volume"},
+		TextNode{Content: "Esc: back to home"},
+		TextNode{Content: "?: help"},
+		TextNode{},
+		TextNode{Content: "Volume:"},
+		ProgressNode{Value: &settings.Volume, BarWidth: 30},
 	}}
 }
 
 func helpView() any {
-	return tui.VBox{Children: []any{
-		tui.Text{Content: &help.Title, Style: tui.Style{Attr: tui.AttrBold}},
-		tui.Text{},
-		tui.Text{Content: &help.Text},
+	return VBoxNode{Children: []any{
+		TextNode{Content: &help.Title, Style: Style{Attr: AttrBold}},
+		TextNode{},
+		TextNode{Content: &help.Text},
 	}}
 }

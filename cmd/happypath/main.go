@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 type State struct {
@@ -30,30 +30,29 @@ func main() {
 		},
 	}
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var boolFlag = true
+	var showCounter = true
 
-	// Set the view - batteries included!
 	app.SetView(
-		tui.VBox{Children: []any{
-			tui.Text{Content: "Happy Path.emo", Style: tui.Style{Attr: tui.AttrBold}},
-			tui.Text{},
-			tui.Text{Content: "Press j/k to change values, q to quit"},
-			tui.Text{},
-			tui.Progress{Value: &state.Progress, BarWidth: 40},
-			tui.If(&boolFlag).Eq(true).Then(tui.Text{Content: "Counter would be here"}),
-			tui.Text{},
-			tui.HBox{Gap: 2, Children: []any{
-				tui.Text{Content: "Counter:"},
-				tui.ForEach(&state.Items, func(item *Item) any {
-					return tui.Text{Content: &item.Name}
+		VBox(
+			Text("Happy Path Demo").Bold(),
+			SpaceH(1),
+			Text("Press j/k to change values, q to quit"),
+			SpaceH(1),
+			Progress(&state.Progress).Width(40),
+			If(&showCounter).Then(Text("Counter is visible!")),
+			SpaceH(1),
+			HBox.Gap(2)(
+				Text("Tasks:"),
+				ForEach(&state.Items, func(item *Item) any {
+					return Text(&item.Name)
 				}),
-			}},
-		}},
+			),
+		),
 	).
 		Handle("q", func(m riffkey.Match) {
 			app.Stop()
@@ -70,7 +69,7 @@ func main() {
 			state.Progress = (state.Progress - 5 + 101) % 101
 		})
 
-	// Start a ticker to auto-update
+	// auto-update ticker
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
@@ -80,7 +79,6 @@ func main() {
 		}
 	}()
 
-	// Run the app
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}

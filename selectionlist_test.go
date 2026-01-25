@@ -8,13 +8,13 @@ func TestV2SelectionListBasic(t *testing.T) {
 	items := []string{"Apple", "Banana", "Cherry"}
 	selected := 1
 
-	view := VBox{Children: []any{
+	view := VBoxNode{Children: []any{
 		&SelectionList{
 			Items:    &items,
 			Selected: &selected,
 			Marker:   "> ",
 			Render: func(s *string) any {
-				return Text{Content: s}
+				return TextNode{Content: s}
 			},
 		},
 	}}
@@ -52,13 +52,13 @@ func TestV2SelectionListWithRender(t *testing.T) {
 	items := []string{"First", "Second", "Third"}
 	selected := 0
 
-	view := VBox{Children: []any{
+	view := VBoxNode{Children: []any{
 		&SelectionList{
 			Items:    &items,
 			Selected: &selected,
 			Marker:   "* ",
 			Render: func(s *string) any {
-				return Text{Content: s}
+				return TextNode{Content: s}
 			},
 		},
 	}}
@@ -86,11 +86,11 @@ func TestV2SelectionListMaxVisible(t *testing.T) {
 		Marker:     "> ",
 		MaxVisible: 3,
 		Render: func(s *string) any {
-			return Text{Content: s}
+			return TextNode{Content: s}
 		},
 	}
 
-	view := VBox{Children: []any{list}}
+	view := VBoxNode{Children: []any{list}}
 
 	tmpl := Build(view)
 	buf := NewBuffer(40, 10)
@@ -129,11 +129,11 @@ func TestV2SelectionListScrolling(t *testing.T) {
 		Marker:     "> ",
 		MaxVisible: 3,
 		Render: func(s *string) any {
-			return Text{Content: s}
+			return TextNode{Content: s}
 		},
 	}
 
-	view := VBox{Children: []any{list}}
+	view := VBoxNode{Children: []any{list}}
 
 	tmpl := Build(view)
 	buf := NewBuffer(40, 10)

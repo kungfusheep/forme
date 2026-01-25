@@ -7,14 +7,24 @@ import "unsafe"
 type Attribute uint8
 
 const (
-	AttrNone          Attribute = 0
-	AttrBold          Attribute = 1 << iota
+	AttrNone Attribute = 0
+	AttrBold Attribute = 1 << iota
 	AttrDim
 	AttrItalic
 	AttrUnderline
 	AttrBlink
 	AttrInverse
 	AttrStrikethrough
+)
+
+// TextTransform represents text case transformations.
+type TextTransform uint8
+
+const (
+	TransformNone TextTransform = iota
+	TransformUppercase
+	TransformLowercase
+	TransformCapitalize // first letter of each word
 )
 
 // Has returns true if the attribute set contains the given attribute.
@@ -108,9 +118,11 @@ func (c Color) Equal(other Color) bool {
 
 // Style combines foreground, background colors and attributes.
 type Style struct {
-	FG   Color
-	BG   Color
-	Attr Attribute
+	FG        Color
+	BG        Color         // text background (behind characters)
+	Fill      Color         // container fill (entire area)
+	Attr      Attribute
+	Transform TextTransform // text case transformation (uppercase, lowercase, etc.)
 }
 
 // DefaultStyle returns a style with default colors and no attributes.
@@ -130,6 +142,12 @@ func (s Style) Foreground(c Color) Style {
 // Background returns a new style with the given background color.
 func (s Style) Background(c Color) Style {
 	s.BG = c
+	return s
+}
+
+// FillColor returns a new style with the given fill color (for containers).
+func (s Style) FillColor(c Color) Style {
+	s.Fill = c
 	return s
 }
 
@@ -169,6 +187,24 @@ func (s Style) Strikethrough() Style {
 	return s
 }
 
+// Uppercase returns a new style with uppercase text transform.
+func (s Style) Uppercase() Style {
+	s.Transform = TransformUppercase
+	return s
+}
+
+// Lowercase returns a new style with lowercase text transform.
+func (s Style) Lowercase() Style {
+	s.Transform = TransformLowercase
+	return s
+}
+
+// Capitalize returns a new style with capitalize transform (first letter of each word).
+func (s Style) Capitalize() Style {
+	s.Transform = TransformCapitalize
+	return s
+}
+
 // Equal returns true if two styles are equal.
 func (s Style) Equal(other Style) bool {
 	return s == other
@@ -195,7 +231,6 @@ func (c Cell) Equal(other Cell) bool {
 	return c == other
 }
 
-
 // Flex contains layout properties for display components.
 // Embedded in Row, Col, Text, etc. for consistent layout behavior.
 // Layout only - no visual styling here.
@@ -207,7 +242,7 @@ type Flex struct {
 }
 
 // Text displays text content.
-type Text struct {
+type TextNode struct {
 	Flex
 	Content any   // string or *string
 	Style   Style // styling (use Attr for bold, dim, etc.)
@@ -215,7 +250,7 @@ type Text struct {
 
 // Leader displays "Label.....Value" with dots filling the space.
 // Supports pointer bindings for dynamic updates.
-type Leader struct {
+type LeaderNode struct {
 	Label any   // string or *string
 	Value any   // string or *string
 	Width int16 // total width (0 = fill available from parent)
@@ -242,18 +277,18 @@ type TableColumn struct {
 // Table displays tabular data with columns and optional headers.
 // Uses pointer bindings for dynamic data updates.
 type Table struct {
-	Columns    []TableColumn // column definitions
-	Rows       any           // *[][]string - pointer to row data
-	ShowHeader bool          // show header row
-	HeaderStyle Style        // style for header row
-	RowStyle    Style        // style for data rows
-	AltRowStyle Style        // style for alternating rows (if non-zero)
+	Columns     []TableColumn // column definitions
+	Rows        any           // *[][]string - pointer to row data
+	ShowHeader  bool          // show header row
+	HeaderStyle Style         // style for header row
+	RowStyle    Style         // style for data rows
+	AltRowStyle Style         // style for alternating rows (if non-zero)
 }
 
 // Sparkline displays a mini chart using Unicode block characters.
 // Values are normalized to fit within the available height (1 character).
 // Uses: ▁▂▃▄▅▆▇█
-type Sparkline struct {
+type SparklineNode struct {
 	Values any     // []float64 or *[]float64
 	Width  int16   // width (0 = auto from data length)
 	Min    float64 // minimum value (0 = auto-detect)
@@ -263,14 +298,14 @@ type Sparkline struct {
 
 // HRule draws a horizontal line that fills available width.
 // Default character is '─' (box drawing light horizontal).
-type HRule struct {
+type HRuleNode struct {
 	Char  rune  // line character (0 = '─')
 	Style Style // styling
 }
 
 // VRule draws a vertical line that fills available height.
 // Default character is '│' (box drawing light vertical).
-type VRule struct {
+type VRuleNode struct {
 	Char  rune  // line character (0 = '│')
 	Style Style // styling
 }
@@ -285,7 +320,7 @@ type VRule struct {
 //   - Spacer{Width: 10}     → fixed 10-char horizontal gap
 //   - Spacer{}.Grow(2)      → grows with weight 2
 //   - Spacer{Char: '.'}     → dotted leader (fills with dots)
-type Spacer struct {
+type SpacerNode struct {
 	flex
 	Width  int16 // fixed width (0 = grow to fill)
 	Height int16 // fixed height (0 = grow to fill, but defaults to 1 in VBox if not growing)
@@ -294,15 +329,15 @@ type Spacer struct {
 }
 
 // Grow sets flex grow factor for Spacer.
-func (s Spacer) Grow(g float32) Spacer { s.flexGrow = g; return s }
+func (s SpacerNode) Grow(g float32) SpacerNode { s.flexGrow = g; return s }
 
 // FG sets the foreground color for the fill character.
-func (s Spacer) FG(c Color) Spacer { s.Style.FG = c; return s }
+func (s SpacerNode) FG(c Color) SpacerNode { s.Style.FG = c; return s }
 
 // Spinner displays an animated loading indicator.
 // The Frame pointer controls which animation frame to show.
 // Increment Frame and re-render to animate.
-type Spinner struct {
+type SpinnerNode struct {
 	Frame  *int     // pointer to current frame index
 	Frames []string // custom frames (nil = default braille spinner)
 	Style  Style    // styling
@@ -322,16 +357,16 @@ var SpinnerCircle = []string{"◐", "◓", "◑", "◒"}
 
 // Scrollbar displays a visual scroll indicator.
 // Vertical by default; set Horizontal to true for horizontal scrollbar.
-type Scrollbar struct {
-	ContentSize  int     // total content size
-	ViewSize     int     // visible viewport size
-	Position     *int    // pointer to current scroll position
-	Length       int16   // scrollbar length (0 = fill available)
-	Horizontal   bool    // true for horizontal scrollbar
-	TrackChar    rune    // track character (default: '│' or '─')
-	ThumbChar    rune    // thumb character (default: '█')
-	TrackStyle   Style   // track styling
-	ThumbStyle   Style   // thumb styling
+type ScrollbarNode struct {
+	ContentSize int   // total content size
+	ViewSize    int   // visible viewport size
+	Position    *int  // pointer to current scroll position
+	Length      int16 // scrollbar length (0 = fill available)
+	Horizontal  bool  // true for horizontal scrollbar
+	TrackChar   rune  // track character (default: '│' or '─')
+	ThumbChar   rune  // thumb character (default: '█')
+	TrackStyle  Style // track styling
+	ThumbStyle  Style // thumb styling
 }
 
 // TabsStyle defines the visual style for tab headers.
@@ -344,13 +379,13 @@ const (
 )
 
 // Tabs displays a row of tab headers with active tab indicator.
-type Tabs struct {
-	Labels         []string  // tab labels
-	Selected       *int      // pointer to selected tab index
-	Style          TabsStyle // visual style
-	Gap            int       // gap between tabs (default: 2)
-	ActiveStyle    Style     // style for active tab
-	InactiveStyle  Style     // style for inactive tabs
+type TabsNode struct {
+	Labels        []string  // tab labels
+	Selected      *int      // pointer to selected tab index
+	Style         TabsStyle // visual style
+	Gap           int       // gap between tabs (default: 2)
+	ActiveStyle   Style     // style for active tab
+	InactiveStyle Style     // style for inactive tabs
 }
 
 // TreeNode represents a node in a tree structure.
@@ -390,22 +425,22 @@ type Custom struct {
 // Jump wraps a component to make it a jump target.
 // When jump mode is active, a label is displayed at this component's position.
 // When the user types the label, OnSelect is called.
-type Jump struct {
+type JumpNode struct {
 	Child    any    // The wrapped component
 	OnSelect func() // Called when this target is selected
 	Style    Style  // Optional: per-target label style override
 }
 
 // Progress displays a progress bar.
-type Progress struct {
+type ProgressNode struct {
 	Flex
 	Value    any   // int or *int (0-100)
 	BarWidth int16 // width of the bar in characters (distinct from Flex.Width layout width)
 }
 
-// LayerView displays a scrollable layer.
+// LayerViewNode displays a scrollable layer.
 // The Layer is pre-rendered content that gets blitted to screen.
-type LayerView struct {
+type LayerViewNode struct {
 	Flex
 	Layer      *Layer // the pre-rendered layer
 	ViewHeight int16  // viewport height (0 = fill available, distinct from Flex.Height)
@@ -413,14 +448,15 @@ type LayerView struct {
 }
 
 // Grow sets the flex grow factor for this layer.
-func (l LayerView) Grow(factor float32) LayerView { l.FlexGrow = factor; return l }
+func (l LayerViewNode) Grow(factor float32) LayerViewNode { l.FlexGrow = factor; return l }
 
 // HBox arranges children horizontally.
-type HBox struct {
+type HBoxNode struct {
 	flex
-	Children []any
-	Title    string // title for bordered containers
-	Gap      int8
+	Children     []any
+	Title        string // title for bordered containers
+	Gap          int8
+	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
 
 	// Set via chainable methods
 	border   BorderStyle
@@ -429,11 +465,12 @@ type HBox struct {
 }
 
 // VBox arranges children vertically.
-type VBox struct {
+type VBoxNode struct {
 	flex
-	Children []any
-	Title    string // title for bordered containers
-	Gap      int8
+	Children     []any
+	Title        string // title for bordered containers
+	Gap          int8
+	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
 
 	// Set via chainable methods
 	border   BorderStyle
@@ -452,48 +489,48 @@ type flex struct {
 // Chainable layout methods for HBox
 
 // WidthPct sets width as percentage of parent (0.5 = 50%).
-func (r HBox) WidthPct(pct float32) HBox { r.percentWidth = pct; return r }
+func (r HBoxNode) WidthPct(pct float32) HBoxNode { r.percentWidth = pct; return r }
 
 // Width sets explicit width in characters.
-func (r HBox) Width(w int16) HBox { r.width = w; return r }
+func (r HBoxNode) Width(w int16) HBoxNode { r.width = w; return r }
 
 // Height sets explicit height in lines.
-func (r HBox) Height(h int16) HBox { r.height = h; return r }
+func (r HBoxNode) Height(h int16) HBoxNode { r.height = h; return r }
 
 // Grow sets flex grow factor.
-func (r HBox) Grow(g float32) HBox { r.flexGrow = g; return r }
+func (r HBoxNode) Grow(g float32) HBoxNode { r.flexGrow = g; return r }
 
 // Border sets the border style.
-func (r HBox) Border(b BorderStyle) HBox { r.border = b; return r }
+func (r HBoxNode) Border(b BorderStyle) HBoxNode { r.border = b; return r }
 
 // BorderFG sets the border foreground color.
-func (r HBox) BorderFG(c Color) HBox { r.borderFG = &c; return r }
+func (r HBoxNode) BorderFG(c Color) HBoxNode { r.borderFG = &c; return r }
 
 // BorderBG sets the border background color.
-func (r HBox) BorderBG(c Color) HBox { r.borderBG = &c; return r }
+func (r HBoxNode) BorderBG(c Color) HBoxNode { r.borderBG = &c; return r }
 
 // Chainable layout methods for VBox
 
 // WidthPct sets width as percentage of parent (0.5 = 50%).
-func (c VBox) WidthPct(pct float32) VBox { c.percentWidth = pct; return c }
+func (c VBoxNode) WidthPct(pct float32) VBoxNode { c.percentWidth = pct; return c }
 
 // Width sets explicit width in characters.
-func (c VBox) Width(w int16) VBox { c.width = w; return c }
+func (c VBoxNode) Width(w int16) VBoxNode { c.width = w; return c }
 
 // Height sets explicit height in lines.
-func (c VBox) Height(h int16) VBox { c.height = h; return c }
+func (c VBoxNode) Height(h int16) VBoxNode { c.height = h; return c }
 
 // Grow sets flex grow factor.
-func (c VBox) Grow(g float32) VBox { c.flexGrow = g; return c }
+func (c VBoxNode) Grow(g float32) VBoxNode { c.flexGrow = g; return c }
 
 // Border sets the border style.
-func (c VBox) Border(b BorderStyle) VBox { c.border = b; return c }
+func (c VBoxNode) Border(b BorderStyle) VBoxNode { c.border = b; return c }
 
 // BorderFG sets the border foreground color.
-func (c VBox) BorderFG(fg Color) VBox { c.borderFG = &fg; return c }
+func (c VBoxNode) BorderFG(fg Color) VBoxNode { c.borderFG = &fg; return c }
 
 // BorderBG sets the border background color.
-func (c VBox) BorderBG(bg Color) VBox { c.borderBG = &bg; return c }
+func (c VBoxNode) BorderBG(bg Color) VBoxNode { c.borderBG = &bg; return c }
 
 // IfNode conditionally renders content.
 type IfNode struct {
@@ -515,11 +552,6 @@ func Else(then any) ElseNode {
 type ForEachNode struct {
 	Items  any // *[]T
 	Render any // func(*T) any
-}
-
-// ForEach creates an iteration over a slice.
-func ForEach(items any, render any) ForEachNode {
-	return ForEachNode{Items: items, Render: render}
 }
 
 // SelectionList displays a list of items with selection marker.
@@ -626,7 +658,7 @@ type Span struct {
 
 // RichText displays text with mixed inline styles.
 // Spans can be []Span (static) or *[]Span (dynamic binding).
-type RichText struct {
+type RichTextNode struct {
 	Flex
 	Spans any // []Span or *[]Span
 }
@@ -637,7 +669,7 @@ type RichText struct {
 // Example:
 //
 //	Rich("Hello ", Bold("world"), "!")
-func Rich(parts ...any) RichText {
+func Rich(parts ...any) RichTextNode {
 	spans := make([]Span, 0, len(parts))
 	for _, p := range parts {
 		switch v := p.(type) {
@@ -647,7 +679,7 @@ func Rich(parts ...any) RichText {
 			spans = append(spans, v)
 		}
 	}
-	return RichText{Spans: spans}
+	return RichTextNode{Spans: spans}
 }
 
 // Styled creates a span with the given style.
@@ -740,7 +772,7 @@ type TextInput struct {
 // Control visibility with tui.If:
 //
 //	tui.If(&showModal).Eq(true).Then(tui.Overlay{Child: ...})
-type Overlay struct {
+type OverlayNode struct {
 	Centered   bool  // true = center on screen (default behavior if X/Y not set)
 	X, Y       int   // explicit position (used if Centered is false)
 	Width      int   // explicit width (0 = auto from content)

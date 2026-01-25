@@ -28,18 +28,18 @@ func TestV2SplitLayout(t *testing.T) {
 	spans1 := []Span{{Text: "Status 1"}}
 	spans2 := []Span{{Text: "Status 2"}}
 
-	view := VBox{Children: []any{
-		HBox{Children: []any{
-			VBox{Children: []any{
-				LayerView{Layer: layer1, ViewHeight: 5},
-				RichText{Spans: spans1},
+	view := VBoxNode{Children: []any{
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				LayerViewNode{Layer: layer1, ViewHeight: 5},
+				RichTextNode{Spans: spans1},
 			}},
-			VBox{Children: []any{
-				LayerView{Layer: layer2, ViewHeight: 5},
-				RichText{Spans: spans2},
+			VBoxNode{Children: []any{
+				LayerViewNode{Layer: layer2, ViewHeight: 5},
+				RichTextNode{Spans: spans2},
 			}},
 		}},
-		Text{Content: "Global status"},
+		TextNode{Content: "Global status"},
 	}}
 
 	tmpl := Build(view)

@@ -17,32 +17,32 @@ func TestHBoxWithBorderedChildren(t *testing.T) {
 	//     Col "Info".Border()
 	//   }
 	// }
-	view := HBox{Gap: 1, Children: []any{
+	view := HBoxNode{Gap: 1, Children: []any{
 		// Left panel
-		VBox{Children: []any{
-			VBox{
+		VBoxNode{Children: []any{
+			VBoxNode{
 				Title:    "Stats",
 				Children: []any{
-					Text{Content: "Tasks: 142"},
-					Text{Content: "Sleeping: 138"},
+					TextNode{Content: "Tasks: 142"},
+					TextNode{Content: "Sleeping: 138"},
 				},
 			}.Border(BorderSingle).BorderFG(Cyan),
-			VBox{
+			VBoxNode{
 				Title:    "Load",
 				Children: []any{
-					Text{Content: "1.17, 0.69, 0.85"},
+					TextNode{Content: "1.17, 0.69, 0.85"},
 				},
 			}.Border(BorderRounded).BorderFG(Green),
 		}}.Grow(1),
 
 		// Right panel
-		VBox{Children: []any{
-			VBox{
+		VBoxNode{Children: []any{
+			VBoxNode{
 				Title:    "Info",
 				Children: []any{
-					Text{Content: "Line 1"},
-					Text{Content: "Line 2"},
-					Text{Content: "Line 3"},
+					TextNode{Content: "Line 1"},
+					TextNode{Content: "Line 2"},
+					TextNode{Content: "Line 3"},
 				},
 			}.Border(BorderSingle).BorderFG(Magenta),
 		}}.Grow(2),

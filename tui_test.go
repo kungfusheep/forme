@@ -158,3 +158,56 @@ func TestCell(t *testing.T) {
 		}
 	})
 }
+
+func TestSetViewLimit(t *testing.T) {
+	// helper to simulate SetView counter logic without needing a real screen
+	checkLimit := func(app *App) {
+		app.setViewCount++
+		if app.setViewLimit > 0 && app.setViewCount > app.setViewLimit {
+			panic("SetView limit exceeded")
+		}
+	}
+
+	t.Run("unlimited by default", func(t *testing.T) {
+		app := &App{}
+		// Should not panic - unlimited by default
+		checkLimit(app)
+		checkLimit(app)
+		checkLimit(app)
+		if app.setViewCount != 3 {
+			t.Errorf("expected setViewCount=3, got %d", app.setViewCount)
+		}
+	})
+
+	t.Run("limit of 1 allows single call", func(t *testing.T) {
+		app := &App{}
+		app.SetViewLimit(1)
+		checkLimit(app)
+		if app.setViewCount != 1 {
+			t.Errorf("expected setViewCount=1, got %d", app.setViewCount)
+		}
+	})
+
+	t.Run("limit of 1 panics on second call", func(t *testing.T) {
+		app := &App{}
+		app.SetViewLimit(1)
+		checkLimit(app)
+
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic on second SetView call")
+			}
+		}()
+		checkLimit(app) // Should panic
+	})
+
+	t.Run("limit of 2 allows two calls", func(t *testing.T) {
+		app := &App{}
+		app.SetViewLimit(2)
+		checkLimit(app)
+		checkLimit(app)
+		if app.setViewCount != 2 {
+			t.Errorf("expected setViewCount=2, got %d", app.setViewCount)
+		}
+	})
+}

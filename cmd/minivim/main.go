@@ -1686,7 +1686,7 @@ func main() {
 	}
 
 	// Start with block cursor in normal mode
-	app.ShowCursor(tui.CursorBlock)
+	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
 	ed.updateCursor()
 
 	// Normal mode handlers - movement actions
@@ -1897,7 +1897,7 @@ func (ed *Editor) enterInsertMode(app *tui.App) {
 	ed.updateDisplay()
 
 	// Switch to bar cursor for insert mode
-	app.ShowCursor(tui.CursorBar)
+	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
 	ed.updateCursor()
 
 	// Create insert mode router (NoCounts so digits aren't count prefixes)
@@ -1975,7 +1975,7 @@ func (ed *Editor) exitInsertMode(app *tui.App) {
 	}
 
 	// Switch back to block cursor for normal mode
-	app.ShowCursor(tui.CursorBlock)
+	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
 
 	ed.updateDisplay()
 	ed.updateCursor()
@@ -1995,7 +1995,7 @@ func (ed *Editor) enterBlockInsertMode(app *tui.App) {
 	insertStartCol := ed.blockInsertCol
 
 	// Switch to bar cursor
-	app.ShowCursor(tui.CursorBar)
+	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
 	ed.updateCursor()
 
 	// Create insert mode router
@@ -2081,7 +2081,7 @@ func (ed *Editor) exitBlockInsertMode(app *tui.App, originalContent string, inse
 		ed.win().Col = max(0, len(ed.buf().Lines[ed.win().Cursor])-1)
 	}
 
-	app.ShowCursor(tui.CursorBlock)
+	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
 	ed.updateDisplay()
 	ed.updateCursor()
 	app.Pop()
@@ -3509,16 +3509,16 @@ func (ed *Editor) buildBlockSelectionSpans(line string, startCol, endCol int, no
 
 // buildWindowView builds the view for a single window
 func buildWindowView(w *Window, focused bool) any {
-	return tui.VBox{Children: []any{
+	return tui.VBoxNode{Children: []any{
 		// Content area - imperative layer, efficiently updated
 		// Width is set for vertical splits to constrain each window's area
-		tui.LayerView{
+		tui.LayerViewNode{
 			Layer:      w.contentLayer,
 			ViewHeight: int16(w.viewportHeight),
 			ViewWidth:  int16(w.viewportWidth),
 		},
 		// Vim-style status bar (inverse video, shows filename and position)
-		tui.RichText{Spans: &w.StatusBar},
+		tui.RichTextNode{Spans: &w.StatusBar},
 	}}
 }
 
@@ -3534,10 +3534,10 @@ func buildNodeView(node *SplitNode, focusedWindow *Window) any {
 
 	if node.Direction == SplitHorizontal {
 		// Stack vertically (Col)
-		return tui.VBox{Children: []any{child0, child1}}
+		return tui.VBoxNode{Children: []any{child0, child1}}
 	}
 	// Side by side (Row)
-	return tui.HBox{Children: []any{child0, child1}}
+	return tui.HBoxNode{Children: []any{child0, child1}}
 }
 
 func buildView(ed *Editor) any {
@@ -3545,22 +3545,22 @@ func buildView(ed *Editor) any {
 	windowTree := buildNodeView(ed.root, ed.focusedWindow)
 
 	// Wrap in Col to add wildmenu and status line at bottom
-	return tui.VBox{Children: []any{
+	return tui.VBoxNode{Children: []any{
 		windowTree,
 		// Wildmenu appears above status line when active
 		tui.IfNode{
 			Cond: &ed.cmdCompletionActive,
-			Then: tui.RichText{Spans: &ed.cmdWildmenuSpans},
+			Then: tui.RichTextNode{Spans: &ed.cmdWildmenuSpans},
 		},
-		tui.Text{Content: &ed.StatusLine},
+		tui.TextNode{Content: &ed.StatusLine},
 	}}
 }
 
 // buildFuzzyView creates the declarative fuzzy finder overlay view
 func buildFuzzyView(ed *Editor) any {
-	return tui.VBox{Children: []any{
+	return tui.VBoxNode{Children: []any{
 		// Prompt line with query
-		tui.Text{Content: &ed.fuzzy.Query, Style: tui.Style{Attr: tui.AttrBold}},
+		tui.TextNode{Content: &ed.fuzzy.Query, Style: tui.Style{Attr: tui.AttrBold}},
 		// Results list with selection
 		&tui.SelectionList{
 			Items:      &ed.fuzzy.Matches,
@@ -3568,11 +3568,11 @@ func buildFuzzyView(ed *Editor) any {
 			Marker:     "> ",
 			MaxVisible: 20,
 			Render: func(s *string) any {
-				return tui.Text{Content: s}
+				return tui.TextNode{Content: s}
 			},
 		},
 		// Status line
-		tui.Text{Content: &ed.StatusLine},
+		tui.TextNode{Content: &ed.StatusLine},
 	}}
 }
 
@@ -4663,7 +4663,7 @@ func (ed *Editor) enterCommandMode(app *tui.App, prompt string) {
 	ed.updateDisplay()
 
 	// Move cursor to command line
-	app.ShowCursor(tui.CursorBar)
+	app.SetCursorStyle(tui.CursorBar); app.ShowCursor()
 	ed.updateCmdLineCursor()
 
 	// Create command line router (NoCounts so digits work in commands)
@@ -4744,7 +4744,7 @@ func (ed *Editor) exitCommandMode(app *tui.App) {
 	ed.cmdCompletionActive = false
 	ed.cmdMatches = nil
 	ed.StatusLine = ""
-	app.ShowCursor(tui.CursorBlock)
+	app.SetCursorStyle(tui.CursorBlock); app.ShowCursor()
 	ed.updateDisplay()
 	ed.updateCursor()
 	app.Pop()

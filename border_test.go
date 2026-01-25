@@ -10,25 +10,25 @@ func TestIfWithGrowBorder(t *testing.T) {
 	showProcs := true
 
 	// Mimic the dashboard structure:
-	// VBox{Grow(1)} containing:
-	//   - VBox{Border, Grow(1)} "Timing"
-	//   - If(showProcs).Then(VBox{Border, Grow(2)} "Processes")
-	view := VBox{Children: []any{
-		VBox{
+	// VBoxNode{Grow(1)} containing:
+	//   - VBoxNode{Border, Grow(1)} "Timing"
+	//   - If(showProcs).Then(VBoxNode{Border, Grow(2)} "Processes")
+	view := VBoxNode{Children: []any{
+		VBoxNode{
 			Title:    "Timing",
 			Children: []any{
-				Text{Content: "Line 1"},
-				Text{Content: "Line 2"},
-				Text{Content: "Line 3"},
+				TextNode{Content: "Line 1"},
+				TextNode{Content: "Line 2"},
+				TextNode{Content: "Line 3"},
 			},
 		}.Border(BorderSingle).BorderFG(Yellow).Grow(1),
 
-		If(&showProcs).Eq(true).Then(VBox{
+		If(&showProcs).Eq(true).Then(VBoxNode{
 			Title:    "Processes",
 			Children: []any{
-				Text{Content: "Process 1"},
-				Text{Content: "Process 2"},
-				Text{Content: "Process 3"},
+				TextNode{Content: "Process 1"},
+				TextNode{Content: "Process 2"},
+				TextNode{Content: "Process 3"},
 			},
 		}.Border(BorderSingle).BorderFG(BrightBlue).Grow(2)),
 	}}.Grow(1)
@@ -94,35 +94,35 @@ func TestDashboardLayoutBorders(t *testing.T) {
 	showGraph := true
 
 	// Full dashboard structure (simplified):
-	// VBox{Children: [
+	// VBoxNode{Children: [
 	//   Text "Header"
 	//   Text "Progress bars"
-	//   HBox{Children: [Left.Grow(1), Right.Grow(2)]}  // Horizontal flex
-	//   VBox{Children: [
+	//   HBoxNode{Children: [Left.Grow(1), Right.Grow(2)]}  // Horizontal flex
+	//   VBoxNode{Children: [
 	//     Col "Timing".Grow(1)
 	//     If.Then(Col "Processes".Grow(2))
 	//   ]}.Grow(1)  // The OUTER Col also has Grow!
 	//   Text "Footer"
 	// ]}
-	view := VBox{Children: []any{
+	view := VBoxNode{Children: []any{
 		// Fixed header
-		Text{Content: "Dashboard Header"},
-		Text{Content: "CPU: [████████████________] 60%"},
+		TextNode{Content: "Dashboard Header"},
+		TextNode{Content: "CPU: [████████████________] 60%"},
 
 		// Main content row (horizontal flex)
-		HBox{Gap: 1, Children: []any{
-			VBox{
+		HBoxNode{Gap: 1, Children: []any{
+			VBoxNode{
 				Title:    "Stats",
 				Children: []any{
-					Text{Content: "Tasks: 100"},
-					Text{Content: "Memory: 4GB"},
+					TextNode{Content: "Tasks: 100"},
+					TextNode{Content: "Memory: 4GB"},
 				},
 			}.Border(BorderSingle).BorderFG(Cyan).Grow(1),
-			VBox{
+			VBoxNode{
 				Title: "Load",
 				Children: []any{
 					If(&showGraph).Eq(true).Then(
-						Text{Content: "Graph: ▁▂▃▄▅▆▇█"},
+						TextNode{Content: "Graph: ▁▂▃▄▅▆▇█"},
 					),
 				},
 			}.Border(BorderRounded).BorderFG(Green).Grow(2),
@@ -130,27 +130,27 @@ func TestDashboardLayoutBorders(t *testing.T) {
 
 		// Middle section with vertical flex - THIS IS THE KEY PART
 		// The outer Col has Grow(1), inner children have Grow(1) and Grow(2)
-		VBox{Children: []any{
-			VBox{
+		VBoxNode{Children: []any{
+			VBoxNode{
 				Title:    "Timing",
 				Children: []any{
-					Text{Content: "Render: 100µs"},
-					Text{Content: "Flush: 50µs"},
+					TextNode{Content: "Render: 100µs"},
+					TextNode{Content: "Flush: 50µs"},
 				},
 			}.Border(BorderDouble).BorderFG(Yellow).Grow(1),
 
-			If(&showProcs).Eq(true).Then(VBox{
+			If(&showProcs).Eq(true).Then(VBoxNode{
 				Title:    "Processes",
 				Children: []any{
-					Text{Content: "PID    NAME     CPU"},
-					Text{Content: "1001   nginx    2.5%"},
-					Text{Content: "1002   node     5.2%"},
+					TextNode{Content: "PID    NAME     CPU"},
+					TextNode{Content: "1001   nginx    2.5%"},
+					TextNode{Content: "1002   node     5.2%"},
 				},
 			}.Border(BorderSingle).BorderFG(BrightBlue).Grow(2)),
 		}}.Grow(1), // <-- OUTER COL HAS GROW!
 
 		// Fixed footer
-		Text{Content: "Press q to quit"},
+		TextNode{Content: "Press q to quit"},
 	}}
 
 	tmpl := Build(view)

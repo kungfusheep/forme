@@ -6,28 +6,24 @@ import (
 	"strings"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 func main() {
-	// Create the app
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Create a layer with lots of content (simulating a long document)
 	contentHeight := 100_000
-	layer := tui.NewLayer()
-	buf := tui.NewBuffer(80, contentHeight)
+	layer := NewLayer()
+	buf := NewBuffer(80, contentHeight)
 
-	// Fill with interesting content
-	colors := []tui.Color{tui.Red, tui.Green, tui.Yellow, tui.Blue, tui.Magenta, tui.Cyan}
+	colors := []Color{Red, Green, Yellow, Blue, Magenta, Cyan}
 	for y := 0; y < contentHeight; y++ {
 		color := colors[y%len(colors)]
-		style := tui.Style{FG: color}
+		style := Style{FG: color}
 
-		// Create varied content
 		var line string
 		switch y % 10 {
 		case 0:
@@ -55,34 +51,25 @@ func main() {
 	}
 	layer.SetBuffer(buf)
 
-	// State for display
 	scrollInfo := fmt.Sprintf("Line 0/%d", contentHeight)
 
-	// Build the view
-	view := tui.VBox{Children: []any{
-		tui.Text{Content: "╔══════════════════════════════════════════════════════════════════════════════╗"},
-		tui.Text{Content: "║                    Layer Scrolling Demo - V2Template                         ║"},
-		tui.Text{Content: "╚══════════════════════════════════════════════════════════════════════════════╝"},
-		tui.Text{Content: ""},
+	app.SetView(VBox(
+		Text("╔══════════════════════════════════════════════════════════════════════════════╗"),
+		Text("║                    Layer Scrolling Demo - V2Template                         ║"),
+		Text("╚══════════════════════════════════════════════════════════════════════════════╝"),
+		Text(""),
 
-		// Main content area with layer - layer grows to fill container
-		tui.VBox{
-			Title: "Scrollable Content",
-			Children: []any{
-				tui.LayerView{Layer: layer}.Grow(1),
-			},
-		}.Border(tui.BorderDouble).BorderFG(tui.Cyan).Grow(1),
+		VBox.Border(BorderDouble).BorderFG(Cyan).Grow(1).Title("Scrollable Content")(
+			LayerView(layer).Grow(1),
+		),
 
-		tui.Text{Content: ""},
-		tui.HBox{Gap: 2, Children: []any{
-			tui.Text{Content: &scrollInfo},
-			tui.Text{Content: "│ j/k:line  d/u:half  f/b:page  g/G:top/end  q:quit"},
-		}},
-	}}
+		Text(""),
+		HBox.Gap(2)(
+			Text(&scrollInfo),
+			Text("│ j/k:line  d/u:half  f/b:page  g/G:top/end  q:quit"),
+		),
+	))
 
-	app.SetView(view)
-
-	// Update scroll info helper
 	updateInfo := func() {
 		scrollInfo = fmt.Sprintf("Line %d/%d (%.0f%%)",
 			layer.ScrollY(),
@@ -90,67 +77,22 @@ func main() {
 			float64(layer.ScrollY())/float64(max(1, layer.MaxScroll()))*100)
 	}
 
-	// Key bindings
-	app.Handle("j", func(_ riffkey.Match) {
-		layer.ScrollDown(1)
-		updateInfo()
-	})
-	app.Handle("k", func(_ riffkey.Match) {
-		layer.ScrollUp(1)
-		updateInfo()
-	})
-	app.Handle("<Down>", func(_ riffkey.Match) {
-		layer.ScrollDown(1)
-		updateInfo()
-	})
-	app.Handle("<Up>", func(_ riffkey.Match) {
-		layer.ScrollUp(1)
-		updateInfo()
-	})
-	app.Handle("d", func(_ riffkey.Match) {
-		layer.HalfPageDown()
-		updateInfo()
-	})
-	app.Handle("u", func(_ riffkey.Match) {
-		layer.HalfPageUp()
-		updateInfo()
-	})
-	app.Handle("<C-d>", func(_ riffkey.Match) {
-		layer.HalfPageDown()
-		updateInfo()
-	})
-	app.Handle("<C-u>", func(_ riffkey.Match) {
-		layer.HalfPageUp()
-		updateInfo()
-	})
-	app.Handle("f", func(_ riffkey.Match) {
-		layer.PageDown()
-		updateInfo()
-	})
-	app.Handle("b", func(_ riffkey.Match) {
-		layer.PageUp()
-		updateInfo()
-	})
-	app.Handle("<Space>", func(_ riffkey.Match) {
-		layer.PageDown()
-		updateInfo()
-	})
-	app.Handle("g", func(_ riffkey.Match) {
-		layer.ScrollToTop()
-		updateInfo()
-	})
-	app.Handle("G", func(_ riffkey.Match) {
-		layer.ScrollToEnd()
-		updateInfo()
-	})
-	app.Handle("q", func(_ riffkey.Match) {
-		app.Stop()
-	})
-	app.Handle("<C-c>", func(_ riffkey.Match) {
-		app.Stop()
-	})
+	app.Handle("j", func(_ riffkey.Match) { layer.ScrollDown(1); updateInfo() })
+	app.Handle("k", func(_ riffkey.Match) { layer.ScrollUp(1); updateInfo() })
+	app.Handle("<Down>", func(_ riffkey.Match) { layer.ScrollDown(1); updateInfo() })
+	app.Handle("<Up>", func(_ riffkey.Match) { layer.ScrollUp(1); updateInfo() })
+	app.Handle("d", func(_ riffkey.Match) { layer.HalfPageDown(); updateInfo() })
+	app.Handle("u", func(_ riffkey.Match) { layer.HalfPageUp(); updateInfo() })
+	app.Handle("<C-d>", func(_ riffkey.Match) { layer.HalfPageDown(); updateInfo() })
+	app.Handle("<C-u>", func(_ riffkey.Match) { layer.HalfPageUp(); updateInfo() })
+	app.Handle("f", func(_ riffkey.Match) { layer.PageDown(); updateInfo() })
+	app.Handle("b", func(_ riffkey.Match) { layer.PageUp(); updateInfo() })
+	app.Handle("<Space>", func(_ riffkey.Match) { layer.PageDown(); updateInfo() })
+	app.Handle("g", func(_ riffkey.Match) { layer.ScrollToTop(); updateInfo() })
+	app.Handle("G", func(_ riffkey.Match) { layer.ScrollToEnd(); updateInfo() })
+	app.Handle("q", func(_ riffkey.Match) { app.Stop() })
+	app.Handle("<C-c>", func(_ riffkey.Match) { app.Stop() })
 
-	// Run!
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}

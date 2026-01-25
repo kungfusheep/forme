@@ -7,10 +7,10 @@ import (
 
 func TestSerialFlexPercentWidth(t *testing.T) {
 	// Test that PercentWidth distributes space correctly in a Row
-	tmpl := Build(HBox{
+	tmpl := Build(HBoxNode{
 		Children: []any{
-			VBox{Children: []any{Text{Content: "Left"}}}.WidthPct(0.5),
-			VBox{Children: []any{Text{Content: "Right"}}}.WidthPct(0.5),
+			VBoxNode{Children: []any{TextNode{Content: "Left"}}}.WidthPct(0.5),
+			VBoxNode{Children: []any{TextNode{Content: "Right"}}}.WidthPct(0.5),
 		},
 	})
 
@@ -32,10 +32,10 @@ func TestSerialFlexPercentWidth(t *testing.T) {
 
 func TestSerialFlexGrow(t *testing.T) {
 	// Test that FlexGrow distributes remaining space
-	tmpl := Build(VBox{
+	tmpl := Build(VBoxNode{
 		Children: []any{
-			Text{Content: "Header"}, // H=1
-			VBox{Children: []any{Text{Content: "Content"}}}.Grow(1),
+			TextNode{Content: "Header"}, // H=1
+			VBoxNode{Children: []any{TextNode{Content: "Content"}}}.Grow(1),
 		},
 	})
 
@@ -57,10 +57,10 @@ func TestSerialFlexGrow(t *testing.T) {
 
 func TestSerialFlexBorder(t *testing.T) {
 	// Test that borders are drawn correctly
-	tmpl := Build(VBox{
+	tmpl := Build(VBoxNode{
 		Title: "Panel",
 		Children: []any{
-			Text{Content: "Inside"},
+			TextNode{Content: "Inside"},
 		},
 	}.Border(BorderSingle))
 
@@ -83,10 +83,10 @@ func TestSerialFlexBorder(t *testing.T) {
 
 func TestSerialFlexExplicitHeight(t *testing.T) {
 	// Test explicit height is respected
-	tmpl := Build(VBox{
+	tmpl := Build(VBoxNode{
 		Children: []any{
-			Text{Content: "Line 1"},
-			Text{Content: "Line 2"},
+			TextNode{Content: "Line 1"},
+			TextNode{Content: "Line 2"},
 		},
 	}.Height(5))
 
@@ -103,23 +103,23 @@ func TestSerialFlexExplicitHeight(t *testing.T) {
 
 func TestSerialFlexCombined(t *testing.T) {
 	// Test combining PercentWidth, FlexGrow, and Border
-	tmpl := Build(VBox{
+	tmpl := Build(VBoxNode{
 		Children: []any{
-			HBox{
+			HBoxNode{
 				Children: []any{
-					VBox{
+					VBoxNode{
 						Title:    "Left",
-						Children: []any{Text{Content: "L1"}},
+						Children: []any{TextNode{Content: "L1"}},
 					}.WidthPct(0.5).Border(BorderSingle),
-					VBox{
+					VBoxNode{
 						Title:    "Right",
-						Children: []any{Text{Content: "R1"}},
+						Children: []any{TextNode{Content: "R1"}},
 					}.WidthPct(0.5).Border(BorderSingle),
 				},
 			},
-			VBox{
+			VBoxNode{
 				Title:    "Log",
-				Children: []any{Text{Content: "Log entry"}},
+				Children: []any{TextNode{Content: "Log entry"}},
 			}.Grow(1).Border(BorderSingle),
 		},
 	})
@@ -147,12 +147,12 @@ func TestSerialFlexWithPointerBindings(t *testing.T) {
 	status := "OK"
 	level := 75
 
-	tmpl := Build(VBox{
+	tmpl := Build(VBoxNode{
 		Children: []any{
-			HBox{
+			HBoxNode{
 				Children: []any{
-					VBox{Children: []any{Text{Content: &status}}}.WidthPct(0.5),
-					VBox{Children: []any{Progress{Value: &level, BarWidth: 10}}}.WidthPct(0.5),
+					VBoxNode{Children: []any{TextNode{Content: &status}}}.WidthPct(0.5),
+					VBoxNode{Children: []any{ProgressNode{Value: &level, BarWidth: 10}}}.WidthPct(0.5),
 				},
 			},
 		},
@@ -185,10 +185,10 @@ func TestSerialFlexWithPointerBindings(t *testing.T) {
 
 func TestLeaderComponent(t *testing.T) {
 	t.Run("static leader renders correctly", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Leader{Label: "CPU", Value: "75%", Width: 20},
-				Leader{Label: "MEM", Value: "4.2GB", Width: 20},
+				LeaderNode{Label: "CPU", Value: "75%", Width: 20},
+				LeaderNode{Label: "MEM", Value: "4.2GB", Width: 20},
 			},
 		})
 
@@ -212,9 +212,9 @@ func TestLeaderComponent(t *testing.T) {
 
 	t.Run("pointer binding updates dynamically", func(t *testing.T) {
 		value := "PASS"
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Leader{Label: "STATUS", Value: &value, Width: 25},
+				LeaderNode{Label: "STATUS", Value: &value, Width: 25},
 			},
 		})
 
@@ -245,9 +245,9 @@ func TestLeaderComponent(t *testing.T) {
 	})
 
 	t.Run("custom fill character", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Leader{Label: "ITEM", Value: "OK", Width: 15, Fill: '-'},
+				LeaderNode{Label: "ITEM", Value: "OK", Width: 15, Fill: '-'},
 			},
 		})
 
@@ -263,11 +263,11 @@ func TestLeaderComponent(t *testing.T) {
 	})
 
 	t.Run("leader in bordered panel", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Title: "STATUS",
 			Children: []any{
-				Leader{Label: "RAM", Value: "PASS", Width: 20},
-				Leader{Label: "CPU", Value: "OK", Width: 20},
+				LeaderNode{Label: "RAM", Value: "PASS", Width: 20},
+				LeaderNode{Label: "CPU", Value: "OK", Width: 20},
 			},
 		}.Border(BorderSingle))
 
@@ -293,7 +293,7 @@ func TestTableComponent(t *testing.T) {
 			{"Bob", "25", "Designer"},
 			{"Carol", "35", "Manager"},
 		}
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
 				Table{
 					Columns: []TableColumn{
@@ -401,10 +401,10 @@ func TestTableComponent(t *testing.T) {
 func TestSparklineComponent(t *testing.T) {
 	t.Run("basic sparkline renders", func(t *testing.T) {
 		values := []float64{1, 3, 5, 7, 5, 3, 1, 2, 4, 6, 8}
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Text{Content: "CPU:"},
-				Sparkline{Values: values},
+				TextNode{Content: "CPU:"},
+				SparklineNode{Values: values},
 			},
 		})
 
@@ -433,7 +433,7 @@ func TestSparklineComponent(t *testing.T) {
 
 	t.Run("sparkline updates dynamically", func(t *testing.T) {
 		values := []float64{1, 2, 3, 4, 5}
-		tmpl := Build(Sparkline{Values: &values, Width: 10})
+		tmpl := Build(SparklineNode{Values: &values, Width: 10})
 
 		buf := NewBuffer(15, 3)
 		tmpl.Execute(buf, 15, 3)
@@ -455,7 +455,7 @@ func TestSparklineComponent(t *testing.T) {
 
 	t.Run("sparkline with fixed min/max", func(t *testing.T) {
 		values := []float64{25, 50, 75}
-		tmpl := Build(Sparkline{
+		tmpl := Build(SparklineNode{
 			Values: values,
 			Min:    0,
 			Max:    100,
@@ -475,11 +475,11 @@ func TestSparklineComponent(t *testing.T) {
 
 func TestHRuleVRuleSpacer(t *testing.T) {
 	t.Run("HRule fills width", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Text{Content: "Above"},
-				HRule{},
-				Text{Content: "Below"},
+				TextNode{Content: "Above"},
+				HRuleNode{},
+				TextNode{Content: "Below"},
 			},
 		})
 
@@ -500,9 +500,9 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("HRule custom character", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				HRule{Char: '═'},
+				HRuleNode{Char: '═'},
 			},
 		})
 
@@ -517,16 +517,16 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("VRule in row with height", func(t *testing.T) {
-		tmpl := Build(HBox{
+		tmpl := Build(HBoxNode{
 			Children: []any{
-				VBox{Children: []any{
-					Text{Content: "Left1"},
-					Text{Content: "Left2"},
+				VBoxNode{Children: []any{
+					TextNode{Content: "Left1"},
+					TextNode{Content: "Left2"},
 				}}.WidthPct(0.4),
-				VRule{},
-				VBox{Children: []any{
-					Text{Content: "Right1"},
-					Text{Content: "Right2"},
+				VRuleNode{},
+				VBoxNode{Children: []any{
+					TextNode{Content: "Right1"},
+					TextNode{Content: "Right2"},
 				}}.WidthPct(0.5),
 			},
 		})
@@ -548,11 +548,11 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 	})
 
 	t.Run("Spacer creates gap", func(t *testing.T) {
-		tmpl := Build(VBox{
+		tmpl := Build(VBoxNode{
 			Children: []any{
-				Text{Content: "Line1"},
-				Spacer{Height: 2},
-				Text{Content: "Line4"},
+				TextNode{Content: "Line1"},
+				SpacerNode{Height: 2},
+				TextNode{Content: "Line4"},
 			},
 		})
 
@@ -573,10 +573,10 @@ func TestHRuleVRuleSpacer(t *testing.T) {
 func TestSpinnerComponent(t *testing.T) {
 	t.Run("Spinner renders current frame", func(t *testing.T) {
 		frame := 0
-		tmpl := Build(HBox{
+		tmpl := Build(HBoxNode{
 			Children: []any{
-				Spinner{Frame: &frame},
-				Text{Content: " Loading..."},
+				SpinnerNode{Frame: &frame},
+				TextNode{Content: " Loading..."},
 			},
 		})
 
@@ -596,7 +596,7 @@ func TestSpinnerComponent(t *testing.T) {
 
 	t.Run("Spinner advances frames", func(t *testing.T) {
 		frame := 0
-		tmpl := Build(Spinner{Frame: &frame})
+		tmpl := Build(SpinnerNode{Frame: &frame})
 
 		buf := NewBuffer(5, 1)
 
@@ -617,7 +617,7 @@ func TestSpinnerComponent(t *testing.T) {
 
 	t.Run("Spinner with custom frames", func(t *testing.T) {
 		frame := 0
-		tmpl := Build(Spinner{
+		tmpl := Build(SpinnerNode{
 			Frame:  &frame,
 			Frames: SpinnerLine,
 		})
@@ -633,7 +633,7 @@ func TestSpinnerComponent(t *testing.T) {
 
 	t.Run("Spinner with dots frames", func(t *testing.T) {
 		frame := 0
-		tmpl := Build(Spinner{
+		tmpl := Build(SpinnerNode{
 			Frame:  &frame,
 			Frames: SpinnerDots,
 		})
@@ -649,7 +649,7 @@ func TestSpinnerComponent(t *testing.T) {
 
 	t.Run("Spinner wraps frame index", func(t *testing.T) {
 		frame := 10 // SpinnerBraille has 10 frames, so this should wrap to 0
-		tmpl := Build(Spinner{Frame: &frame})
+		tmpl := Build(SpinnerNode{Frame: &frame})
 
 		buf := NewBuffer(5, 1)
 		tmpl.Execute(buf, 5, 1)
@@ -664,10 +664,10 @@ func TestSpinnerComponent(t *testing.T) {
 func TestScrollbarComponent(t *testing.T) {
 	t.Run("Vertical scrollbar at top", func(t *testing.T) {
 		pos := 0
-		tmpl := Build(HBox{
+		tmpl := Build(HBoxNode{
 			Children: []any{
-				Text{Content: "Content"},
-				Scrollbar{
+				TextNode{Content: "Content"},
+				ScrollbarNode{
 					ContentSize: 100,
 					ViewSize:    10,
 					Position:    &pos,
@@ -692,7 +692,7 @@ func TestScrollbarComponent(t *testing.T) {
 
 	t.Run("Vertical scrollbar at bottom", func(t *testing.T) {
 		pos := 90 // scrolled to bottom
-		tmpl := Build(Scrollbar{
+		tmpl := Build(ScrollbarNode{
 			ContentSize: 100,
 			ViewSize:    10,
 			Position:    &pos,
@@ -715,7 +715,7 @@ func TestScrollbarComponent(t *testing.T) {
 
 	t.Run("Horizontal scrollbar", func(t *testing.T) {
 		pos := 0
-		tmpl := Build(Scrollbar{
+		tmpl := Build(ScrollbarNode{
 			ContentSize: 100,
 			ViewSize:    10,
 			Position:    &pos,
@@ -738,7 +738,7 @@ func TestScrollbarComponent(t *testing.T) {
 
 	t.Run("Scrollbar thumb moves with position", func(t *testing.T) {
 		pos := 0
-		tmpl := Build(Scrollbar{
+		tmpl := Build(ScrollbarNode{
 			ContentSize: 100,
 			ViewSize:    10,
 			Position:    &pos,
@@ -776,7 +776,7 @@ func TestScrollbarComponent(t *testing.T) {
 
 	t.Run("Custom scrollbar characters", func(t *testing.T) {
 		pos := 0
-		tmpl := Build(Scrollbar{
+		tmpl := Build(ScrollbarNode{
 			ContentSize: 20,
 			ViewSize:    5,
 			Position:    &pos,
@@ -817,7 +817,7 @@ func findThumbPosition(buf *Buffer, x, length int, horizontal bool) int {
 func TestTabsComponent(t *testing.T) {
 	t.Run("Tabs with underline style", func(t *testing.T) {
 		selected := 0
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:   []string{"Home", "Settings", "Help"},
 			Selected: &selected,
 		})
@@ -850,7 +850,7 @@ func TestTabsComponent(t *testing.T) {
 
 	t.Run("Tabs selection changes", func(t *testing.T) {
 		selected := 1 // Select "Settings"
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:   []string{"Home", "Settings"},
 			Selected: &selected,
 		})
@@ -870,7 +870,7 @@ func TestTabsComponent(t *testing.T) {
 
 	t.Run("Tabs with bracket style", func(t *testing.T) {
 		selected := 0
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:   []string{"Tab1", "Tab2"},
 			Selected: &selected,
 			Style:    TabsStyleBracket,
@@ -892,7 +892,7 @@ func TestTabsComponent(t *testing.T) {
 
 	t.Run("Tabs with box style", func(t *testing.T) {
 		selected := 0
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:   []string{"One", "Two"},
 			Selected: &selected,
 			Style:    TabsStyleBox,
@@ -917,7 +917,7 @@ func TestTabsComponent(t *testing.T) {
 
 	t.Run("Tabs with custom gap", func(t *testing.T) {
 		selected := 0
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:   []string{"A", "B"},
 			Selected: &selected,
 			Gap:      5,
@@ -937,7 +937,7 @@ func TestTabsComponent(t *testing.T) {
 
 	t.Run("Tabs with styling", func(t *testing.T) {
 		selected := 0
-		tmpl := Build(Tabs{
+		tmpl := Build(TabsNode{
 			Labels:        []string{"Active", "Inactive"},
 			Selected:      &selected,
 			ActiveStyle:   Style{FG: Green},

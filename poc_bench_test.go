@@ -68,11 +68,11 @@ func TestSimpleForEach(t *testing.T) {
 		items[i] = StressItem{CPU: float32(i) / 10.0}
 	}
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: "Simple ForEach"},
+			TextNode{Content: "Simple ForEach"},
 			ForEach(&items, func(item *StressItem) any {
-				return Progress{Value: &item.CPU, BarWidth: 8}
+				return ProgressNode{Value: &item.CPU, BarWidth: 8}
 			}),
 		},
 	}
@@ -107,13 +107,13 @@ func TestNestedForEach(t *testing.T) {
 		}
 	}
 
-	ui := VBox{
+	ui := VBoxNode{
 		Children: []any{
-			Text{Content: "Dense Grid"},
+			TextNode{Content: "Dense Grid"},
 			ForEach(&rows, func(row *[]StressItem) any {
-				return HBox{Children: []any{
+				return HBoxNode{Children: []any{
 					ForEach(row, func(item *StressItem) any {
-						return Progress{Value: &item.CPU, BarWidth: 8}
+						return ProgressNode{Value: &item.CPU, BarWidth: 8}
 					}),
 				}}
 			}),

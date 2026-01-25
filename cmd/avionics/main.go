@@ -7,25 +7,18 @@ import (
 	"time"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 // =============================================================================
-// PRE-COMPOSED COMPONENT IDEAS
-// These are "smart" components that just work when you throw data at them
+// PRE-COMPOSED COMPONENT PATTERNS
+// These helper functions return functional components
 // =============================================================================
-
-// StatusPanel - dense label...value grid with optional status coloring
-type StatusPanel struct {
-	Title string
-	Items []StatusItem
-	Width int
-}
 
 type StatusItem struct {
 	Label  string
 	Value  string
-	Status Status // determines color
+	Status Status
 }
 
 type Status uint8
@@ -37,35 +30,85 @@ const (
 	StatusInactive
 )
 
-// Gauge - labeled value with bar, optional trend
-type Gauge struct {
-	Label   string
-	Value   float64
-	Min     float64
-	Max     float64
-	Unit    string
-	History *[]float64 // optional trend data
-	Width   int
+func statusColor(s Status) Style {
+	switch s {
+	case StatusWarning:
+		return Style{FG: Yellow}
+	case StatusCritical:
+		return Style{FG: Red}
+	case StatusInactive:
+		return Style{FG: BrightBlack}
+	default:
+		return Style{FG: Green}
+	}
 }
 
-// SubsystemGrid - compact status grid for multiple systems
-type SubsystemGrid struct {
-	Title    string
-	Systems  []Subsystem
-	Columns  int
+// StatusPanel builds a titled list of label...value items
+func StatusPanel(title string, width int, items []StatusItem) VBoxC {
+	children := make([]any, 0, len(items)+1)
+	children = append(children, Text(title).FG(Green).Bold())
+
+	for _, item := range items {
+		children = append(children, Leader(item.Label, item.Value).Width(int16(width)).Fill('·').Style(statusColor(item.Status)))
+	}
+
+	return VBox(children...)
+}
+
+// Gauge builds a labeled progress bar with optional sparkline trend
+func Gauge(label string, value, min, max float64, unit string, width int, history *[]float64) VBoxC {
+	pct := (value - min) / (max - min)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 1 {
+		pct = 1
+	}
+
+	valueStr := fmt.Sprintf("%.0f%s", value, unit)
+	barWidth := width - len(label) - len(valueStr) - 4
+
+	children := []any{
+		HBox(
+			Text(label).FG(Green),
+			Text(" "),
+			Progress(int(pct*100)).Width(int16(barWidth)),
+			Text(" "),
+			Text(valueStr).FG(BrightWhite),
+		),
+	}
+
+	if history != nil && len(*history) > 0 {
+		children = append(children, Sparkline(history).Width(int16(width)).Style(Style{FG: Green}))
+	}
+
+	return VBox(children...)
 }
 
 type Subsystem struct {
 	Name   string
 	Status Status
-	Brief  string // optional one-word status
 }
 
-// MessageLog - scrollable timestamped messages
-type MessageLog struct {
-	Messages   *[]LogMessage
-	MaxVisible int
-	Width      int
+// SubsystemGrid builds a compact multi-column status grid
+func SubsystemGrid(title string, columns int, systems []Subsystem) VBoxC {
+	children := []any{Text(title).FG(Green).Bold()}
+
+	var currentRow []any
+	for i, sys := range systems {
+		item := HBox(
+			Text("● ").Style(statusColor(sys.Status)),
+			Text(sys.Name).FG(Green),
+		)
+		currentRow = append(currentRow, item)
+
+		if (i+1)%columns == 0 || i == len(systems)-1 {
+			children = append(children, HBox.Gap(2)(currentRow...))
+			currentRow = nil
+		}
+	}
+
+	return VBox(children...)
 }
 
 type LogMessage struct {
@@ -74,137 +117,25 @@ type LogMessage struct {
 	Message string
 }
 
-// =============================================================================
-// Helper to build StatusPanel as TUI components
-// =============================================================================
+// MessageLog builds a scrollable timestamped message list
+func MessageLog(title string, messages *[]LogMessage, maxVisible int) VBoxC {
+	children := []any{Text(title).FG(Green).Bold()}
 
-func buildStatusPanel(sp StatusPanel) tui.VBox {
-	children := make([]any, 0, len(sp.Items)+1)
-
-	// Title
-	children = append(children, tui.Text{
-		Content: sp.Title,
-		Style:   tui.Style{FG: tui.Green, Attr: tui.AttrBold},
-	})
-
-	// Items as leaders
-	for _, item := range sp.Items {
-		style := statusColor(item.Status)
-		children = append(children, tui.Leader{
-			Label: item.Label,
-			Value: item.Value,
-			Width: int16(sp.Width),
-			Fill:  '·',
-			Style: style,
-		})
-	}
-
-	return tui.VBox{Children: children}
-}
-
-func buildGauge(g Gauge) tui.VBox {
-	pct := (g.Value - g.Min) / (g.Max - g.Min)
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 1 {
-		pct = 1
-	}
-
-	valueStr := fmt.Sprintf("%.0f%s", g.Value, g.Unit)
-	barWidth := g.Width - len(g.Label) - len(valueStr) - 4
-
-	children := []any{
-		tui.HBox{
-			Children: []any{
-				tui.Text{Content: g.Label, Style: tui.Style{FG: tui.Green}},
-				tui.Text{Content: " "},
-				tui.Progress{Value: int(pct * 100), BarWidth: int16(barWidth)},
-				tui.Text{Content: " "},
-				tui.Text{Content: valueStr, Style: tui.Style{FG: tui.BrightWhite}},
-			},
-		},
-	}
-
-	// Add sparkline if history provided
-	if g.History != nil && len(*g.History) > 0 {
-		children = append(children, tui.Sparkline{
-			Values: g.History,
-			Width:  int16(g.Width),
-			Style:  tui.Style{FG: tui.Green},
-		})
-	}
-
-	return tui.VBox{Children: children}
-}
-
-func buildSubsystemGrid(sg SubsystemGrid) tui.VBox {
-	children := []any{
-		tui.Text{Content: sg.Title, Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
-	}
-
-	// Build rows of systems
-	var currentRow []any
-	for i, sys := range sg.Systems {
-		indicator := "●"
-		style := statusColor(sys.Status)
-
-		item := tui.HBox{
-			Children: []any{
-				tui.Text{Content: indicator + " ", Style: style},
-				tui.Text{Content: sys.Name, Style: tui.Style{FG: tui.Green}},
-			},
-		}
-
-		currentRow = append(currentRow, item)
-
-		if (i+1)%sg.Columns == 0 || i == len(sg.Systems)-1 {
-			children = append(children, tui.HBox{Gap: 2, Children: currentRow})
-			currentRow = nil
-		}
-	}
-
-	return tui.VBox{Children: children}
-}
-
-func buildMessageLog(ml MessageLog) tui.VBox {
-	children := []any{
-		tui.Text{Content: "MESSAGES", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
-	}
-
-	msgs := *ml.Messages
+	msgs := *messages
 	start := 0
-	if len(msgs) > ml.MaxVisible {
-		start = len(msgs) - ml.MaxVisible
+	if len(msgs) > maxVisible {
+		start = len(msgs) - maxVisible
 	}
 
 	for i := start; i < len(msgs); i++ {
 		msg := msgs[i]
-		timeStr := msg.Time.Format("15:04:05")
-		style := statusColor(msg.Level)
-
-		children = append(children, tui.HBox{
-			Children: []any{
-				tui.Text{Content: timeStr + " ", Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Text{Content: msg.Message, Style: style},
-			},
-		})
+		children = append(children, HBox(
+			Text(msg.Time.Format("15:04:05")+" ").FG(BrightBlack),
+			Text(msg.Message).Style(statusColor(msg.Level)),
+		))
 	}
 
-	return tui.VBox{Children: children}
-}
-
-func statusColor(s Status) tui.Style {
-	switch s {
-	case StatusWarning:
-		return tui.Style{FG: tui.Yellow}
-	case StatusCritical:
-		return tui.Style{FG: tui.Red}
-	case StatusInactive:
-		return tui.Style{FG: tui.BrightBlack}
-	default:
-		return tui.Style{FG: tui.Green}
-	}
+	return VBox(children...)
 }
 
 // =============================================================================
@@ -212,18 +143,15 @@ func statusColor(s Status) tui.Style {
 // =============================================================================
 
 func main() {
-	// Flight data
 	altitude := 32450.0
 	heading := 274.0
 	speed := 0.82
 	fuel := 68.5
 	throttle := 78.0
 
-	// Trend history
 	altHistory := []float64{31200, 31800, 32100, 32300, 32400, 32450, 32450}
 	fuelHistory := []float64{85, 82, 79, 76, 73, 70, 68}
 
-	// Systems status
 	systems := []Subsystem{
 		{Name: "ENG L", Status: StatusNormal},
 		{Name: "ENG R", Status: StatusNormal},
@@ -235,7 +163,6 @@ func main() {
 		{Name: "COMM", Status: StatusNormal},
 	}
 
-	// Message log
 	messages := []LogMessage{
 		{Time: time.Now().Add(-5 * time.Minute), Level: StatusNormal, Message: "NAV ALIGN COMPLETE"},
 		{Time: time.Now().Add(-3 * time.Minute), Level: StatusNormal, Message: "WPT 3 PASSED"},
@@ -243,161 +170,103 @@ func main() {
 		{Time: time.Now(), Level: StatusNormal, Message: "ALT HOLD ENGAGED"},
 	}
 
-	// Mode selection
 	selectedMode := 0
 	modes := []string{"NAV", "WPN", "DFNS"}
-
-	// Animation frame
 	frame := 0
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Build the avionics display
 	app.SetView(
-		tui.VBox{
-			Children: []any{
-				// Header bar - minimal
-				tui.HBox{
-					Children: []any{
-						tui.Text{Content: "MFD-1", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
-						tui.Spacer{},
-						tui.Spinner{Frame: &frame, Frames: tui.SpinnerLine, Style: tui.Style{FG: tui.Green}},
-						tui.Text{Content: " SYS ACTIVE", Style: tui.Style{FG: tui.Green}},
-					},
+		VBox(
+			// header
+			HBox(
+				Text("MFD-1").FG(Green).Bold(),
+				Space(),
+				Spinner(&frame).Frames(SpinnerLine).Style(Style{FG: Green}),
+				Text(" SYS ACTIVE").FG(Green),
+			),
+			HRule().Char('─').Style(Style{FG: BrightBlack}),
+
+			// mode selector
+			HBox.Gap(1)(
+				TabsNode{
+					Labels:        modes,
+					Selected:      &selectedMode,
+					Style:         TabsStyleBracket,
+					ActiveStyle:   Style{FG: Green, Attr: AttrBold},
+					InactiveStyle: Style{FG: BrightBlack},
 				},
-				tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
+			),
 
-				// Mode selector - functional, not decorative
-				tui.HBox{
-					Gap: 1,
-					Children: []any{
-						tui.Tabs{
-							Labels:        modes,
-							Selected:      &selectedMode,
-							Style:         tui.TabsStyleBracket,
-							ActiveStyle:   tui.Style{FG: tui.Green, Attr: tui.AttrBold},
-							InactiveStyle: tui.Style{FG: tui.BrightBlack},
-						},
-					},
-				},
+			SpaceH(1),
 
-				tui.Spacer{Height: 1},
+			// main content - two columns
+			HBox.Gap(4)(
+				// left column - flight data
+				VBox.WidthPct(0.4)(
+					StatusPanel("FLIGHT DATA", 24, []StatusItem{
+						{Label: "ALT", Value: fmt.Sprintf("%.0f FT", altitude), Status: StatusNormal},
+						{Label: "HDG", Value: fmt.Sprintf("%.0f°", heading), Status: StatusNormal},
+						{Label: "MACH", Value: fmt.Sprintf("%.2f", speed), Status: StatusNormal},
+						{Label: "GS", Value: "485 KT", Status: StatusNormal},
+					}),
 
-				// Main content - two columns
-				tui.HBox{
-					Gap: 4,
-					Children: []any{
-						// Left column - Primary flight data
-						tui.VBox{
-							Children: []any{
-								buildStatusPanel(StatusPanel{
-									Title: "FLIGHT DATA",
-									Width: 24,
-									Items: []StatusItem{
-										{Label: "ALT", Value: fmt.Sprintf("%.0f FT", altitude), Status: StatusNormal},
-										{Label: "HDG", Value: fmt.Sprintf("%.0f°", heading), Status: StatusNormal},
-										{Label: "MACH", Value: fmt.Sprintf("%.2f", speed), Status: StatusNormal},
-										{Label: "GS", Value: "485 KT", Status: StatusNormal},
-									},
-								}),
+					SpaceH(1),
+					Gauge("FUEL", fuel, 0, 100, "%", 24, &fuelHistory),
 
-								tui.Spacer{Height: 1},
+					SpaceH(1),
+					Gauge("THRT", throttle, 0, 100, "%", 24, nil),
 
-								// Fuel gauge with trend
-								buildGauge(Gauge{
-									Label:   "FUEL",
-									Value:   fuel,
-									Min:     0,
-									Max:     100,
-									Unit:    "%",
-									Width:   24,
-									History: &fuelHistory,
-								}),
+					SpaceH(1),
+					Text("ALT TREND").FG(Green).Bold(),
+					Sparkline(&altHistory).Width(24).Style(Style{FG: Green}),
+				),
 
-								tui.Spacer{Height: 1},
+				VRule().Style(Style{FG: BrightBlack}),
 
-								// Throttle gauge (no trend)
-								buildGauge(Gauge{
-									Label: "THRT",
-									Value: throttle,
-									Min:   0,
-									Max:   100,
-									Unit:  "%",
-									Width: 24,
-								}),
+				// right column - systems and messages
+				VBox(
+					SubsystemGrid("SUBSYSTEMS", 4, systems),
 
-								tui.Spacer{Height: 1},
+					SpaceH(1),
+					HRule().Char('─').Style(Style{FG: BrightBlack}),
+					SpaceH(1),
 
-								// Altitude trend
-								tui.Text{Content: "ALT TREND", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
-								tui.Sparkline{Values: &altHistory, Width: 24, Style: tui.Style{FG: tui.Green}},
-							},
-						}.WidthPct(0.4),
+					MessageLog("MESSAGES", &messages, 5),
+				),
+			),
 
-						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
-
-						// Right column - Systems and messages
-						tui.VBox{
-							Children: []any{
-								buildSubsystemGrid(SubsystemGrid{
-									Title:   "SUBSYSTEMS",
-									Columns: 4,
-									Systems: systems,
-								}),
-
-								tui.Spacer{Height: 1},
-								tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
-								tui.Spacer{Height: 1},
-
-								buildMessageLog(MessageLog{
-									Messages:   &messages,
-									MaxVisible: 5,
-									Width:      40,
-								}),
-							},
-						},
-					},
-				},
-
-				// Footer
-				tui.Spacer{Height: 1},
-				tui.HRule{Char: '─', Style: tui.Style{FG: tui.BrightBlack}},
-				tui.HBox{
-					Children: []any{
-						tui.Text{Content: "N:NAV W:WPN D:DFNS TAB:CYCLE Q:EXIT", Style: tui.Style{FG: tui.BrightBlack}},
-					},
-				},
-			},
-		},
+			// footer
+			SpaceH(1),
+			HRule().Char('─').Style(Style{FG: BrightBlack}),
+			HBox(
+				Text("N:NAV W:WPN D:DFNS TAB:CYCLE Q:EXIT").FG(BrightBlack),
+			),
+		),
 	).
 		Handle("q", func(m riffkey.Match) { app.Stop() }).
-		Handle("n", func(m riffkey.Match) { selectedMode = 0 }). // NAV
-		Handle("w", func(m riffkey.Match) { selectedMode = 1 }). // WPN
-		Handle("d", func(m riffkey.Match) { selectedMode = 2 }). // DFNS
+		Handle("n", func(m riffkey.Match) { selectedMode = 0 }).
+		Handle("w", func(m riffkey.Match) { selectedMode = 1 }).
+		Handle("d", func(m riffkey.Match) { selectedMode = 2 }).
 		Handle("tab", func(m riffkey.Match) { selectedMode = (selectedMode + 1) % 3 })
 
-	// Subtle animation - just the spinner
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for range ticker.C {
 			frame++
-
-			// Slowly vary some values for realism
 			altitude += (float64(frame%10) - 5) * 2
 			fuel -= 0.01
 			if fuel < 0 {
 				fuel = 68.5
 			}
 
-			// Rotate history
 			copy(altHistory, altHistory[1:])
 			altHistory[len(altHistory)-1] = altitude
 
-			// Update fuel history occasionally
 			if frame%10 == 0 {
 				copy(fuelHistory, fuelHistory[1:])
 				fuelHistory[len(fuelHistory)-1] = math.Max(0, fuel)

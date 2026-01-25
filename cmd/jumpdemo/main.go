@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 func main() {
@@ -13,39 +13,32 @@ func main() {
 	items := []string{"Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape"}
 	status := "Press 'g' to enter jump mode, 'q' to quit"
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Build the UI with Jump-wrapped items
-	children := make([]any, 0, len(items)+3)
+	// build UI with Jump-wrapped items
+	children := make([]any, 0, len(items)+4)
+	children = append(children, Text("Jump Labels Demo").FG(Cyan).Bold())
+	children = append(children, SpaceH(1))
 
-	// Title
-	children = append(children, tui.Text{
-		Content: "Jump Labels Demo",
-		Style:   tui.Style{FG: tui.Cyan, Attr: tui.AttrBold},
-	})
-	children = append(children, tui.Spacer{Height: 1})
-
-	// Items wrapped in Jump
 	for i, item := range items {
-		idx := i // capture for closure
-		children = append(children, tui.Jump{
-			Child: tui.Text{Content: fmt.Sprintf("  %s", item)},
-			OnSelect: func() {
+		idx := i
+		children = append(children, Jump(
+			Text(fmt.Sprintf("  %s", item)),
+			func() {
 				selected = idx
 				status = fmt.Sprintf("Selected: %s (index %d)", items[idx], idx)
 			},
-		})
+		))
 	}
 
-	// Status line
-	children = append(children, tui.Spacer{Height: 1})
-	children = append(children, tui.Text{Content: &status, Style: tui.Style{FG: tui.Yellow}})
+	children = append(children, SpaceH(1))
+	children = append(children, Text(&status).FG(Yellow))
 
-	app.SetView(tui.VBox{Children: children}).
-		JumpKey("g"). // Register 'g' as jump trigger
+	app.SetView(VBox(children...)).
+		JumpKey("g").
 		Handle("q", func(_ riffkey.Match) {
 			app.Stop()
 		}).

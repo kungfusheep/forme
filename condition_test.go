@@ -106,9 +106,9 @@ func TestConditionInSerialTemplate(t *testing.T) {
 	t.Run("If renders correct branch", func(t *testing.T) {
 		activeLayer := 0
 
-		view := VBox{Children: []any{
-			IfOrd(&activeLayer).Eq(0).Then(Text{Content: "LAYER0"}).Else(Text{Content: "OTHER"}),
-			IfOrd(&activeLayer).Eq(1).Then(Text{Content: "LAYER1"}).Else(Text{Content: "OTHER"}),
+		view := VBoxNode{Children: []any{
+			IfOrd(&activeLayer).Eq(0).Then(TextNode{Content: "LAYER0"}).Else(TextNode{Content: "OTHER"}),
+			IfOrd(&activeLayer).Eq(1).Then(TextNode{Content: "LAYER1"}).Else(TextNode{Content: "OTHER"}),
 		}}
 
 		tmpl := Build(view)
@@ -240,11 +240,11 @@ func TestSwitchInSerialTemplate(t *testing.T) {
 	t.Run("Switch renders correct case", func(t *testing.T) {
 		tab := "home"
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			Switch(&tab).
-				Case("home", Text{Content: "HOME_CONTENT"}).
-				Case("settings", Text{Content: "SETTINGS_CONTENT"}).
-				Default(Text{Content: "DEFAULT_CONTENT"}),
+				Case("home", TextNode{Content: "HOME_CONTENT"}).
+				Case("settings", TextNode{Content: "SETTINGS_CONTENT"}).
+				Default(TextNode{Content: "DEFAULT_CONTENT"}),
 		}}
 
 		tmpl := Build(view)
@@ -291,11 +291,11 @@ func TestSelectionList(t *testing.T) {
 			Items:    &items,
 			Selected: &selected,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -326,11 +326,11 @@ func TestSelectionList(t *testing.T) {
 			Items:    &items,
 			Selected: &selected,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -368,11 +368,11 @@ func TestSelectionList(t *testing.T) {
 			Selected: &selected,
 			Marker:   "→ ",
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -393,12 +393,12 @@ func TestSelectionList(t *testing.T) {
 			Items:    &items,
 			Selected: &selected,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
 		// Need to render once to populate len
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -456,11 +456,11 @@ func TestSelectionList(t *testing.T) {
 			Selected:   &selected,
 			MaxVisible: 3, // Only show 3 items at a time
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -494,11 +494,11 @@ func TestSelectionList(t *testing.T) {
 			Selected:   &selected,
 			MaxVisible: 3,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -536,11 +536,11 @@ func TestSelectionList(t *testing.T) {
 			Selected:   &selected,
 			MaxVisible: 3,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		}
 
-		view := VBox{Children: []any{list}}
+		view := VBoxNode{Children: []any{list}}
 		tmpl := Build(view)
 		buf := NewBuffer(20, 10)
 		tmpl.Execute(buf, 20, 10)
@@ -577,12 +577,12 @@ func TestConditionInsideForEach(t *testing.T) {
 			{Name: "Gamma", Selected: false},
 		}
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			ForEach(&items, func(item *Item) any {
 				// Use If to conditionally style each item based on its Selected field
 				return If(&item.Selected).Eq(true).
-					Then(Text{Content: &item.Name, Style: Style{Attr: AttrBold}}).
-					Else(Text{Content: &item.Name})
+					Then(TextNode{Content: &item.Name, Style: Style{Attr: AttrBold}}).
+					Else(TextNode{Content: &item.Name})
 			}),
 		}}
 
@@ -632,12 +632,12 @@ func TestConditionInsideForEach(t *testing.T) {
 			{Text: "Active", IsActive: true},
 		}
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			ForEach(&items, func(item *Item) any {
 				// Both branches use Text with same pointer, just different styles
 				return If(&item.IsActive).Eq(true).
-					Then(Text{Content: &item.Text, Style: Style{Attr: AttrBold}}).
-					Else(Text{Content: &item.Text, Style: Style{Attr: AttrDim}})
+					Then(TextNode{Content: &item.Text, Style: Style{Attr: AttrBold}}).
+					Else(TextNode{Content: &item.Text, Style: Style{Attr: AttrDim}})
 			}),
 		}}
 
@@ -676,10 +676,10 @@ func TestConditionInsideForEach(t *testing.T) {
 
 func TestHBoxLayout(t *testing.T) {
 	t.Run("HBox places children horizontally", func(t *testing.T) {
-		view := HBox{Children: []any{
-			Text{Content: "AAA"},
-			Text{Content: "BBB"},
-			Text{Content: "CCC"},
+		view := HBoxNode{Children: []any{
+			TextNode{Content: "AAA"},
+			TextNode{Content: "BBB"},
+			TextNode{Content: "CCC"},
 		}}
 
 		tmpl := Build(view)
@@ -694,9 +694,9 @@ func TestHBoxLayout(t *testing.T) {
 	})
 
 	t.Run("HBox with gap", func(t *testing.T) {
-		view := HBox{Gap: 2, Children: []any{
-			Text{Content: "AA"},
-			Text{Content: "BB"},
+		view := HBoxNode{Gap: 2, Children: []any{
+			TextNode{Content: "AA"},
+			TextNode{Content: "BB"},
 		}}
 
 		tmpl := Build(view)
@@ -711,9 +711,9 @@ func TestHBoxLayout(t *testing.T) {
 	})
 
 	t.Run("VBox places children vertically", func(t *testing.T) {
-		view := VBox{Children: []any{
-			Text{Content: "AAA"},
-			Text{Content: "BBB"},
+		view := VBoxNode{Children: []any{
+			TextNode{Content: "AAA"},
+			TextNode{Content: "BBB"},
 		}}
 
 		tmpl := Build(view)
@@ -731,12 +731,12 @@ func TestHBoxLayout(t *testing.T) {
 	})
 
 	t.Run("Nested HBox in VBox", func(t *testing.T) {
-		view := VBox{Children: []any{
-			HBox{Children: []any{
-				Text{Content: "A"},
-				Text{Content: "B"},
+		view := VBoxNode{Children: []any{
+			HBoxNode{Children: []any{
+				TextNode{Content: "A"},
+				TextNode{Content: "B"},
 			}},
-			Text{Content: "C"},
+			TextNode{Content: "C"},
 		}}
 
 		tmpl := Build(view)
@@ -766,11 +766,11 @@ func TestRichTextInsideForEach(t *testing.T) {
 			{LineNum: "3 ", Spans: []Span{{Text: "Test"}}},
 		}
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			ForEach(&lines, func(dl *DisplayLine) any {
-				return HBox{Children: []any{
-					Text{Content: &dl.LineNum},
-					RichText{Spans: &dl.Spans},
+				return HBoxNode{Children: []any{
+					TextNode{Content: &dl.LineNum},
+					RichTextNode{Spans: &dl.Spans},
 				}}
 			}),
 		}}
@@ -804,9 +804,9 @@ func TestRichTextInsideForEach(t *testing.T) {
 			{Spans: []Span{{Text: "BBB"}}},
 		}
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			ForEach(&lines, func(l *Line) any {
-				return RichText{Spans: &l.Spans}
+				return RichTextNode{Spans: &l.Spans}
 			}),
 		}}
 
@@ -851,9 +851,9 @@ func TestRichTextInsideForEach(t *testing.T) {
 			}},
 		}
 
-		view := VBox{Children: []any{
+		view := VBoxNode{Children: []any{
 			ForEach(&lines, func(dl *DisplayLine) any {
-				return RichText{Spans: &dl.Spans}
+				return RichTextNode{Spans: &dl.Spans}
 			}),
 		}}
 

@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"fmt"
+	"os"
 	"reflect"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -24,6 +28,16 @@ type Renderer interface {
 	// Render draws the component to the buffer at the given position.
 	// w and h are the allocated dimensions (may be larger than MinSize).
 	Render(buf *Buffer, x, y, w, h int)
+}
+
+// forEachCompiler is implemented by generic ForEach types to compile themselves
+type forEachCompiler interface {
+	compileTo(t *Template, parent int16, depth int) int16
+}
+
+// listCompiler is implemented by generic List types to compile themselves
+type listCompiler interface {
+	toSelectionList() *SelectionList
 }
 
 // LayoutFunc positions children given their sizes and available space.
@@ -64,6 +78,10 @@ type Template struct {
 
 	// Row background for SelectionList selected rows (merged with cell styles)
 	rowBG Color
+
+	// Style inheritance - current inherited style during render
+	inheritedStyle *Style
+	inheritedFill  Color // cascades through nested containers
 
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
@@ -109,15 +127,17 @@ type Op struct {
 	PercentWidth float32 // 0.0-1.0
 	FlexGrow     float32 // share of remaining space
 	Gap          int8    // gap between children
+	ContentSized bool    // has fixed-width children (don't implicit flex)
 
 	// Container
-	IsRow       bool        // true=HBox, false=VBox
-	Border      BorderStyle // border style
-	BorderFG    *Color      // border foreground color
-	BorderBG    *Color      // border background color
-	Title       string      // border title
-	ChildStart  int16       // first child op index
-	ChildEnd    int16       // last child op index (exclusive)
+	IsRow           bool        // true=HBox, false=VBox
+	Border          BorderStyle // border style
+	BorderFG        *Color      // border foreground color
+	BorderBG        *Color      // border background color
+	Title           string      // border title
+	ChildStart      int16       // first child op index
+	ChildEnd        int16       // last child op index (exclusive)
+	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
 
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
@@ -344,14 +364,14 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	}
 
 	switch v := node.(type) {
-	case Text:
+	case TextNode:
 		return t.compileText(v, parent, depth, elemBase, elemSize)
-	case Progress:
+	case ProgressNode:
 		return t.compileProgress(v, parent, depth, elemBase, elemSize)
-	case HBox:
-		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, parent, depth, elemBase, elemSize)
-	case VBox:
-		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, parent, depth, elemBase, elemSize)
+	case HBoxNode:
+		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, v.InheritStyle, parent, depth, elemBase, elemSize)
+	case VBoxNode:
+		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, v.InheritStyle, parent, depth, elemBase, elemSize)
 	case IfNode:
 		return t.compileIf(v, parent, depth, elemBase, elemSize)
 	case ForEachNode:
@@ -362,42 +382,84 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileBox(v, parent, depth, elemBase, elemSize)
 	case ConditionNode:
 		return t.compileCondition(v, parent, depth, elemBase, elemSize)
-	case LayerView:
+	case LayerViewNode:
 		return t.compileLayer(v, parent, depth)
-	case RichText:
+	case RichTextNode:
 		return t.compileRichText(v, parent, depth, elemBase, elemSize)
 	case SelectionList:
 		return t.compileSelectionList(&v, parent, depth, elemBase, elemSize)
 	case *SelectionList:
 		return t.compileSelectionList(v, parent, depth, elemBase, elemSize)
-	case Leader:
+	case LeaderNode:
 		return t.compileLeader(v, parent, depth)
 	case Table:
 		return t.compileTable(v, parent, depth)
-	case Sparkline:
+	case SparklineNode:
 		return t.compileSparkline(v, parent, depth)
-	case HRule:
+	case HRuleNode:
 		return t.compileHRule(v, parent, depth)
-	case VRule:
+	case VRuleNode:
 		return t.compileVRule(v, parent, depth)
-	case Spacer:
+	case SpacerNode:
 		return t.compileSpacer(v, parent, depth)
-	case Spinner:
+	case SpinnerNode:
 		return t.compileSpinner(v, parent, depth)
-	case Scrollbar:
+	case ScrollbarNode:
 		return t.compileScrollbar(v, parent, depth)
-	case Tabs:
+	case TabsNode:
 		return t.compileTabs(v, parent, depth)
 	case TreeView:
 		return t.compileTreeView(v, parent, depth)
-	case Jump:
+	case JumpNode:
 		return t.compileJump(v, parent, depth, elemBase, elemSize)
 	case TextInput:
 		return t.compileTextInput(v, parent, depth)
-	case Overlay:
+	case OverlayNode:
 		return t.compileOverlay(v, parent, depth)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
+
+	// New functional API types
+	case VBoxC:
+		return t.compileVBoxC(v, parent, depth, elemBase, elemSize)
+	case HBoxC:
+		return t.compileHBoxC(v, parent, depth, elemBase, elemSize)
+	case TextC:
+		return t.compileTextC(v, parent, depth)
+	case SpacerC:
+		return t.compileSpacerC(v, parent, depth)
+	case HRuleC:
+		return t.compileHRuleC(v, parent, depth)
+	case VRuleC:
+		return t.compileVRuleC(v, parent, depth)
+	case ProgressC:
+		return t.compileProgressC(v, parent, depth, elemBase, elemSize)
+	case SpinnerC:
+		return t.compileSpinnerC(v, parent, depth)
+	case LeaderC:
+		return t.compileLeaderC(v, parent, depth)
+	case SparklineC:
+		return t.compileSparklineC(v, parent, depth)
+	case JumpC:
+		return t.compileJumpC(v, parent, depth, elemBase, elemSize)
+	case LayerViewC:
+		return t.compileLayerViewC(v, parent, depth)
+	case OverlayC:
+		return t.compileOverlayC(v, parent, depth)
+	case TabsC:
+		return t.compileTabsC(v, parent, depth)
+	case ScrollbarC:
+		return t.compileScrollbarC(v, parent, depth)
+	}
+
+	// Check for ForEachC[T] via interface
+	if fe, ok := node.(forEachCompiler); ok {
+		return fe.compileTo(t, parent, depth)
+	}
+
+	// Check for ListC[T] via interface
+	if lc, ok := node.(listCompiler); ok {
+		return t.compileSelectionList(lc.toSelectionList(), parent, depth, elemBase, elemSize)
 	}
 
 	// Check for SwitchNodeInterface (generic Switch)
@@ -436,7 +498,7 @@ func (t *Template) compileBox(box Box, parent int16, depth int, elemBase unsafe.
 	return idx
 }
 
-func (t *Template) compileLayer(v LayerView, parent int16, depth int) int16 {
+func (t *Template) compileLayer(v LayerViewNode, parent int16, depth int) int16 {
 	return t.addOp(Op{
 		Kind:        OpLayer,
 		Parent:      parent,
@@ -447,7 +509,7 @@ func (t *Template) compileLayer(v LayerView, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileRichText(v RichText, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileRichText(v RichTextNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Parent: parent,
 	}
@@ -543,7 +605,7 @@ func (t *Template) compileSelectionList(v *SelectionList, parent int16, depth in
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileLeader(v Leader, parent int16, depth int) int16 {
+func (t *Template) compileLeader(v LeaderNode, parent int16, depth int) int16 {
 	op := Op{
 		Parent:      parent,
 		LeaderFill:  v.Fill,
@@ -600,7 +662,7 @@ func (t *Template) compileTable(v Table, parent int16, depth int) int16 {
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileSparkline(v Sparkline, parent int16, depth int) int16 {
+func (t *Template) compileSparkline(v SparklineNode, parent int16, depth int) int16 {
 	op := Op{
 		Parent:     parent,
 		Width:      v.Width,
@@ -627,7 +689,7 @@ func (t *Template) compileSparkline(v Sparkline, parent int16, depth int) int16 
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileHRule(v HRule, parent int16, depth int) int16 {
+func (t *Template) compileHRule(v HRuleNode, parent int16, depth int) int16 {
 	char := v.Char
 	if char == 0 {
 		char = '─'
@@ -640,7 +702,7 @@ func (t *Template) compileHRule(v HRule, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileVRule(v VRule, parent int16, depth int) int16 {
+func (t *Template) compileVRule(v VRuleNode, parent int16, depth int) int16 {
 	char := v.Char
 	if char == 0 {
 		char = '│'
@@ -653,7 +715,7 @@ func (t *Template) compileVRule(v VRule, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileSpacer(v Spacer, parent int16, depth int) int16 {
+func (t *Template) compileSpacer(v SpacerNode, parent int16, depth int) int16 {
 	// Determine grow value:
 	// - Explicit Grow() takes precedence
 	// - If no dimensions set (Width=0, Height=0), default to grow=1
@@ -674,7 +736,7 @@ func (t *Template) compileSpacer(v Spacer, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileSpinner(v Spinner, parent int16, depth int) int16 {
+func (t *Template) compileSpinner(v SpinnerNode, parent int16, depth int) int16 {
 	frames := v.Frames
 	if frames == nil {
 		frames = SpinnerBraille
@@ -688,7 +750,7 @@ func (t *Template) compileSpinner(v Spinner, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileScrollbar(v Scrollbar, parent int16, depth int) int16 {
+func (t *Template) compileScrollbar(v ScrollbarNode, parent int16, depth int) int16 {
 	trackChar := v.TrackChar
 	thumbChar := v.ThumbChar
 	if trackChar == 0 {
@@ -717,7 +779,7 @@ func (t *Template) compileScrollbar(v Scrollbar, parent int16, depth int) int16 
 	}, depth)
 }
 
-func (t *Template) compileTabs(v Tabs, parent int16, depth int) int16 {
+func (t *Template) compileTabs(v TabsNode, parent int16, depth int) int16 {
 	gap := v.Gap
 	if gap == 0 {
 		gap = 2
@@ -765,7 +827,7 @@ func (t *Template) compileTreeView(v TreeView, parent int16, depth int) int16 {
 	}, depth)
 }
 
-func (t *Template) compileJump(v Jump, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileJump(v JumpNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	// Jump is a simple wrapper - add the op, then compile child as our child
 	idx := t.addOp(Op{
 		Kind:         OpJump,
@@ -815,7 +877,7 @@ func (t *Template) compileTextInput(v TextInput, parent int16, depth int) int16 
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileOverlay(v Overlay, parent int16, depth int) int16 {
+func (t *Template) compileOverlay(v OverlayNode, parent int16, depth int) int16 {
 	// Compile child into sub-template
 	var childTmpl *Template
 	if v.Child != nil {
@@ -848,7 +910,7 @@ func (t *Template) compileOverlay(v Overlay, parent int16, depth int) int16 {
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileText(v Text, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileText(v TextNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Parent:    parent,
 		TextStyle: v.Style,
@@ -871,7 +933,7 @@ func (t *Template) compileText(v Text, parent int16, depth int, elemBase unsafe.
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileProgress(v Progress, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileProgress(v ProgressNode, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	width := v.BarWidth
 	if width == 0 {
 		width = 20
@@ -899,20 +961,21 @@ func (t *Template) compileProgress(v Progress, parent int16, depth int, elemBase
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, inheritStyle *Style, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
-		Kind:         OpContainer,
-		Parent:       parent,
-		IsRow:        isRow,
-		Gap:          gap,
-		PercentWidth: f.percentWidth,
-		Width:        f.width,
-		Height:       f.height,
-		FlexGrow:     f.flexGrow,
-		Border:       border,
-		Title:        title,
-		BorderFG:     borderFG,
-		BorderBG:     borderBG,
+		Kind:            OpContainer,
+		Parent:          parent,
+		IsRow:           isRow,
+		Gap:             gap,
+		PercentWidth:    f.percentWidth,
+		Width:           f.width,
+		Height:          f.height,
+		FlexGrow:        f.flexGrow,
+		Border:          border,
+		Title:           title,
+		BorderFG:        borderFG,
+		BorderBG:        borderBG,
+		InheritStyle: inheritStyle,
 	}
 
 	idx := t.addOp(op, depth)
@@ -927,6 +990,19 @@ func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex
 	// Update op with child range
 	t.ops[idx].ChildStart = childStart
 	t.ops[idx].ChildEnd = childEnd
+
+	// Check if any direct child has explicit fixed width (bubble up for layout decisions)
+	// Only explicit Width counts - not content-based width like text
+	for i := childStart; i < childEnd; i++ {
+		childOp := &t.ops[i]
+		if childOp.Parent != idx {
+			continue
+		}
+		if childOp.Width > 0 || childOp.ContentSized {
+			t.ops[idx].ContentSized = true
+			break
+		}
+	}
 
 	return idx
 }
@@ -1121,6 +1197,314 @@ func (t *Template) compileForEach(v ForEachNode, parent int16, depth int) int16 
 	return t.addOp(op, depth)
 }
 
+// ============================================================================
+// Compile functions for new functional API types
+// ============================================================================
+
+func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	return t.compileContainer(
+		v.children,
+		v.gap,
+		false, // isRow
+		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow},
+		v.border,
+		v.title,
+		v.borderFG,
+		v.borderBG,
+		v.style,
+		parent,
+		depth,
+		elemBase,
+		elemSize,
+	)
+}
+
+func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	return t.compileContainer(
+		v.children,
+		v.gap,
+		true, // isRow
+		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow},
+		v.border,
+		v.title,
+		v.borderFG,
+		v.borderBG,
+		v.style,
+		parent,
+		depth,
+		elemBase,
+		elemSize,
+	)
+}
+
+func (t *Template) compileTextC(v TextC, parent int16, depth int) int16 {
+	op := Op{
+		Parent:    parent,
+		TextStyle: v.style,
+	}
+
+	switch val := v.content.(type) {
+	case string:
+		op.Kind = OpText
+		op.StaticStr = val
+	case *string:
+		op.Kind = OpTextPtr
+		op.StrPtr = val
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileSpacerC(v SpacerC, parent int16, depth int) int16 {
+	// same grow logic as compileSpacer
+	grow := v.flexGrow
+	if grow == 0 && v.width == 0 && v.height == 0 {
+		grow = 1
+	}
+	return t.addOp(Op{
+		Kind:      OpSpacer,
+		Parent:    parent,
+		Width:     v.width,
+		Height:    v.height,
+		FlexGrow:  grow,
+		RuleChar:  v.char,
+		RuleStyle: v.style,
+	}, depth)
+}
+
+func (t *Template) compileHRuleC(v HRuleC, parent int16, depth int) int16 {
+	char := v.char
+	if char == 0 {
+		char = '─'
+	}
+	return t.addOp(Op{
+		Kind:      OpHRule,
+		Parent:    parent,
+		RuleChar:  char,
+		RuleStyle: v.style,
+	}, depth)
+}
+
+func (t *Template) compileVRuleC(v VRuleC, parent int16, depth int) int16 {
+	char := v.char
+	if char == 0 {
+		char = '│'
+	}
+	return t.addOp(Op{
+		Kind:      OpVRule,
+		Parent:    parent,
+		RuleChar:  char,
+		RuleStyle: v.style,
+		Height:    v.height,
+	}, depth)
+}
+
+func (t *Template) compileProgressC(v ProgressC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	width := v.width
+	if width == 0 {
+		width = 20
+	}
+
+	op := Op{
+		Parent: parent,
+		Width:  width,
+	}
+
+	switch val := v.value.(type) {
+	case int:
+		op.Kind = OpProgress
+		op.StaticInt = val
+	case *int:
+		if elemBase != nil && isWithinRange(unsafe.Pointer(val), elemBase, elemSize) {
+			op.Kind = OpProgressOff
+			op.IntOff = uintptr(unsafe.Pointer(val)) - uintptr(elemBase)
+		} else {
+			op.Kind = OpProgressPtr
+			op.IntPtr = val
+		}
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileSpinnerC(v SpinnerC, parent int16, depth int) int16 {
+	frames := v.frames
+	if frames == nil {
+		frames = SpinnerBraille
+	}
+	return t.addOp(Op{
+		Kind:            OpSpinner,
+		Parent:          parent,
+		SpinnerFramePtr: v.frame,
+		SpinnerFrames:   frames,
+		SpinnerStyle:    v.style,
+	}, depth)
+}
+
+func (t *Template) compileLeaderC(v LeaderC, parent int16, depth int) int16 {
+	fill := v.fill
+	if fill == 0 {
+		fill = '.'
+	}
+
+	op := Op{
+		Parent:      parent,
+		LeaderFill:  fill,
+		LeaderStyle: v.style,
+		Width:       v.width,
+	}
+
+	switch label := v.label.(type) {
+	case string:
+		op.LeaderLabel = label
+	case *string:
+		op.LeaderLabel = *label
+	}
+
+	switch val := v.value.(type) {
+	case string:
+		op.Kind = OpLeader
+		op.LeaderValue = val
+	case *string:
+		op.Kind = OpLeaderPtr
+		op.LeaderValuePtr = val
+	default:
+		op.Kind = OpLeader
+		op.LeaderValue = ""
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileSparklineC(v SparklineC, parent int16, depth int) int16 {
+	op := Op{
+		Parent:     parent,
+		Width:      v.width,
+		SparkMin:   v.min,
+		SparkMax:   v.max,
+		SparkStyle: v.style,
+	}
+
+	switch vals := v.values.(type) {
+	case []float64:
+		op.Kind = OpSparkline
+		op.SparkValues = vals
+		if op.Width == 0 {
+			op.Width = int16(len(vals))
+		}
+	case *[]float64:
+		op.Kind = OpSparklinePtr
+		op.SparkValuesPtr = vals
+		if op.Width == 0 && vals != nil {
+			op.Width = int16(len(*vals))
+		}
+	}
+
+	return t.addOp(op, depth)
+}
+
+func (t *Template) compileJumpC(v JumpC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+	idx := t.addOp(Op{
+		Kind:         OpJump,
+		Parent:       parent,
+		JumpOnSelect: v.onSelect,
+		JumpStyle:    v.style,
+		ChildStart:   int16(len(t.ops)),
+	}, depth)
+
+	if v.child != nil {
+		t.compile(v.child, idx, depth+1, elemBase, elemSize)
+	}
+
+	t.ops[idx].ChildEnd = int16(len(t.ops))
+	return idx
+}
+
+func (t *Template) compileLayerViewC(v LayerViewC, parent int16, depth int) int16 {
+	return t.addOp(Op{
+		Kind:        OpLayer,
+		Parent:      parent,
+		LayerPtr:    v.layer,
+		LayerWidth:  v.viewWidth,
+		LayerHeight: v.viewHeight,
+		FlexGrow:    v.flexGrow,
+	}, depth)
+}
+
+func (t *Template) compileOverlayC(v OverlayC, parent int16, depth int) int16 {
+	// Compile children into sub-template
+	var childTmpl *Template
+	if len(v.children) > 0 {
+		childTmpl = Build(VBoxNode{Children: v.children})
+	}
+
+	// Default to centered if no explicit position
+	centered := v.centered || (v.x == 0 && v.y == 0)
+
+	// Default backdrop color
+	backdropFG := v.backdropFG
+	if backdropFG.Mode == ColorDefault && v.backdrop {
+		backdropFG = BrightBlack
+	}
+
+	return t.addOp(Op{
+		Kind:              OpOverlay,
+		Parent:            parent,
+		Width:             int16(v.width),
+		Height:            int16(v.height),
+		OverlayCentered:   centered,
+		OverlayX:          int16(v.x),
+		OverlayY:          int16(v.y),
+		OverlayBackdrop:   v.backdrop,
+		OverlayBackdropFG: backdropFG,
+		OverlayBG:         v.bg,
+		OverlayChildTmpl:  childTmpl,
+	}, depth)
+}
+
+
+func (t *Template) compileTabsC(v TabsC, parent int16, depth int) int16 {
+	return t.addOp(Op{
+		Kind:              OpTabs,
+		Parent:            parent,
+		TabsLabels:        v.labels,
+		TabsSelectedPtr:   v.selected,
+		TabsStyleType:     v.tabStyle,
+		TabsGap:           v.gap,
+		TabsActiveStyle:   v.activeStyle,
+		TabsInactiveStyle: v.inactiveStyle,
+	}, depth)
+}
+
+func (t *Template) compileScrollbarC(v ScrollbarC, parent int16, depth int) int16 {
+	trackChar := v.trackChar
+	thumbChar := v.thumbChar
+	if trackChar == 0 {
+		if v.horizontal {
+			trackChar = '─'
+		} else {
+			trackChar = '│'
+		}
+	}
+	if thumbChar == 0 {
+		thumbChar = '█'
+	}
+	return t.addOp(Op{
+		Kind:              OpScrollbar,
+		Parent:            parent,
+		Width:             v.length,
+		Height:            v.length,
+		ScrollContentSize: v.contentSize,
+		ScrollViewSize:    v.viewSize,
+		ScrollPosPtr:      v.position,
+		ScrollHorizontal:  v.horizontal,
+		ScrollTrackChar:   trackChar,
+		ScrollThumbChar:   thumbChar,
+		ScrollTrackStyle:  v.trackStyle,
+		ScrollThumbStyle:  v.thumbStyle,
+	}, depth)
+}
+
 // Execute runs all three phases and renders to the buffer.
 func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 	// Clear pending overlays from previous frame
@@ -1168,6 +1552,66 @@ func (t *Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
 			}
 		}
 	}
+}
+
+// computeIntrinsicWidth computes the minimum width needed for a ContentSized container.
+// For VBox: maximum width of children (all children stack vertically, need same width)
+// For HBox: sum of children widths + gaps
+func (t *Template) computeIntrinsicWidth(idx int16) int16 {
+	op := &t.ops[idx]
+
+	// If this op has an explicit width, use it
+	if op.Width > 0 {
+		return op.Width
+	}
+
+	// For containers, compute from children
+	if op.Kind == OpContainer {
+		var intrinsicW int16
+
+		// Count children and find max/sum
+		childCount := int16(0)
+		for i := op.ChildStart; i < op.ChildEnd; i++ {
+			childOp := &t.ops[i]
+			if childOp.Parent != idx {
+				continue
+			}
+			childW := t.computeIntrinsicWidth(i)
+			childCount++
+
+			if op.IsRow {
+				// HBox: sum widths
+				intrinsicW += childW
+			} else {
+				// VBox: max width
+				if childW > intrinsicW {
+					intrinsicW = childW
+				}
+			}
+		}
+
+		// Add gaps for HBox
+		if op.IsRow && childCount > 1 && op.Gap > 0 {
+			intrinsicW += int16(op.Gap) * (childCount - 1)
+		}
+
+		// Add border
+		if op.Border.Horizontal != 0 {
+			intrinsicW += 2
+		}
+
+		return intrinsicW
+	}
+
+	// For text, compute string width
+	if op.Kind == OpText {
+		return int16(utf8.RuneCountInString(op.StaticStr))
+	}
+	if op.Kind == OpTextPtr && op.StrPtr != nil {
+		return int16(utf8.RuneCountInString(*op.StrPtr))
+	}
+
+	return 0
 }
 
 // setOpWidth sets a single op's width based on available space.
@@ -1309,6 +1753,47 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 		// Overlays float above content, take zero space in layout
 		geom.W = 0
 
+	case OpIf:
+		// Calculate width from the active branch content
+		condTrue := (op.CondPtr != nil && *op.CondPtr) ||
+			(op.CondNode != nil && op.CondNode.evaluateWithBase(elemBase))
+		if condTrue && op.ThenTmpl != nil {
+			op.ThenTmpl.elemBase = elemBase
+			// Check if content has fixed-width children (ContentSized)
+			if len(op.ThenTmpl.ops) > 0 && op.ThenTmpl.ops[0].ContentSized {
+				// Content has fixed-width children - compute intrinsic width
+				intrinsicW := op.ThenTmpl.computeIntrinsicWidth(0)
+				op.ThenTmpl.distributeWidths(intrinsicW, elemBase)
+				geom.W = intrinsicW
+			} else {
+				// Normal case: distribute available width
+				op.ThenTmpl.distributeWidths(availW, elemBase)
+				if len(op.ThenTmpl.geom) > 0 {
+					geom.W = op.ThenTmpl.geom[0].W
+				} else {
+					geom.W = 0
+				}
+			}
+		} else if !condTrue && op.ElseTmpl != nil {
+			op.ElseTmpl.elemBase = elemBase
+			// Check if content has fixed-width children (ContentSized)
+			if len(op.ElseTmpl.ops) > 0 && op.ElseTmpl.ops[0].ContentSized {
+				intrinsicW := op.ElseTmpl.computeIntrinsicWidth(0)
+				op.ElseTmpl.distributeWidths(intrinsicW, elemBase)
+				geom.W = intrinsicW
+			} else {
+				op.ElseTmpl.distributeWidths(availW, elemBase)
+				if len(op.ElseTmpl.geom) > 0 {
+					geom.W = op.ElseTmpl.geom[0].W
+				} else {
+					geom.W = 0
+				}
+			}
+		} else {
+			// Condition false with no else branch - takes no space
+			geom.W = 0
+		}
+
 	case OpContainer:
 		if op.Width > 0 {
 			geom.W = op.Width
@@ -1352,13 +1837,34 @@ func (t *Template) distributeVBoxChildWidths(idx int16, op *Op, availW int16, el
 	}
 }
 
+// getIfContentOp returns the root op of an If's active branch content.
+// Returns nil if condition is false and no else branch, or if template is empty.
+func (t *Template) getIfContentOp(childOp *Op, elemBase unsafe.Pointer) *Op {
+	condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
+		(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(elemBase))
+
+	if condTrue && childOp.ThenTmpl != nil && len(childOp.ThenTmpl.ops) > 0 {
+		return &childOp.ThenTmpl.ops[0]
+	} else if !condTrue && childOp.ElseTmpl != nil && len(childOp.ElseTmpl.ops) > 0 {
+		return &childOp.ElseTmpl.ops[0]
+	}
+	return nil
+}
+
 // distributeHBoxChildWidths sets widths for children of a HBox using two-pass flex.
 func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, elemBase unsafe.Pointer) {
 	// Pass 1: Set widths for non-flex children, collect flex children
 	// Containers without explicit width/flex are treated as implicit flex (share remaining space)
+	// OpIf is transparent - we look at its content's properties
 	var usedW int16
 	var totalFlex float32
-	var flexChildren []int16
+	var fixedWidthCount int16 // count of non-flex children with width
+
+	type flexInfo struct {
+		idx      int16
+		flexGrow float32
+	}
+	var flexChildren []flexInfo
 	var implicitFlexChildren []int16 // containers without explicit width
 
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
@@ -1368,27 +1874,39 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 		}
 		childGeom := &t.geom[i]
 
-		if childOp.FlexGrow > 0 {
+		// For OpIf, look at the content's properties (transparent wrapper)
+		effectiveOp := childOp
+		if childOp.Kind == OpIf {
+			contentOp := t.getIfContentOp(childOp, elemBase)
+			if contentOp == nil {
+				// Condition false with no else - takes no space
+				childGeom.W = 0
+				continue
+			}
+			effectiveOp = contentOp
+		}
+
+		if effectiveOp.FlexGrow > 0 {
 			// Explicit flex child - defer to pass 2
-			totalFlex += childOp.FlexGrow
-			flexChildren = append(flexChildren, i)
-		} else if (childOp.Kind == OpContainer || childOp.Kind == OpJump) && childOp.Width == 0 && childOp.PercentWidth == 0 {
-			// Container/Jump without explicit width - treat as implicit flex
+			totalFlex += effectiveOp.FlexGrow
+			flexChildren = append(flexChildren, flexInfo{idx: i, flexGrow: effectiveOp.FlexGrow})
+		} else if !effectiveOp.ContentSized && (effectiveOp.Kind == OpContainer || effectiveOp.Kind == OpJump) && effectiveOp.Width == 0 && effectiveOp.PercentWidth == 0 {
+			// Container/Jump without explicit width or fixed-content children - implicit flex
 			implicitFlexChildren = append(implicitFlexChildren, i)
 		} else {
 			// Non-flex child with explicit or content-based width
 			t.setOpWidth(childOp, childGeom, availW, elemBase)
 			usedW += childGeom.W
+			if childGeom.W > 0 {
+				fixedWidthCount++
+			}
 		}
 	}
 
-	// Account for gaps
-	childCount := int16(0)
-	for i := op.ChildStart; i < op.ChildEnd; i++ {
-		if t.ops[i].Parent == idx {
-			childCount++
-		}
-	}
+	// Account for gaps - total children that will take space
+	// Note: we track fixedWidthCount during the loop above to avoid double-counting
+	// flex children that might have non-zero W from a previous render
+	childCount := fixedWidthCount + int16(len(flexChildren)) + int16(len(implicitFlexChildren))
 	if childCount > 1 && op.Gap > 0 {
 		usedW += int16(op.Gap) * (childCount - 1)
 	}
@@ -1398,11 +1916,11 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 	if remaining > 0 && totalFlex > 0 {
 		// Explicit flex children
 		distributed := int16(0)
-		for i, childIdx := range flexChildren {
-			childOp := &t.ops[childIdx]
-			childGeom := &t.geom[childIdx]
+		for i, flex := range flexChildren {
+			childOp := &t.ops[flex.idx]
+			childGeom := &t.geom[flex.idx]
 
-			flexShare := childOp.FlexGrow / totalFlex
+			flexShare := flex.flexGrow / totalFlex
 			flexW := int16(float32(remaining) * flexShare)
 
 			// Last flex child gets remainder (avoid rounding loss)
@@ -1413,12 +1931,26 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 
 			// Set the flex child's width
 			childGeom.W = flexW
+
+			// For OpIf, also distribute to sub-template
+			if childOp.Kind == OpIf {
+				condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
+					(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(elemBase))
+				if condTrue && childOp.ThenTmpl != nil {
+					childOp.ThenTmpl.elemBase = elemBase
+					childOp.ThenTmpl.distributeWidths(flexW, elemBase)
+				} else if !condTrue && childOp.ElseTmpl != nil {
+					childOp.ElseTmpl.elemBase = elemBase
+					childOp.ElseTmpl.distributeWidths(flexW, elemBase)
+				}
+			}
 		}
 	} else if remaining > 0 && len(implicitFlexChildren) > 0 {
 		// No explicit flex, but implicit flex containers - share remaining evenly
 		shareW := remaining / int16(len(implicitFlexChildren))
 		distributed := int16(0)
 		for i, childIdx := range implicitFlexChildren {
+			childOp := &t.ops[childIdx]
 			childGeom := &t.geom[childIdx]
 
 			w := shareW
@@ -1428,6 +1960,19 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 			}
 			distributed += w
 			childGeom.W = w
+
+			// For OpIf, also distribute to sub-template
+			if childOp.Kind == OpIf {
+				condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
+					(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(elemBase))
+				if condTrue && childOp.ThenTmpl != nil {
+					childOp.ThenTmpl.elemBase = elemBase
+					childOp.ThenTmpl.distributeWidths(w, elemBase)
+				} else if !condTrue && childOp.ElseTmpl != nil {
+					childOp.ElseTmpl.elemBase = elemBase
+					childOp.ElseTmpl.distributeWidths(w, elemBase)
+				}
+			}
 		}
 	}
 }
@@ -1608,7 +2153,7 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 		// Horizontal layout
 		cursor := int16(0)
 		maxH := int16(0)
-		firstChild := true
+		needGap := false // Add gap before next visible child
 
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
@@ -1616,52 +2161,66 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 				continue // not direct child
 			}
 
-			// Handle gap
-			if !firstChild && op.Gap > 0 {
-				cursor += int16(op.Gap)
-			}
-			firstChild = false
-
 			// Control flow ops expand to their content
 			switch childOp.Kind {
 			case OpIf:
 				// Use evaluateWithBase for conditions in ForEach context
 				condTrue := (childOp.CondPtr != nil && *childOp.CondPtr) ||
 					(childOp.CondNode != nil && childOp.CondNode.evaluateWithBase(t.elemBase))
+				// Use pre-calculated width if set (from flex distribution), otherwise use availW
+				ifWidth := t.geom[i].W
+				if ifWidth == 0 {
+					ifWidth = availW
+				}
 				if childOp.ThenTmpl != nil && condTrue {
+					// Add gap before this child if needed
+					if needGap && op.Gap > 0 {
+						cursor += int16(op.Gap)
+					}
 					childOp.ThenTmpl.elemBase = t.elemBase
-					childOp.ThenTmpl.distributeWidths(availW, t.elemBase)
+					childOp.ThenTmpl.distributeWidths(ifWidth, t.elemBase)
 					childOp.ThenTmpl.layout(0)
 					h := childOp.ThenTmpl.Height()
 					t.geom[i].LocalX = contentOffX + cursor
 					t.geom[i].LocalY = contentOffY
 					t.geom[i].H = h
-					// Width = sub-template width (for now, first root op)
-					if len(childOp.ThenTmpl.geom) > 0 {
+					// Use sub-template width only if we didn't have a pre-set width
+					if t.geom[i].W == 0 && len(childOp.ThenTmpl.geom) > 0 {
 						t.geom[i].W = childOp.ThenTmpl.geom[0].W
-						cursor += childOp.ThenTmpl.geom[0].W
 					}
+					cursor += t.geom[i].W
 					if h > maxH {
 						maxH = h
 					}
+					needGap = true // Next visible child needs gap
 				} else if childOp.ElseTmpl != nil && !condTrue {
+					// Add gap before this child if needed
+					if needGap && op.Gap > 0 {
+						cursor += int16(op.Gap)
+					}
 					childOp.ElseTmpl.elemBase = t.elemBase
-					childOp.ElseTmpl.distributeWidths(availW, t.elemBase)
+					childOp.ElseTmpl.distributeWidths(ifWidth, t.elemBase)
 					childOp.ElseTmpl.layout(0)
 					h := childOp.ElseTmpl.Height()
 					t.geom[i].LocalX = contentOffX + cursor
 					t.geom[i].LocalY = contentOffY
 					t.geom[i].H = h
-					if len(childOp.ElseTmpl.geom) > 0 {
+					if t.geom[i].W == 0 && len(childOp.ElseTmpl.geom) > 0 {
 						t.geom[i].W = childOp.ElseTmpl.geom[0].W
-						cursor += childOp.ElseTmpl.geom[0].W
 					}
+					cursor += t.geom[i].W
 					if h > maxH {
 						maxH = h
 					}
+					needGap = true // Next visible child needs gap
 				}
+				// If condition false with no else, don't set needGap (takes no space)
 
 			case OpForEach:
+				// Add gap before this child if needed
+				if needGap && op.Gap > 0 {
+					cursor += int16(op.Gap)
+				}
 				h, w := t.layoutForEach(i, childOp, availW)
 				t.geom[i].LocalX = contentOffX + cursor
 				t.geom[i].LocalY = contentOffY
@@ -1670,6 +2229,9 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 				cursor += w
 				if h > maxH {
 					maxH = h
+				}
+				if w > 0 {
+					needGap = true
 				}
 
 			case OpSwitch:
@@ -1682,6 +2244,10 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 					tmpl = childOp.SwitchDef
 				}
 				if tmpl != nil {
+					// Add gap before this child if needed
+					if needGap && op.Gap > 0 {
+						cursor += int16(op.Gap)
+					}
 					tmpl.elemBase = t.elemBase
 					tmpl.distributeWidths(availW, t.elemBase)
 					tmpl.layout(0)
@@ -1696,15 +2262,23 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 					if h > maxH {
 						maxH = h
 					}
+					needGap = true
 				}
 
 			default:
 				childGeom := &t.geom[i]
+				// Add gap before this child if needed
+				if needGap && op.Gap > 0 && childGeom.W > 0 {
+					cursor += int16(op.Gap)
+				}
 				childGeom.LocalX = contentOffX + cursor
 				childGeom.LocalY = contentOffY
 				cursor += childGeom.W
 				if childGeom.H > maxH {
 					maxH = childGeom.H
+				}
+				if childGeom.W > 0 {
+					needGap = true
 				}
 			}
 		}
@@ -1824,15 +2398,92 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 // HBox flex is handled during width distribution (single pass).
 // VBox flex must happen after layout since it needs content heights.
 func (t *Template) distributeFlexGrow(rootH int16) {
+	// First pass: ensure root element fills screen height
+	// This makes the common case "just work" without needing VBox wrappers
+	if len(t.byDepth[0]) > 0 {
+		for _, idx := range t.byDepth[0] {
+			op := &t.ops[idx]
+			geom := &t.geom[idx]
+			if op.Kind == OpContainer && op.Parent == -1 {
+				// Root container fills screen height (unless explicit height set)
+				if op.Height == 0 {
+					geom.H = rootH
+				}
+			}
+		}
+	}
+
+	// Second pass: process depth by depth
 	for depth := 0; depth <= t.maxDepth; depth++ {
 		for _, idx := range t.byDepth[depth] {
 			op := &t.ops[idx]
 
-			// Only Cols need height flex distribution here
-			// Rows already handled width flex in distributeWidths
-			if op.Kind == OpContainer && !op.IsRow {
-				t.distributeFlexInCol(idx, op, rootH)
+			if op.Kind == OpContainer {
+				if op.IsRow {
+					// HBox: stretch children to fill HBox height
+					t.stretchRowChildren(idx, op)
+				} else {
+					// VBox: distribute vertical flex space
+					t.distributeFlexInCol(idx, op, rootH)
+				}
 			}
+		}
+	}
+}
+
+// stretchRowChildren stretches HBox children to fill the HBox's height.
+// This enables VBox children inside an HBox to use flex for vertical distribution.
+func (t *Template) stretchRowChildren(idx int16, op *Op) {
+	geom := &t.geom[idx]
+	availH := geom.H
+	if op.Border.Horizontal != 0 {
+		availH -= 2
+	}
+
+	// Stretch each child to fill the row height
+	for i := op.ChildStart; i < op.ChildEnd; i++ {
+		childOp := &t.ops[i]
+		if childOp.Parent != idx {
+			continue
+		}
+		childGeom := &t.geom[i]
+
+		// Stretch containers and layers to fill height (unless they have explicit height)
+		if childOp.Kind == OpContainer || childOp.Kind == OpLayer {
+			if childOp.Height == 0 && childGeom.H < availH {
+				childGeom.H = availH
+			}
+		}
+
+		// Handle If ops - stretch their content too
+		if childOp.Kind == OpIf {
+			childGeom.H = availH
+			t.stretchIfContent(childOp, availH)
+		}
+	}
+}
+
+// stretchIfContent stretches the active branch of an If to the given height.
+func (t *Template) stretchIfContent(op *Op, newH int16) {
+	condTrue := (op.CondPtr != nil && *op.CondPtr) ||
+		(op.CondNode != nil && op.CondNode.evaluateWithBase(t.elemBase))
+
+	var tmpl *Template
+	if condTrue && op.ThenTmpl != nil {
+		tmpl = op.ThenTmpl
+	} else if !condTrue && op.ElseTmpl != nil {
+		tmpl = op.ElseTmpl
+	}
+
+	if tmpl == nil || len(tmpl.ops) == 0 {
+		return
+	}
+
+	// Stretch root of sub-template
+	rootOp := &tmpl.ops[0]
+	if rootOp.Kind == OpContainer || rootOp.Kind == OpLayer {
+		if rootOp.Height == 0 {
+			tmpl.geom[0].H = newH
 		}
 	}
 }
@@ -2123,6 +2774,67 @@ func (t *Template) render(buf *Buffer, globalX, globalY, maxW int16) {
 	t.renderOp(buf, 0, globalX, globalY, maxW)
 }
 
+// applyTransform applies a text transform to a string.
+func applyTransform(s string, transform TextTransform) string {
+	switch transform {
+	case TransformUppercase:
+		return strings.ToUpper(s)
+	case TransformLowercase:
+		return strings.ToLower(s)
+	case TransformCapitalize:
+		// capitalize first letter of each word
+		var result strings.Builder
+		result.Grow(len(s))
+		capitalizeNext := true
+		for _, r := range s {
+			if r == ' ' || r == '\t' || r == '\n' {
+				capitalizeNext = true
+				result.WriteRune(r)
+			} else if capitalizeNext {
+				result.WriteRune(unicode.ToUpper(r))
+				capitalizeNext = false
+			} else {
+				result.WriteRune(r)
+			}
+		}
+		return result.String()
+	default:
+		return s
+	}
+}
+
+// effectiveStyle returns the style to use, merging with inherited style.
+// If s is completely empty, returns the inherited style.
+// Otherwise, cascades: Fill→BG, Attr (merged), Transform (if not set).
+func (t *Template) effectiveStyle(s Style) Style {
+	if t.inheritedStyle == nil && t.inheritedFill.Mode == ColorDefault {
+		return s
+	}
+	// fully empty style inherits everything
+	if s.Equal(Style{}) && t.inheritedStyle != nil {
+		result := *t.inheritedStyle
+		// use cascaded Fill as BG for text rendering
+		if result.BG.Mode == ColorDefault && t.inheritedFill.Mode != ColorDefault {
+			result.BG = t.inheritedFill
+		}
+		return result
+	}
+	// partial style: merge inherited properties
+	if t.inheritedStyle != nil {
+		// merge Attr (combine both)
+		s.Attr = s.Attr | t.inheritedStyle.Attr
+		// inherit Transform if not set
+		if s.Transform == TransformNone && t.inheritedStyle.Transform != TransformNone {
+			s.Transform = t.inheritedStyle.Transform
+		}
+	}
+	// use cascaded Fill as BG if no explicit BG
+	if s.BG.Mode == ColorDefault && t.inheritedFill.Mode != ColorDefault {
+		s.BG = t.inheritedFill
+	}
+	return s
+}
+
 func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16) {
 	if idx < 0 || int(idx) >= len(t.ops) {
 		return
@@ -2137,10 +2849,14 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	switch op.Kind {
 	case OpText:
-		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, op.TextStyle, int(maxW))
+		style := t.effectiveStyle(op.TextStyle)
+		text := applyTransform(op.StaticStr, style.Transform)
+		buf.WriteStringFast(int(absX), int(absY), text, style, int(maxW))
 
 	case OpTextPtr:
-		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, op.TextStyle, int(maxW))
+		style := t.effectiveStyle(op.TextStyle)
+		text := applyTransform(*op.StrPtr, style.Transform)
+		buf.WriteStringFast(int(absX), int(absY), text, style, int(maxW))
 
 	case OpTextOff:
 		// Would need elemBase passed through for ForEach
@@ -2194,13 +2910,15 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if geom.W > 0 {
 			width = int(geom.W)
 		}
+		ruleStyle := t.effectiveStyle(op.RuleStyle)
 		for i := 0; i < width; i++ {
-			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
 	case OpVRule:
+		ruleStyle := t.effectiveStyle(op.RuleStyle)
 		for i := 0; i < int(geom.H); i++ {
-			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
 	case OpSpacer:
@@ -2265,10 +2983,30 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 				layerW = int(op.LayerWidth)
 			}
 			op.LayerPtr.SetViewport(layerW, int(geom.H))
+			op.LayerPtr.screenX = int(absX) // set screen offset for cursor translation
+			op.LayerPtr.screenY = int(absY)
+			op.LayerPtr.prepare() // re-render if dimensions changed
 			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
+
+			// track layer with visible cursor for automatic cursor positioning
+			if op.LayerPtr.cursor.Visible && t.app != nil {
+				t.app.activeLayer = op.LayerPtr
+			}
 		}
 
 	case OpContainer:
+		// Update inherited Fill - cascades through nested containers
+		oldInheritedFill := t.inheritedFill
+		if op.InheritStyle != nil && op.InheritStyle.Fill.Mode != ColorDefault {
+			t.inheritedFill = op.InheritStyle.Fill
+		}
+
+		// Fill container area if we have an inherited Fill
+		if t.inheritedFill.Mode != ColorDefault {
+			fillCell := Cell{Rune: ' ', Style: Style{BG: t.inheritedFill}}
+			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
+		}
+
 		// Draw border if present
 		if op.Border.Horizontal != 0 {
 			style := DefaultStyle()
@@ -2277,6 +3015,8 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
+			} else if t.inheritedFill.Mode != ColorDefault {
+				style.BG = t.inheritedFill
 			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
@@ -2292,6 +3032,12 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			contentW -= 2
 		}
 
+		// Update inherited style if this container sets one
+		oldInheritedStyle := t.inheritedStyle
+		if op.InheritStyle != nil {
+			t.inheritedStyle = op.InheritStyle
+		}
+
 		// Render children with this container's position as their origin
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
@@ -2301,17 +3047,25 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			t.renderOp(buf, i, absX, absY, contentW)
 		}
 
+		// Restore inherited style and fill
+		t.inheritedStyle = oldInheritedStyle
+		t.inheritedFill = oldInheritedFill
+
 	case OpIf:
 		// Render active branch if condition is true
 		condTrue := (op.CondPtr != nil && *op.CondPtr) || (op.CondNode != nil && op.CondNode.evaluate())
 		if op.ThenTmpl != nil && condTrue {
 			op.ThenTmpl.app = t.app
+			op.ThenTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
+			op.ThenTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
 			op.ThenTmpl.pendingOverlays = op.ThenTmpl.pendingOverlays[:0]
 			op.ThenTmpl.render(buf, absX, absY, geom.W)
 			// Propagate overlays from sub-template to main template
 			t.pendingOverlays = append(t.pendingOverlays, op.ThenTmpl.pendingOverlays...)
 		} else if op.ElseTmpl != nil && !condTrue {
 			op.ElseTmpl.app = t.app
+			op.ElseTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
+			op.ElseTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
 			op.ElseTmpl.pendingOverlays = op.ElseTmpl.pendingOverlays[:0]
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
 			t.pendingOverlays = append(t.pendingOverlays, op.ElseTmpl.pendingOverlays...)
@@ -2370,8 +3124,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	absX := globalX + geom.LocalX
 	absY := globalY + geom.LocalY
 
-	// Helper to merge row background with text style
+	// Helper to merge row background with text style (also applies inherited style)
 	mergeStyle := func(s Style) Style {
+		s = sub.effectiveStyle(s) // apply inherited style first
 		if sub.rowBG.Mode != 0 && s.BG.Mode == 0 {
 			s.BG = sub.rowBG
 		}
@@ -2380,15 +3135,21 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	switch op.Kind {
 	case OpText:
-		buf.WriteStringFast(int(absX), int(absY), op.StaticStr, mergeStyle(op.TextStyle), int(maxW))
+		style := mergeStyle(op.TextStyle)
+		text := applyTransform(op.StaticStr, style.Transform)
+		buf.WriteStringFast(int(absX), int(absY), text, style, int(maxW))
 
 	case OpTextPtr:
-		buf.WriteStringFast(int(absX), int(absY), *op.StrPtr, mergeStyle(op.TextStyle), int(maxW))
+		style := mergeStyle(op.TextStyle)
+		text := applyTransform(*op.StrPtr, style.Transform)
+		buf.WriteStringFast(int(absX), int(absY), text, style, int(maxW))
 
 	case OpTextOff:
 		// Offset from element base
 		strPtr := (*string)(unsafe.Pointer(uintptr(elemBase) + op.StrOff))
-		buf.WriteStringFast(int(absX), int(absY), *strPtr, mergeStyle(op.TextStyle), int(maxW))
+		style := mergeStyle(op.TextStyle)
+		text := applyTransform(*strPtr, style.Transform)
+		buf.WriteStringFast(int(absX), int(absY), text, style, int(maxW))
 
 	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
@@ -2444,13 +3205,15 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if geom.W > 0 {
 			width = int(geom.W)
 		}
+		ruleStyle := sub.effectiveStyle(op.RuleStyle)
 		for i := 0; i < width; i++ {
-			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+			buf.Set(int(absX)+i, int(absY), Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
 	case OpVRule:
+		ruleStyle := sub.effectiveStyle(op.RuleStyle)
 		for i := 0; i < int(geom.H); i++ {
-			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: op.RuleStyle})
+			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
 	case OpSpacer:
@@ -2521,10 +3284,30 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 				layerW = int(op.LayerWidth)
 			}
 			op.LayerPtr.SetViewport(layerW, int(geom.H))
+			op.LayerPtr.screenX = int(absX) // set screen offset for cursor translation
+			op.LayerPtr.screenY = int(absY)
+			op.LayerPtr.prepare() // re-render if dimensions changed
 			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
+
+			// track layer with visible cursor for automatic cursor positioning
+			if op.LayerPtr.cursor.Visible && sub.app != nil {
+				sub.app.activeLayer = op.LayerPtr
+			}
 		}
 
 	case OpContainer:
+		// Update inherited Fill - cascades through nested containers
+		oldInheritedFill := sub.inheritedFill
+		if op.InheritStyle != nil && op.InheritStyle.Fill.Mode != ColorDefault {
+			sub.inheritedFill = op.InheritStyle.Fill
+		}
+
+		// Fill container area if we have an inherited Fill
+		if sub.inheritedFill.Mode != ColorDefault {
+			fillCell := Cell{Rune: ' ', Style: Style{BG: sub.inheritedFill}}
+			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
+		}
+
 		// Draw border if present
 		if op.Border.Horizontal != 0 {
 			style := DefaultStyle()
@@ -2533,6 +3316,8 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
+			} else if sub.inheritedFill.Mode != ColorDefault {
+				style.BG = sub.inheritedFill
 			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
@@ -2548,6 +3333,12 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			contentW -= 2
 		}
 
+		// Update inherited style if this container sets one
+		oldInheritedStyle := sub.inheritedStyle
+		if op.InheritStyle != nil {
+			sub.inheritedStyle = op.InheritStyle
+		}
+
 		// Recurse into children with this container's position as their origin
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &sub.ops[i]
@@ -2557,12 +3348,20 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			sub.renderSubOp(buf, i, absX, absY, contentW, elemBase)
 		}
 
+		// Restore inherited style and fill
+		sub.inheritedStyle = oldInheritedStyle
+		sub.inheritedFill = oldInheritedFill
+
 	case OpIf:
 		// Use evaluateWithBase for conditions inside ForEach
 		condTrue := (op.CondPtr != nil && *op.CondPtr) || (op.CondNode != nil && op.CondNode.evaluateWithBase(elemBase))
 		if op.ThenTmpl != nil && condTrue {
+			op.ThenTmpl.inheritedStyle = sub.inheritedStyle // propagate inherited style
+			op.ThenTmpl.inheritedFill = sub.inheritedFill   // propagate inherited fill
 			sub.renderSubTemplate(buf, op.ThenTmpl, absX, absY, geom.W, elemBase)
 		} else if op.ElseTmpl != nil && !condTrue {
+			op.ElseTmpl.inheritedStyle = sub.inheritedStyle // propagate inherited style
+			op.ElseTmpl.inheritedFill = sub.inheritedFill   // propagate inherited fill
 			sub.renderSubTemplate(buf, op.ElseTmpl, absX, absY, geom.W, elemBase)
 		}
 
@@ -2999,12 +3798,11 @@ func (t *Template) renderOverlay(buf *Buffer, op *Op, screenW, screenH int16) {
 
 	if overlayW == 0 || overlayH == 0 {
 		// Calculate natural size from content
-		// Use a temporary buffer for measurement
+		// DON'T call distributeFlexGrow - overlays should size to content, not expand
 		childTmpl.distributeWidths(screenW, nil)
 		childTmpl.layout(screenH)
-		childTmpl.distributeFlexGrow(screenH)
 
-		// Get root content size
+		// Get root content size (natural height, no flex grow distribution)
 		if len(childTmpl.geom) > 0 {
 			if overlayW == 0 {
 				overlayW = childTmpl.geom[0].W
@@ -3308,5 +4106,50 @@ func (t *Template) Height() int16 {
 		}
 	}
 	return totalH
+}
+
+// DebugDump prints the template's op tree for debugging layout issues.
+func (t *Template) DebugDump(prefix string) {
+	fmt.Fprintf(os.Stderr, "%s=== Template Debug (%d ops) ===\n", prefix, len(t.ops))
+	for i, op := range t.ops {
+		geom := Geom{}
+		if i < len(t.geom) {
+			geom = t.geom[i]
+		}
+		kindStr := opKindName(op.Kind)
+		flags := ""
+		if op.ContentSized {
+			flags += " [ContentSized]"
+		}
+		if op.FlexGrow > 0 {
+			flags += fmt.Sprintf(" [Flex:%.1f]", op.FlexGrow)
+		}
+		if op.Width > 0 {
+			flags += fmt.Sprintf(" [W:%d]", op.Width)
+		}
+		fmt.Fprintf(os.Stderr, "%s  [%d] %s parent=%d geom={W:%d H:%d}%s\n",
+			prefix, i, kindStr, op.Parent, geom.W, geom.H, flags)
+
+		// Dump sub-templates for If
+		if op.Kind == OpIf && op.ThenTmpl != nil {
+			op.ThenTmpl.DebugDump(prefix + "    Then: ")
+		}
+		if op.Kind == OpIf && op.ElseTmpl != nil {
+			op.ElseTmpl.DebugDump(prefix + "    Else: ")
+		}
+	}
+}
+
+func opKindName(k OpKind) string {
+	names := map[OpKind]string{
+		OpText: "Text", OpTextPtr: "TextPtr", OpProgress: "Progress",
+		OpContainer: "Container", OpIf: "If", OpForEach: "ForEach",
+		OpLayer: "Layer", OpOverlay: "Overlay", OpHRule: "HRule",
+		OpVRule: "VRule", OpSpacer: "Spacer", OpSelectionList: "SelectionList",
+	}
+	if name, ok := names[k]; ok {
+		return name
+	}
+	return fmt.Sprintf("Op(%d)", k)
 }
 

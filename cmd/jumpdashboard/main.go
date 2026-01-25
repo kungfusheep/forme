@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 // State - using structs that can be referenced
@@ -42,23 +42,23 @@ var quickActions = []struct {
 var subsystems = []struct {
 	name   string
 	status string
-	color  tui.Color
+	color  Color
 }{
-	{"API", "Online", tui.Green},
-	{"Database", "Online", tui.Green},
-	{"Cache", "Warning", tui.Yellow},
-	{"Queue", "Online", tui.Green},
-	{"Storage", "Online", tui.Green},
-	{"Auth", "Online", tui.Green},
+	{"API", "Online", Green},
+	{"Database", "Online", Green},
+	{"Cache", "Warning", Yellow},
+	{"Queue", "Online", Green},
+	{"Storage", "Online", Green},
+	{"Auth", "Online", Green},
 }
 
 var tabs = []string{"Overview", "Metrics", "Logs", "Alerts"}
 
-var app *tui.App
+var app *App
 
 func main() {
 	var err error
-	app, err = tui.NewApp()
+	app, err = NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -84,21 +84,21 @@ func main() {
 func rebuildView() {
 	// Build sidebar menu with jump targets
 	menuChildren := []any{
-		tui.Text{Content: "MENU", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
-		tui.Spacer{Height: 1},
+		TextNode{Content: "MENU", Style: Style{FG: Cyan, Attr: AttrBold}},
+		SpacerNode{Height: 1},
 	}
 	for i, item := range menuItems {
 		idx := i
 		label := item.label
-		style := tui.Style{FG: tui.White}
+		style := Style{FG: White}
 		if item.action == activePanel {
-			style = tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}
+			style = Style{FG: Cyan, Attr: AttrBold}
 			label = "> " + label
 		} else {
 			label = "  " + label
 		}
-		menuChildren = append(menuChildren, tui.Jump{
-			Child: tui.Text{Content: label, Style: style},
+		menuChildren = append(menuChildren, JumpNode{
+			Child: TextNode{Content: label, Style: style},
 			OnSelect: func() {
 				activePanel = menuItems[idx].action
 				status = fmt.Sprintf("Switched to: %s", menuItems[idx].label)
@@ -111,10 +111,10 @@ func rebuildView() {
 	actionChildren := []any{}
 	for i, action := range quickActions {
 		idx := i
-		actionChildren = append(actionChildren, tui.Jump{
-			Child: tui.HBox{
+		actionChildren = append(actionChildren, JumpNode{
+			Child: HBoxNode{
 				Children: []any{
-					tui.Text{Content: fmt.Sprintf("[%s %s]", action.icon, action.label), Style: tui.Style{FG: tui.BrightWhite}},
+					TextNode{Content: fmt.Sprintf("[%s %s]", action.icon, action.label), Style: Style{FG: BrightWhite}},
 				},
 			},
 			OnSelect: func() {
@@ -123,24 +123,24 @@ func rebuildView() {
 			},
 		})
 		if i < len(quickActions)-1 {
-			actionChildren = append(actionChildren, tui.Text{Content: "  "})
+			actionChildren = append(actionChildren, TextNode{Content: "  "})
 		}
 	}
 
 	// Build subsystem grid with jump targets
 	subsystemChildren := []any{
-		tui.Text{Content: "SUBSYSTEMS", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
-		tui.Spacer{Height: 1},
+		TextNode{Content: "SUBSYSTEMS", Style: Style{FG: Cyan, Attr: AttrBold}},
+		SpacerNode{Height: 1},
 	}
 	for i, sys := range subsystems {
 		idx := i
 		indicator := "●"
-		subsystemChildren = append(subsystemChildren, tui.Jump{
-			Child: tui.HBox{
+		subsystemChildren = append(subsystemChildren, JumpNode{
+			Child: HBoxNode{
 				Children: []any{
-					tui.Text{Content: indicator + " ", Style: tui.Style{FG: sys.color}},
-					tui.Text{Content: fmt.Sprintf("%-10s", sys.name), Style: tui.Style{FG: tui.White}},
-					tui.Text{Content: sys.status, Style: tui.Style{FG: sys.color}},
+					TextNode{Content: indicator + " ", Style: Style{FG: sys.color}},
+					TextNode{Content: fmt.Sprintf("%-10s", sys.name), Style: Style{FG: White}},
+					TextNode{Content: sys.status, Style: Style{FG: sys.color}},
 				},
 			},
 			OnSelect: func() {
@@ -154,14 +154,14 @@ func rebuildView() {
 	tabChildren := []any{}
 	for i, label := range tabs {
 		idx := i
-		style := tui.Style{FG: tui.BrightBlack}
+		style := Style{FG: BrightBlack}
 		content := fmt.Sprintf(" %s ", label)
 		if i == selectedTab {
-			style = tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}
+			style = Style{FG: Cyan, Attr: AttrBold}
 			content = fmt.Sprintf("[%s]", label)
 		}
-		tabChildren = append(tabChildren, tui.Jump{
-			Child: tui.Text{Content: content, Style: style},
+		tabChildren = append(tabChildren, JumpNode{
+			Child: TextNode{Content: content, Style: style},
 			OnSelect: func() {
 				selectedTab = idx
 				status = fmt.Sprintf("Tab: %s", tabs[idx])
@@ -171,159 +171,159 @@ func rebuildView() {
 	}
 
 	app.SetView(
-		tui.VBox{
+		VBoxNode{
 			Children: []any{
 				// Header
-				tui.HBox{
+				HBoxNode{
 					Children: []any{
-						tui.Text{Content: "Dashboard", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
-						tui.Spacer{},
-						tui.Text{Content: status, Style: tui.Style{FG: tui.Yellow}},
+						TextNode{Content: "Dashboard", Style: Style{FG: Cyan, Attr: AttrBold}},
+						SpacerNode{},
+						TextNode{Content: status, Style: Style{FG: Yellow}},
 					},
 				},
-				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Spacer{Height: 1},
+				HRuleNode{Style: Style{FG: BrightBlack}},
+				SpacerNode{Height: 1},
 
 				// Main layout: sidebar + content
-				tui.HBox{
+				HBoxNode{
 					Gap: 2,
 					Children: []any{
 						// Sidebar
-						tui.VBox{
+						VBoxNode{
 							Children: menuChildren,
 						}.WidthPct(0.15),
 
-						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
+						VRuleNode{Style: Style{FG: BrightBlack}},
 
 						// Main content area
-						tui.VBox{
+						VBoxNode{
 							Children: []any{
 								// Quick actions bar
-								tui.HBox{Children: actionChildren},
-								tui.Spacer{Height: 1},
+								HBoxNode{Children: actionChildren},
+								SpacerNode{Height: 1},
 
 								// Tabs
-								tui.HBox{Children: tabChildren},
-								tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
-								tui.Spacer{Height: 1},
+								HBoxNode{Children: tabChildren},
+								HRuleNode{Style: Style{FG: BrightBlack}},
+								SpacerNode{Height: 1},
 
 								// Content based on selected tab
 								buildTabContent(selectedTab),
 							},
 						},
 
-						tui.VRule{Style: tui.Style{FG: tui.BrightBlack}},
+						VRuleNode{Style: Style{FG: BrightBlack}},
 
 						// Right sidebar - subsystems
-						tui.VBox{
+						VBoxNode{
 							Children: subsystemChildren,
 						}.WidthPct(0.20),
 					},
 				},
 
 				// Footer
-				tui.Spacer{Height: 1},
-				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Text{Content: "g:jump | tab:cycle tabs | q:quit", Style: tui.Style{FG: tui.BrightBlack}},
+				SpacerNode{Height: 1},
+				HRuleNode{Style: Style{FG: BrightBlack}},
+				TextNode{Content: "g:jump | tab:cycle tabs | q:quit", Style: Style{FG: BrightBlack}},
 			},
 		},
 	)
 }
 
 // buildTabContent returns different content based on the selected tab
-func buildTabContent(tab int) tui.VBox {
+func buildTabContent(tab int) VBoxNode {
 	switch tab {
 	case 0: // Overview
-		return tui.VBox{
+		return VBoxNode{
 			Children: []any{
-				tui.Text{Content: "System Overview", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
-				tui.Spacer{Height: 1},
+				TextNode{Content: "System Overview", Style: Style{FG: White, Attr: AttrBold}},
+				SpacerNode{Height: 1},
 				// Stats row with jumpable cards
-				tui.HBox{
+				HBoxNode{
 					Gap: 2,
 					Children: []any{
-						buildJumpCard("Requests", "1.2M", "/day", tui.Cyan),
-						buildJumpCard("Errors", "0.02%", "rate", tui.Green),
-						buildJumpCard("Latency", "45ms", "p99", tui.Yellow),
-						buildJumpCard("Users", "8,432", "active", tui.Magenta),
+						buildJumpCard("Requests", "1.2M", "/day", Cyan),
+						buildJumpCard("Errors", "0.02%", "rate", Green),
+						buildJumpCard("Latency", "45ms", "p99", Yellow),
+						buildJumpCard("Users", "8,432", "active", Magenta),
 					},
 				},
-				tui.Spacer{Height: 1},
-				tui.Text{Content: "Recent Activity", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
-				tui.Spacer{Height: 1},
-				buildActivityItem("User login", "john@example.com", "2m ago", tui.Green),
-				buildActivityItem("API call", "GET /users", "5m ago", tui.Cyan),
-				buildActivityItem("Cache miss", "session:abc123", "8m ago", tui.Yellow),
+				SpacerNode{Height: 1},
+				TextNode{Content: "Recent Activity", Style: Style{FG: White, Attr: AttrBold}},
+				SpacerNode{Height: 1},
+				buildActivityItem("User login", "john@example.com", "2m ago", Green),
+				buildActivityItem("API call", "GET /users", "5m ago", Cyan),
+				buildActivityItem("Cache miss", "session:abc123", "8m ago", Yellow),
 			},
 		}
 
 	case 1: // Metrics
-		return tui.VBox{
+		return VBoxNode{
 			Children: []any{
-				tui.Text{Content: "Performance Metrics", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
-				tui.Spacer{Height: 1},
-				tui.HBox{
+				TextNode{Content: "Performance Metrics", Style: Style{FG: White, Attr: AttrBold}},
+				SpacerNode{Height: 1},
+				HBoxNode{
 					Gap: 2,
 					Children: []any{
-						buildJumpCard("CPU", "42%", "avg", tui.Cyan),
-						buildJumpCard("Memory", "2.1GB", "used", tui.Yellow),
-						buildJumpCard("Disk I/O", "120MB/s", "read", tui.Green),
-						buildJumpCard("Network", "450Mbps", "in", tui.Magenta),
+						buildJumpCard("CPU", "42%", "avg", Cyan),
+						buildJumpCard("Memory", "2.1GB", "used", Yellow),
+						buildJumpCard("Disk I/O", "120MB/s", "read", Green),
+						buildJumpCard("Network", "450Mbps", "in", Magenta),
 					},
 				},
-				tui.Spacer{Height: 1},
-				tui.Text{Content: "Throughput (last hour)", Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Sparkline{Values: []float64{10, 25, 40, 35, 50, 45, 60, 55, 70, 65, 80, 75}, Style: tui.Style{FG: tui.Cyan}},
+				SpacerNode{Height: 1},
+				TextNode{Content: "Throughput (last hour)", Style: Style{FG: BrightBlack}},
+				SparklineNode{Values: []float64{10, 25, 40, 35, 50, 45, 60, 55, 70, 65, 80, 75}, Style: Style{FG: Cyan}},
 			},
 		}
 
 	case 2: // Logs
-		return tui.VBox{
+		return VBoxNode{
 			Children: []any{
-				tui.Text{Content: "Recent Logs", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
-				tui.Spacer{Height: 1},
-				buildLogEntry("INFO", "Server started on port 8080", tui.Green),
-				buildLogEntry("DEBUG", "Processing request /api/users", tui.Cyan),
-				buildLogEntry("WARN", "Cache nearing capacity (85%)", tui.Yellow),
-				buildLogEntry("INFO", "Database connection established", tui.Green),
-				buildLogEntry("ERROR", "Failed to connect to Redis", tui.Red),
-				buildLogEntry("INFO", "Retry successful, Redis connected", tui.Green),
+				TextNode{Content: "Recent Logs", Style: Style{FG: White, Attr: AttrBold}},
+				SpacerNode{Height: 1},
+				buildLogEntry("INFO", "Server started on port 8080", Green),
+				buildLogEntry("DEBUG", "Processing request /api/users", Cyan),
+				buildLogEntry("WARN", "Cache nearing capacity (85%)", Yellow),
+				buildLogEntry("INFO", "Database connection established", Green),
+				buildLogEntry("ERROR", "Failed to connect to Redis", Red),
+				buildLogEntry("INFO", "Retry successful, Redis connected", Green),
 			},
 		}
 
 	case 3: // Alerts
-		return tui.VBox{
+		return VBoxNode{
 			Children: []any{
-				tui.Text{Content: "Active Alerts", Style: tui.Style{FG: tui.White, Attr: tui.AttrBold}},
-				tui.Spacer{Height: 1},
-				buildAlertItem("CRITICAL", "Database replica lag > 30s", tui.Red),
-				buildAlertItem("WARNING", "Memory usage above 80%", tui.Yellow),
-				buildAlertItem("WARNING", "SSL certificate expires in 7 days", tui.Yellow),
-				tui.Spacer{Height: 1},
-				tui.Text{Content: "Resolved (last 24h)", Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Spacer{Height: 1},
-				buildAlertItem("OK", "API latency normalized", tui.Green),
-				buildAlertItem("OK", "Disk space freed", tui.Green),
+				TextNode{Content: "Active Alerts", Style: Style{FG: White, Attr: AttrBold}},
+				SpacerNode{Height: 1},
+				buildAlertItem("CRITICAL", "Database replica lag > 30s", Red),
+				buildAlertItem("WARNING", "Memory usage above 80%", Yellow),
+				buildAlertItem("WARNING", "SSL certificate expires in 7 days", Yellow),
+				SpacerNode{Height: 1},
+				TextNode{Content: "Resolved (last 24h)", Style: Style{FG: BrightBlack}},
+				SpacerNode{Height: 1},
+				buildAlertItem("OK", "API latency normalized", Green),
+				buildAlertItem("OK", "Disk space freed", Green),
 			},
 		}
 
 	default:
-		return tui.VBox{
+		return VBoxNode{
 			Children: []any{
-				tui.Text{Content: "Unknown tab", Style: tui.Style{FG: tui.Red}},
+				TextNode{Content: "Unknown tab", Style: Style{FG: Red}},
 			},
 		}
 	}
 }
 
 // buildActivityItem creates a jumpable activity entry
-func buildActivityItem(action, detail, when string, color tui.Color) tui.Jump {
-	return tui.Jump{
-		Child: tui.HBox{
+func buildActivityItem(action, detail, when string, color Color) JumpNode {
+	return JumpNode{
+		Child: HBoxNode{
 			Children: []any{
-				tui.Text{Content: fmt.Sprintf("%-12s", action), Style: tui.Style{FG: color}},
-				tui.Text{Content: fmt.Sprintf("%-20s", detail), Style: tui.Style{FG: tui.White}},
-				tui.Text{Content: when, Style: tui.Style{FG: tui.BrightBlack}},
+				TextNode{Content: fmt.Sprintf("%-12s", action), Style: Style{FG: color}},
+				TextNode{Content: fmt.Sprintf("%-20s", detail), Style: Style{FG: White}},
+				TextNode{Content: when, Style: Style{FG: BrightBlack}},
 			},
 		},
 		OnSelect: func() {
@@ -334,12 +334,12 @@ func buildActivityItem(action, detail, when string, color tui.Color) tui.Jump {
 }
 
 // buildLogEntry creates a jumpable log entry
-func buildLogEntry(level, message string, color tui.Color) tui.Jump {
-	return tui.Jump{
-		Child: tui.HBox{
+func buildLogEntry(level, message string, color Color) JumpNode {
+	return JumpNode{
+		Child: HBoxNode{
 			Children: []any{
-				tui.Text{Content: fmt.Sprintf("[%-5s]", level), Style: tui.Style{FG: color, Attr: tui.AttrBold}},
-				tui.Text{Content: " " + message, Style: tui.Style{FG: tui.White}},
+				TextNode{Content: fmt.Sprintf("[%-5s]", level), Style: Style{FG: color, Attr: AttrBold}},
+				TextNode{Content: " " + message, Style: Style{FG: White}},
 			},
 		},
 		OnSelect: func() {
@@ -350,19 +350,19 @@ func buildLogEntry(level, message string, color tui.Color) tui.Jump {
 }
 
 // buildAlertItem creates a jumpable alert entry
-func buildAlertItem(severity, message string, color tui.Color) tui.Jump {
+func buildAlertItem(severity, message string, color Color) JumpNode {
 	icon := "●"
 	if severity == "CRITICAL" {
 		icon = "◆"
 	} else if severity == "OK" {
 		icon = "✓"
 	}
-	return tui.Jump{
-		Child: tui.HBox{
+	return JumpNode{
+		Child: HBoxNode{
 			Children: []any{
-				tui.Text{Content: icon + " ", Style: tui.Style{FG: color}},
-				tui.Text{Content: fmt.Sprintf("%-10s", severity), Style: tui.Style{FG: color, Attr: tui.AttrBold}},
-				tui.Text{Content: message, Style: tui.Style{FG: tui.White}},
+				TextNode{Content: icon + " ", Style: Style{FG: color}},
+				TextNode{Content: fmt.Sprintf("%-10s", severity), Style: Style{FG: color, Attr: AttrBold}},
+				TextNode{Content: message, Style: Style{FG: White}},
 			},
 		},
 		OnSelect: func() {
@@ -373,19 +373,19 @@ func buildAlertItem(severity, message string, color tui.Color) tui.Jump {
 }
 
 // buildJumpCard creates a jumpable stats card
-func buildJumpCard(title, value, unit string, color tui.Color) tui.Jump {
-	return tui.Jump{
-		Child: tui.VBox{
+func buildJumpCard(title, value, unit string, color Color) JumpNode {
+	return JumpNode{
+		Child: VBoxNode{
 			Children: []any{
-				tui.Text{Content: title, Style: tui.Style{FG: tui.BrightBlack}},
-				tui.HBox{
+				TextNode{Content: title, Style: Style{FG: BrightBlack}},
+				HBoxNode{
 					Children: []any{
-						tui.Text{Content: value, Style: tui.Style{FG: color, Attr: tui.AttrBold}},
-						tui.Text{Content: " " + unit, Style: tui.Style{FG: tui.BrightBlack}},
+						TextNode{Content: value, Style: Style{FG: color, Attr: AttrBold}},
+						TextNode{Content: " " + unit, Style: Style{FG: BrightBlack}},
 					},
 				},
 			},
-		}.Border(tui.BorderSingle),
+		}.Border(BorderSingle),
 		OnSelect: func() {
 			status = fmt.Sprintf("Card details: %s = %s %s", title, value, unit)
 			rebuildView()

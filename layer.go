@@ -2,14 +2,36 @@ package tui
 
 // Layer is a pre-rendered buffer with scroll management.
 // Content is rendered once (expensive), then blitted to screen each frame (cheap).
+//
+// If Render is set, the framework automatically calls it before blitting when
+// the viewport dimensions change. This ensures content is always rendered at
+// the correct size without manual timing coordination.
 type Layer struct {
-	buffer   *Buffer
-	scrollY  int
+	buffer    *Buffer
+	scrollY   int
 	maxScroll int
 
 	// Viewport dimensions (set during layout)
 	viewWidth  int
 	viewHeight int
+
+	// Track dimensions at last render to detect when re-render needed
+	lastRenderWidth  int
+	lastRenderHeight int
+
+	// Cursor state (buffer-relative coordinates)
+	cursor Cursor
+
+	// Screen offset (set by framework during blit for cursor translation)
+	screenX, screenY int
+
+	// Render populates the layer buffer. Called automatically by the framework
+	// before blitting when viewport dimensions change. The layer ensures its
+	// buffer exists and is sized appropriately before calling this.
+	//
+	// Width changes always trigger a re-render (text wrapping changes).
+	// Height changes trigger a re-render if content height depends on viewport.
+	Render func()
 }
 
 // NewLayer creates a new empty layer.
@@ -56,12 +78,33 @@ func (l *Layer) updateMaxScroll() {
 }
 
 // SetViewport sets the viewport dimensions for the layer.
-// This should be called before ScrollTo if the viewport height affects maxScroll.
-// Also called internally by the framework during layout.
+// Called internally by the framework during layout.
 func (l *Layer) SetViewport(width, height int) {
 	l.viewWidth = width
 	l.viewHeight = height
 	l.updateMaxScroll()
+}
+
+// NeedsRender returns true if the layer needs to re-render before blitting.
+// Width changes always require re-render (text wrapping). Height changes
+// require re-render if this is the first render or content is height-dependent.
+func (l *Layer) NeedsRender() bool {
+	if l.Render == nil {
+		return false
+	}
+	// first render, or width changed (text wrapping)
+	return l.lastRenderWidth == 0 || l.lastRenderWidth != l.viewWidth
+}
+
+// prepare ensures the layer is ready to blit. Called by the framework before
+// blitting. If Render is set and dimensions changed, calls Render automatically.
+func (l *Layer) prepare() {
+	if !l.NeedsRender() {
+		return
+	}
+	l.lastRenderWidth = l.viewWidth
+	l.lastRenderHeight = l.viewHeight
+	l.Render()
 }
 
 // ScrollY returns the current scroll position.
@@ -85,6 +128,11 @@ func (l *Layer) ContentHeight() int {
 // ViewportHeight returns the visible viewport height.
 func (l *Layer) ViewportHeight() int {
 	return l.viewHeight
+}
+
+// ViewportWidth returns the visible viewport width.
+func (l *Layer) ViewportWidth() int {
+	return l.viewWidth
 }
 
 // ScrollTo sets the scroll position, clamping to valid range.
@@ -202,4 +250,57 @@ func (l *Layer) Clear() {
 	if l.buffer != nil {
 		l.buffer.Clear()
 	}
+}
+
+// =============================================================================
+// Cursor API
+// =============================================================================
+
+// SetCursor sets the cursor position in buffer coordinates.
+// The framework translates this to screen coordinates when rendering.
+func (l *Layer) SetCursor(x, y int) {
+	l.cursor.X = x
+	l.cursor.Y = y
+}
+
+// SetCursorStyle sets the cursor visual style.
+func (l *Layer) SetCursorStyle(style CursorShape) {
+	l.cursor.Style = style
+}
+
+// ShowCursor makes the cursor visible.
+func (l *Layer) ShowCursor() {
+	l.cursor.Visible = true
+}
+
+// HideCursor hides the cursor.
+func (l *Layer) HideCursor() {
+	l.cursor.Visible = false
+}
+
+// Cursor returns the full cursor state.
+func (l *Layer) Cursor() Cursor {
+	return l.cursor
+}
+
+// ScreenCursor returns the cursor position in screen coordinates.
+// This accounts for the layer's position on screen and scroll offset.
+// Returns the cursor and whether it's visible and within the viewport.
+func (l *Layer) ScreenCursor() (x, y int, visible bool) {
+	if !l.cursor.Visible {
+		return 0, 0, false
+	}
+
+	// cursor Y relative to viewport (account for scroll)
+	viewY := l.cursor.Y - l.scrollY
+
+	// check if cursor is within visible viewport
+	if viewY < 0 || viewY >= l.viewHeight {
+		return 0, 0, false
+	}
+
+	// translate to screen coordinates
+	x = l.screenX + l.cursor.X
+	y = l.screenY + viewY
+	return x, y, true
 }

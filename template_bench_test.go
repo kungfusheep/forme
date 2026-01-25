@@ -8,10 +8,10 @@ import (
 func BenchmarkBuildSimple(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Build(VBox{Children: []any{
-			Text{Content: "Header"},
-			Text{Content: "Body"},
-			Text{Content: "Footer"},
+		_ = Build(VBoxNode{Children: []any{
+			TextNode{Content: "Header"},
+			TextNode{Content: "Body"},
+			TextNode{Content: "Footer"},
 		}})
 	}
 }
@@ -20,19 +20,19 @@ func BenchmarkBuildSimple(b *testing.B) {
 func BenchmarkBuildNested(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Build(VBox{Children: []any{
-			Text{Content: "Header"},
-			HBox{Children: []any{
-				VBox{Children: []any{
-					Text{Content: "Left 1"},
-					Text{Content: "Left 2"},
+		_ = Build(VBoxNode{Children: []any{
+			TextNode{Content: "Header"},
+			HBoxNode{Children: []any{
+				VBoxNode{Children: []any{
+					TextNode{Content: "Left 1"},
+					TextNode{Content: "Left 2"},
 				}},
-				VBox{Children: []any{
-					Text{Content: "Right 1"},
-					Text{Content: "Right 2"},
+				VBoxNode{Children: []any{
+					TextNode{Content: "Right 1"},
+					TextNode{Content: "Right 2"},
 				}},
 			}},
-			Text{Content: "Footer"},
+			TextNode{Content: "Footer"},
 		}})
 	}
 }
@@ -50,12 +50,12 @@ func BenchmarkBuildForEach(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Build(VBox{Children: []any{
-			Text{Content: "Header"},
+		_ = Build(VBoxNode{Children: []any{
+			TextNode{Content: "Header"},
 			ForEachNode{
 				Items: &items,
 				Render: func(item *Item) any {
-					return Text{Content: &item.Name}
+					return TextNode{Content: &item.Name}
 				},
 			},
 		}})
@@ -64,10 +64,10 @@ func BenchmarkBuildForEach(b *testing.B) {
 
 // BenchmarkV2ExecuteSimple measures execute time for a simple template.
 func BenchmarkV2ExecuteSimple(b *testing.B) {
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
-		Text{Content: "Body"},
-		Text{Content: "Footer"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
+		TextNode{Content: "Body"},
+		TextNode{Content: "Footer"},
 	}})
 	buf := NewBuffer(80, 24)
 
@@ -81,19 +81,19 @@ func BenchmarkV2ExecuteSimple(b *testing.B) {
 
 // BenchmarkV2ExecuteNested measures execute time for nested containers.
 func BenchmarkV2ExecuteNested(b *testing.B) {
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
-		HBox{Children: []any{
-			VBox{Children: []any{
-				Text{Content: "Left 1"},
-				Text{Content: "Left 2"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				TextNode{Content: "Left 1"},
+				TextNode{Content: "Left 2"},
 			}},
-			VBox{Children: []any{
-				Text{Content: "Right 1"},
-				Text{Content: "Right 2"},
+			VBoxNode{Children: []any{
+				TextNode{Content: "Right 1"},
+				TextNode{Content: "Right 2"},
 			}},
 		}},
-		Text{Content: "Footer"},
+		TextNode{Content: "Footer"},
 	}})
 	buf := NewBuffer(80, 24)
 
@@ -111,10 +111,10 @@ func BenchmarkV2ExecuteDynamic(b *testing.B) {
 	status := "Running..."
 	count := 42
 
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: &title},
-		Text{Content: &status},
-		Progress{Value: &count, BarWidth: 20},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: &title},
+		TextNode{Content: &status},
+		ProgressNode{Value: &count, BarWidth: 20},
 	}})
 	buf := NewBuffer(80, 24)
 
@@ -150,11 +150,11 @@ func benchmarkV2ForEach(b *testing.B, n int) {
 		items[i].Name = "Item"
 	}
 
-	tmpl := Build(VBox{Children: []any{
+	tmpl := Build(VBoxNode{Children: []any{
 		ForEachNode{
 			Items: &items,
 			Render: func(item *Item) any {
-				return Text{Content: &item.Name}
+				return TextNode{Content: &item.Name}
 			},
 		},
 	}})
@@ -171,17 +171,17 @@ func benchmarkV2ForEach(b *testing.B, n int) {
 // BenchmarkV2ExecuteIf measures execute time with conditional.
 func BenchmarkV2ExecuteIf(b *testing.B) {
 	show := true
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
 		IfNode{
 			Cond: &show,
-			Then: VBox{Children: []any{
-				Text{Content: "Detail 1"},
-				Text{Content: "Detail 2"},
-				Text{Content: "Detail 3"},
+			Then: VBoxNode{Children: []any{
+				TextNode{Content: "Detail 1"},
+				TextNode{Content: "Detail 2"},
+				TextNode{Content: "Detail 3"},
 			}},
 		},
-		Text{Content: "Footer"},
+		TextNode{Content: "Footer"},
 	}})
 	buf := NewBuffer(80, 24)
 
@@ -211,22 +211,22 @@ func BenchmarkV2ExecuteComplex(b *testing.B) {
 	showCompleted := true
 	progress := 40
 
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: &title},
-		HBox{Gap: 2, Children: []any{
-			Text{Content: "Status:"},
-			Progress{Value: &progress, BarWidth: 20},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: &title},
+		HBoxNode{Gap: 2, Children: []any{
+			TextNode{Content: "Status:"},
+			ProgressNode{Value: &progress, BarWidth: 20},
 		}},
 		IfNode{
 			Cond: &showCompleted,
-			Then: Text{Content: "Showing all tasks"},
+			Then: TextNode{Content: "Showing all tasks"},
 		},
 		ForEachNode{
 			Items: &tasks,
 			Render: func(t *Task) any {
-				return HBox{Gap: 1, Children: []any{
-					Text{Content: &t.Name},
-					Text{Content: &t.Status},
+				return HBoxNode{Gap: 1, Children: []any{
+					TextNode{Content: &t.Name},
+					TextNode{Content: &t.Status},
 				}}
 			},
 		},
@@ -243,19 +243,19 @@ func BenchmarkV2ExecuteComplex(b *testing.B) {
 
 // BenchmarkV2WidthDistribution measures just the width phase.
 func BenchmarkV2WidthDistribution(b *testing.B) {
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
-		HBox{Children: []any{
-			VBox{Children: []any{
-				Text{Content: "Left 1"},
-				Text{Content: "Left 2"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				TextNode{Content: "Left 1"},
+				TextNode{Content: "Left 2"},
 			}},
-			VBox{Children: []any{
-				Text{Content: "Right 1"},
-				Text{Content: "Right 2"},
+			VBoxNode{Children: []any{
+				TextNode{Content: "Right 1"},
+				TextNode{Content: "Right 2"},
 			}},
 		}},
-		Text{Content: "Footer"},
+		TextNode{Content: "Footer"},
 	}})
 
 	b.ReportAllocs()
@@ -267,19 +267,19 @@ func BenchmarkV2WidthDistribution(b *testing.B) {
 
 // BenchmarkV2Layout measures just the layout phase.
 func BenchmarkV2Layout(b *testing.B) {
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
-		HBox{Children: []any{
-			VBox{Children: []any{
-				Text{Content: "Left 1"},
-				Text{Content: "Left 2"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				TextNode{Content: "Left 1"},
+				TextNode{Content: "Left 2"},
 			}},
-			VBox{Children: []any{
-				Text{Content: "Right 1"},
-				Text{Content: "Right 2"},
+			VBoxNode{Children: []any{
+				TextNode{Content: "Right 1"},
+				TextNode{Content: "Right 2"},
 			}},
 		}},
-		Text{Content: "Footer"},
+		TextNode{Content: "Footer"},
 	}})
 	tmpl.distributeWidths(80, nil) // Need widths first
 
@@ -292,19 +292,19 @@ func BenchmarkV2Layout(b *testing.B) {
 
 // BenchmarkV2Render measures just the render phase.
 func BenchmarkV2Render(b *testing.B) {
-	tmpl := Build(VBox{Children: []any{
-		Text{Content: "Header"},
-		HBox{Children: []any{
-			VBox{Children: []any{
-				Text{Content: "Left 1"},
-				Text{Content: "Left 2"},
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: "Header"},
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				TextNode{Content: "Left 1"},
+				TextNode{Content: "Left 2"},
 			}},
-			VBox{Children: []any{
-				Text{Content: "Right 1"},
-				Text{Content: "Right 2"},
+			VBoxNode{Children: []any{
+				TextNode{Content: "Right 1"},
+				TextNode{Content: "Right 2"},
 			}},
 		}},
-		Text{Content: "Footer"},
+		TextNode{Content: "Footer"},
 	}})
 	tmpl.distributeWidths(80, nil)
 	tmpl.layout(24)

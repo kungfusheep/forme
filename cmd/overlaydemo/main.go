@@ -5,85 +5,70 @@ import (
 	"log"
 
 	"riffkey"
-	"tui"
+	. "tui"
 )
 
 func main() {
-	// Modal state - pointer for reactivity
 	showModal := false
 	modalMessage := "This is a modal dialog!"
 
-	app, err := tui.NewApp()
+	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Build view once - modal visibility controlled by pointer
 	app.SetView(
-		tui.VBox{
-			Children: []any{
-				// Main content
-				tui.Text{Content: "Overlay Demo", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
-				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Spacer{Height: 1},
+		VBox(
+			Text("Overlay Demo").FG(Cyan).Bold(),
+			HRule().Style(Style{FG: BrightBlack}),
+			SpaceH(1),
 
-				tui.Text{Content: "This is the main application content."},
-				tui.Text{Content: "The modal will appear centered over this."},
-				tui.Spacer{Height: 1},
+			Text("This is the main application content."),
+			Text("The modal will appear centered over this."),
+			SpaceH(1),
 
-				tui.HBox{
-					Gap: 2,
-					Children: []any{
-						tui.VBox{Children: []any{
-							tui.Text{Content: "Panel 1", Style: tui.Style{FG: tui.Yellow, Attr: tui.AttrBold}},
-							tui.Text{Content: "Some content here"},
-							tui.Text{Content: "More content"},
-						}}.Border(tui.BorderSingle),
+			HBox.Gap(2)(
+				VBox.Border(BorderSingle)(
+					Text("Panel 1").FG(Yellow).Bold(),
+					Text("Some content here"),
+					Text("More content"),
+				),
 
-						tui.VBox{Children: []any{
-							tui.Text{Content: "Panel 2", Style: tui.Style{FG: tui.Green, Attr: tui.AttrBold}},
-							tui.Text{Content: "Different content"},
-							tui.Text{Content: "Even more content"},
-						}}.Border(tui.BorderSingle),
-					},
-				},
+				VBox.Border(BorderSingle)(
+					Text("Panel 2").FG(Green).Bold(),
+					Text("Different content"),
+					Text("Even more content"),
+				),
+			),
 
-				tui.Spacer{Height: 1},
-				tui.HRule{Style: tui.Style{FG: tui.BrightBlack}},
-				tui.Text{Content: "Press 'm' to toggle modal | 'q' to quit", Style: tui.Style{FG: tui.BrightBlack}},
+			SpaceH(1),
+			HRule().Style(Style{FG: BrightBlack}),
+			Text("Press 'm' to toggle modal | 'q' to quit").FG(BrightBlack),
 
-				// Modal overlay - controlled by tui.If
-				tui.If(&showModal).Eq(true).Then(tui.Overlay{
-					Backdrop: true,
-					Centered: true,
-					Child: tui.VBox{
-						Children: []any{
-							tui.Text{Content: "Modal Dialog  ", Style: tui.Style{FG: tui.Cyan, Attr: tui.AttrBold}},
-							tui.Spacer{Height: 1},
-							tui.Text{Content: &modalMessage, Style: tui.Style{FG: tui.White}},
-							tui.Spacer{Height: 1},
-							tui.Text{Content: "Press 'm' to close", Style: tui.Style{FG: tui.BrightBlack}},
-						},
-					}.Width(50).Border(tui.BorderRounded),
-				}),
-			},
-		},
+			// modal overlay
+			If(&showModal).Then(OverlayNode{
+				Backdrop: true,
+				Centered: true,
+				Child: VBox.Width(50).Border(BorderRounded).Style(&Style{BG: PaletteColor(236)})(
+					Text("Modal Dialog  ").FG(Cyan).Bold(),
+					SpaceH(1),
+					Text(&modalMessage).FG(White),
+					SpaceH(1),
+					Text("Press 'm' to close").FG(BrightBlack),
+				),
+			}),
+		),
 	)
 
-	// Toggle modal with 'm'
 	app.Handle("m", func(_ riffkey.Match) {
 		showModal = !showModal
 		if showModal {
 			modalMessage = fmt.Sprintf("Modal opened! Press 'm' to close.")
 		}
 	})
-
-	// Quit with 'q'
 	app.Handle("q", func(_ riffkey.Match) {
 		app.Stop()
 	})
-
-	// Also allow Escape to close modal or quit
 	app.Handle("<Escape>", func(_ riffkey.Match) {
 		if showModal {
 			showModal = false
