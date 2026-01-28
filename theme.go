@@ -1,8 +1,8 @@
 package forme
 
-// Theme provides a set of styles for consistent UI appearance.
-// Use InheritStyle on containers to apply theme styles to children.
-type Theme struct {
+// ThemeEx provides a set of styles for consistent UI appearance.
+// Use CascadeStyle on containers to apply theme styles to children.
+type ThemeEx struct {
 	Base   Style // default text style
 	Muted  Style // de-emphasized text
 	Accent Style // highlighted/important text
@@ -13,7 +13,7 @@ type Theme struct {
 // Pre-defined themes
 
 // ThemeDark is a dark theme with light text on dark background.
-var ThemeDark = Theme{
+var ThemeDark = ThemeEx{
 	Base:   Style{FG: White},
 	Muted:  Style{FG: BrightBlack},
 	Accent: Style{FG: BrightCyan},
@@ -22,7 +22,7 @@ var ThemeDark = Theme{
 }
 
 // ThemeLight is a light theme with dark text on light background.
-var ThemeLight = Theme{
+var ThemeLight = ThemeEx{
 	Base:   Style{FG: Black},
 	Muted:  Style{FG: BrightBlack},
 	Accent: Style{FG: Blue},
@@ -31,7 +31,7 @@ var ThemeLight = Theme{
 }
 
 // ThemeMonochrome is a minimal theme using only attributes.
-var ThemeMonochrome = Theme{
+var ThemeMonochrome = ThemeEx{
 	Base:   Style{},
 	Muted:  Style{Attr: AttrDim},
 	Accent: Style{Attr: AttrBold},

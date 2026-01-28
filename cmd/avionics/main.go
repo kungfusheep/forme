@@ -6,8 +6,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
+	"github.com/kungfusheep/riffkey"
 )
 
 // =============================================================================

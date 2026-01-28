@@ -104,7 +104,7 @@ func (b *Buffer) DrawPanel(x, y, w, h int, title string, style Style) *Region {
 	b.DrawBorder(x, y, w, h, BorderSingle, style)
 
 	if title != "" {
-		titleStr := "─ " + title + " "
+		titleStr := string(BorderSingle.Horizontal) + " " + title + " "
 		b.WriteString(x+1, y, titleStr, style)
 	}
 

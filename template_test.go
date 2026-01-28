@@ -2424,14 +2424,14 @@ func TestIfWithFixedWidthSidebar(t *testing.T) {
 	}
 }
 
-// TestStyleInheritance verifies that InheritStyle propagates to children.
+// TestStyleInheritance verifies that CascadeStyle propagates to children.
 func TestStyleInheritance(t *testing.T) {
 	baseStyle := Style{FG: Red, BG: Blue}
 	accentStyle := Style{FG: Green}
 
 	t.Run("children inherit parent style", func(t *testing.T) {
 		tmpl := Build(VBoxNode{
-			InheritStyle: &baseStyle,
+			CascadeStyle: &baseStyle,
 			Children: []any{
 				TextNode{Content: "Inherited"},
 				TextNode{Content: "Also inherited"},
@@ -2453,7 +2453,7 @@ func TestStyleInheritance(t *testing.T) {
 
 	t.Run("explicit style overrides inherited", func(t *testing.T) {
 		tmpl := Build(VBoxNode{
-			InheritStyle: &baseStyle,
+			CascadeStyle: &baseStyle,
 			Children: []any{
 				TextNode{Content: "Override", Style: accentStyle},
 			},
@@ -2472,11 +2472,11 @@ func TestStyleInheritance(t *testing.T) {
 		nestedStyle := Style{FG: Yellow}
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &baseStyle,
+			CascadeStyle: &baseStyle,
 			Children: []any{
 				TextNode{Content: "Uses base"},
 				VBoxNode{
-					InheritStyle: &nestedStyle,
+					CascadeStyle: &nestedStyle,
 					Children: []any{
 						TextNode{Content: "Uses nested"},
 					},
@@ -2511,7 +2511,7 @@ func TestStyleInheritance(t *testing.T) {
 		visible := true
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &baseStyle,
+			CascadeStyle: &baseStyle,
 			Children: []any{
 				If(&visible).Eq(true).Then(
 					TextNode{Content: "Conditional"},
@@ -2532,7 +2532,7 @@ func TestStyleInheritance(t *testing.T) {
 		theme := Style{FG: Cyan}
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &theme,
+			CascadeStyle: &theme,
 			Children: []any{
 				TextNode{Content: "Themed"},
 			},
@@ -2559,13 +2559,13 @@ func TestStyleInheritance(t *testing.T) {
 	})
 }
 
-// TestContainerFill verifies that containers fill their area when InheritStyle has Fill color.
+// TestContainerFill verifies that containers fill their area when CascadeStyle has Fill color.
 func TestContainerFill(t *testing.T) {
 	t.Run("container fills area with Fill color", func(t *testing.T) {
 		fillStyle := Style{Fill: Red}
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &fillStyle,
+			CascadeStyle: &fillStyle,
 			Children: []any{
 				TextNode{Content: "Hi"},
 			},
@@ -2593,11 +2593,11 @@ func TestContainerFill(t *testing.T) {
 		innerFill := Style{Fill: Green}
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &outerFill,
+			CascadeStyle: &outerFill,
 			Children: []any{
 				TextNode{Content: "Outer"},
 				HBoxNode{
-					InheritStyle: &innerFill,
+					CascadeStyle: &innerFill,
 					Children: []any{
 						TextNode{Content: "In"},
 					},
@@ -2621,7 +2621,7 @@ func TestContainerFill(t *testing.T) {
 		}
 	})
 
-	t.Run("fill does not affect containers without InheritStyle", func(t *testing.T) {
+	t.Run("fill does not affect containers without CascadeStyle", func(t *testing.T) {
 		buf := NewBuffer(10, 3)
 
 		tmpl := Build(VBoxNode{
@@ -2644,11 +2644,11 @@ func TestContainerFill(t *testing.T) {
 		nestedStyle := Style{FG: Yellow} // no Fill - should inherit parent's Fill
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &rootStyle,
+			CascadeStyle: &rootStyle,
 			Children: []any{
 				TextNode{Content: "Root"},
 				VBoxNode{
-					InheritStyle: &nestedStyle,
+					CascadeStyle: &nestedStyle,
 					Children: []any{
 						TextNode{Content: "Nested"},
 					},
@@ -2671,19 +2671,19 @@ func TestContainerFill(t *testing.T) {
 			t.Errorf("nested text: expected BG Blue (cascaded), got %v", nestedCell.Style.BG)
 		}
 
-		// But nested text should have Yellow FG (from its InheritStyle)
+		// But nested text should have Yellow FG (from its CascadeStyle)
 		if nestedCell.Style.FG != Yellow {
 			t.Errorf("nested text: expected FG Yellow, got %v", nestedCell.Style.FG)
 		}
 	})
 }
 
-// TestTextTransform verifies text transforms are applied via InheritStyle.
+// TestTextTransform verifies text transforms are applied via CascadeStyle.
 func TestTextTransform(t *testing.T) {
 	t.Run("uppercase transform", func(t *testing.T) {
 		style := Style{Transform: TransformUppercase}
 		tmpl := Build(VBoxNode{
-			InheritStyle: &style,
+			CascadeStyle: &style,
 			Children: []any{
 				TextNode{Content: "hello world"},
 			},
@@ -2701,7 +2701,7 @@ func TestTextTransform(t *testing.T) {
 	t.Run("lowercase transform", func(t *testing.T) {
 		style := Style{Transform: TransformLowercase}
 		tmpl := Build(VBoxNode{
-			InheritStyle: &style,
+			CascadeStyle: &style,
 			Children: []any{
 				TextNode{Content: "HELLO WORLD"},
 			},
@@ -2719,7 +2719,7 @@ func TestTextTransform(t *testing.T) {
 	t.Run("transform cascades to children", func(t *testing.T) {
 		style := Style{Transform: TransformUppercase}
 		tmpl := Build(VBoxNode{
-			InheritStyle: &style,
+			CascadeStyle: &style,
 			Children: []any{
 				TextNode{Content: "parent"},
 				VBoxNode{
@@ -2744,14 +2744,14 @@ func TestTextTransform(t *testing.T) {
 	})
 }
 
-// TestAttrInheritance verifies attributes cascade via InheritStyle.
+// TestAttrInheritance verifies attributes cascade via CascadeStyle.
 func TestAttrInheritance(t *testing.T) {
 	t.Run("attr merges with child style", func(t *testing.T) {
 		parentStyle := Style{Attr: AttrBold}
 		childStyle := Style{FG: Red} // has FG but not Attr
 
 		tmpl := Build(VBoxNode{
-			InheritStyle: &parentStyle,
+			CascadeStyle: &parentStyle,
 			Children: []any{
 				TextNode{Content: "X", Style: childStyle},
 			},
@@ -2830,9 +2830,9 @@ func TestFunctionalAPI_HBoxWithGap(t *testing.T) {
 }
 
 func TestFunctionalAPI_VBoxWithStyle(t *testing.T) {
-	// Test VBox.Style() for inheritance
+	// Test VBox.CascadeStyle() for inheritance
 	style := Style{FG: Red}
-	tmpl := Build(VBox.Style(&style)(
+	tmpl := Build(VBox.CascadeStyle(&style)(
 		Text("Red text"),
 	))
 
@@ -2991,7 +2991,7 @@ func TestFunctionalAPI_VBoxWithBorder(t *testing.T) {
 func TestFunctionalAPI_ChainedMethods(t *testing.T) {
 	// Test chaining multiple modifiers
 	style := Style{FG: Blue}
-	tmpl := Build(VBox.Style(&style).Gap(1).Border(BorderSingle)(
+	tmpl := Build(VBox.CascadeStyle(&style).Gap(1).Border(BorderSingle)(
 		Text("Line 1"),
 		Text("Line 2"),
 	))

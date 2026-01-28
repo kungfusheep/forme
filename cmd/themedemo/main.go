@@ -4,21 +4,21 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
+	"github.com/kungfusheep/riffkey"
 )
 
 func main() {
 	// Available themes with background fill colors
 	themes := []struct {
 		name  string
-		theme Theme
+		theme ThemeEx
 		fill  Color // background fill for the whole app
 	}{
 		{"Dark", ThemeDark, Hex(0x1E1E2E)},              // dark purple-gray
 		{"Light", ThemeLight, Hex(0xF5F5DC)},            // beige
 		{"Monochrome", ThemeMonochrome, DefaultColor()}, // terminal default
-		{"Custom", Theme{
+		{"Custom", ThemeEx{
 			Base:   Style{FG: Hex(0xE0E0E0)},
 			Muted:  Style{FG: Hex(0x808080)},
 			Accent: Style{FG: Hex(0x00BFFF), Attr: AttrBold},
@@ -40,8 +40,8 @@ func main() {
 
 	// Build the UI using the functional API
 	app.SetView(
-		// VBox.Style() at the root propagates to all children (including Fill)
-		VBox.Style(&rootStyle)(
+		// VBox.CascadeStyle() at the root propagates to all children (including Fill)
+		VBox.CascadeStyle(&rootStyle)(
 			// Header
 			HBox.Border(BorderRounded).BorderFG(currentTheme.Border.FG)(
 				Text(" Theme Demo "),
@@ -67,8 +67,8 @@ func main() {
 			SpaceH(1),
 
 			// Nested container with different inherited style
-			VBox.Style(&currentTheme.Muted)(
-				Text("This section uses Muted style (nested InheritStyle)"),
+			VBox.CascadeStyle(&currentTheme.Muted)(
+				Text("This section uses Muted style (nested CascadeStyle)"),
 				Text("All children in here are muted too."),
 				HBox(
 					Text("Even "),
@@ -92,7 +92,7 @@ func main() {
 			SpaceH(1),
 
 			// Another section
-			VBox.Style(&currentTheme.Accent)(
+			VBox.CascadeStyle(&currentTheme.Accent)(
 				Text("This entire section uses Accent style"),
 				Text("Great for highlighting important content"),
 			),
@@ -106,17 +106,17 @@ func main() {
 			SpaceH(1),
 
 			HBox.Gap(2)(
-				VBox.Style(&Style{FG: White, Fill: Blue}).Size(12, 3)(
+				VBox.CascadeStyle(&Style{FG: White, Fill: Blue}).Size(12, 3)(
 					Text(" Blue Fill "),
 					Text(" Panel    "),
 				),
 
-				VBox.Style(&Style{FG: Black, Fill: Yellow}).Size(12, 3)(
+				VBox.CascadeStyle(&Style{FG: Black, Fill: Yellow}).Size(12, 3)(
 					Text(" Yellow   "),
 					Text(" Fill     "),
 				),
 
-				VBox.Style(&Style{FG: White, Fill: Red}).Size(12, 3)(
+				VBox.CascadeStyle(&Style{FG: White, Fill: Red}).Size(12, 3)(
 					Text(" Red Fill "),
 					Text(" Warning  "),
 				),
@@ -131,17 +131,17 @@ func main() {
 			SpaceH(1),
 
 			HBox.Gap(2)(
-				VBox.Style(&Style{FG: Cyan, Transform: TransformUppercase})(
+				VBox.CascadeStyle(&Style{FG: Cyan, Transform: TransformUppercase})(
 					Text("uppercase section"),
 					Text("all text here"),
 					Text("is capitalized"),
 				),
-				VBox.Style(&Style{FG: Magenta, Attr: AttrItalic})(
+				VBox.CascadeStyle(&Style{FG: Magenta, Attr: AttrItalic})(
 					Text("Italic Section"),
 					Text("All text here"),
 					Text("is italicized"),
 				),
-				VBox.Style(&Style{FG: Yellow, Attr: AttrBold | AttrUnderline})(
+				VBox.CascadeStyle(&Style{FG: Yellow, Attr: AttrBold | AttrUnderline})(
 					Text("Bold+Underline"),
 					Text("Combined attrs"),
 					Text("also inherit"),

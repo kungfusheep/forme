@@ -30,7 +30,8 @@ VBox.WidthPct(0.5)(...)            // 50% of parent width
 VBox.Grow(1)(...)                  // Flex grow factor
 VBox.Title("Panel")(...)           // Border title
 VBox.BorderFG(Cyan)(...)           // Border color
-VBox.Style(&Style{BG: Black})(...) // Background style
+VBox.Fill(Black)(...)              // Fill container area
+VBox.InheritStyle(&style)(...)     // Style inheritance for children
 ```
 
 Chain multiple:

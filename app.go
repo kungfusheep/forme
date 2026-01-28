@@ -354,14 +354,36 @@ func (a *App) Input() *riffkey.Input {
 
 // Handle registers a key binding with a vim-style pattern.
 // Examples: "j", "gg", "<C-c>", "<C-w>j", "<Up>"
-func (a *App) Handle(pattern string, handler func(riffkey.Match)) *App {
-	a.router.Handle(pattern, handler)
+// Accepts func(riffkey.Match), func(any), or func() for convenience.
+// Automatically requests a re-render after the handler runs.
+func (a *App) Handle(pattern string, handler any) *App {
+	switch h := handler.(type) {
+	case func(riffkey.Match):
+		a.router.Handle(pattern, func(m riffkey.Match) { h(m); a.RequestRender() })
+	case func(any):
+		a.router.Handle(pattern, func(_ riffkey.Match) { h(nil); a.RequestRender() })
+	case func():
+		a.router.Handle(pattern, func(_ riffkey.Match) { h(); a.RequestRender() })
+	}
 	return a
 }
 
 // HandleNamed registers a named key binding (for rebinding support).
+// Automatically requests a re-render after the handler runs.
 func (a *App) HandleNamed(name, pattern string, handler func(riffkey.Match)) *App {
-	a.router.HandleNamed(name, pattern, handler)
+	a.router.HandleNamed(name, pattern, func(m riffkey.Match) { handler(m); a.RequestRender() })
+	return a
+}
+
+// BindField routes unmatched keys to a text input field.
+func (a *App) BindField(f *Field) *App {
+	a.router.TextInput(&f.Value, &f.Cursor)
+	return a
+}
+
+// UnbindField clears the text input field binding.
+func (a *App) UnbindField() *App {
+	a.router.HandleUnmatched(nil)
 	return a
 }
 

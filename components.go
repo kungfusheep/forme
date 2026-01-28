@@ -1,12 +1,15 @@
 package forme
 
+import "reflect"
+
 // ============================================================================
 // Functional Component API
 // ============================================================================
 //
 // Container components (VBox, HBox) use a function-type-with-methods pattern:
 //   VBox(children...)                    - simple usage
-//   VBox.Style(&s).Gap(2)(children...)   - with configuration
+//   VBox.Fill(c).Gap(2)(children...)     - with fill color
+//   VBox.CascadeStyle(&s)(children...)   - with style inheritance
 //
 // Leaf components (Text, Spacer, etc.) use simple functions with method chaining:
 //   Text("hello")                        - simple usage
@@ -14,12 +17,29 @@ package forme
 //
 // ============================================================================
 
+// Define creates a scoped block for local component helpers and styles.
+// The function runs once at compile time (when SetView is called).
+// Pointers inside still provide dynamic values at render time.
+//
+//	app.SetView(
+//	    Define(func() any {
+//	        dot := func(ok *bool) any {
+//	            return If(ok).Then(Text("●")).Else(Text("○"))
+//	        }
+//	        return VBox(dot(&a), dot(&b), dot(&c))
+//	    }),
+//	)
+func Define(fn func() any) any {
+	return fn()
+}
+
 // ============================================================================
 // VBox - Vertical container
 // ============================================================================
 
 type VBoxC struct {
-	style        *Style
+	fill         Color
+	inheritStyle *Style
 	gap          int8
 	border       BorderStyle
 	borderFG     *Color
@@ -29,15 +49,24 @@ type VBoxC struct {
 	height       int16
 	percentWidth float32
 	flexGrow     float32
+	fitContent   bool
 	children     []any
 }
 
 type VBoxFn func(children ...any) VBoxC
 
-func (f VBoxFn) Style(s *Style) VBoxFn {
+func (f VBoxFn) Fill(c Color) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
-		v.style = s
+		v.fill = c
+		return v
+	}
+}
+
+func (f VBoxFn) CascadeStyle(s *Style) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.inheritStyle = s
 		return v
 	}
 }
@@ -123,6 +152,14 @@ func (f VBoxFn) Grow(g float32) VBoxFn {
 	}
 }
 
+func (f VBoxFn) FitContent() VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.fitContent = true
+		return v
+	}
+}
+
 // VBox is the vertical container constructor
 var VBox VBoxFn = func(children ...any) VBoxC {
 	return VBoxC{children: children}
@@ -133,7 +170,8 @@ var VBox VBoxFn = func(children ...any) VBoxC {
 // ============================================================================
 
 type HBoxC struct {
-	style        *Style
+	fill         Color
+	inheritStyle *Style
 	gap          int8
 	border       BorderStyle
 	borderFG     *Color
@@ -143,15 +181,24 @@ type HBoxC struct {
 	height       int16
 	percentWidth float32
 	flexGrow     float32
+	fitContent   bool
 	children     []any
 }
 
 type HBoxFn func(children ...any) HBoxC
 
-func (f HBoxFn) Style(s *Style) HBoxFn {
+func (f HBoxFn) Fill(c Color) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
-		h.style = s
+		h.fill = c
+		return h
+	}
+}
+
+func (f HBoxFn) CascadeStyle(s *Style) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.inheritStyle = s
 		return h
 	}
 }
@@ -233,6 +280,14 @@ func (f HBoxFn) Grow(g float32) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
 		h.flexGrow = g
+		return h
+	}
+}
+
+func (f HBoxFn) FitContent() HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.fitContent = true
 		return h
 	}
 }
@@ -700,6 +755,7 @@ func (f ForEachC[T]) compileTo(t *Template, parent int16, depth int) int16 {
 type ListC[T any] struct {
 	items         *[]T
 	selected      *int
+	internalSel   int  // used when no external selection provided
 	render        func(*T) any
 	marker        string
 	markerStyle   Style
@@ -709,13 +765,58 @@ type ListC[T any] struct {
 	cached        *SelectionList // cached instance for consistent reference
 }
 
-// List creates a selectable list with the given items and selection pointer.
+// List creates a selectable list with internal selection management.
 // Use .Render() to provide custom item rendering.
-func List[T any](items *[]T, selected *int) *ListC[T] {
-	return &ListC[T]{
-		items:    items,
-		selected: selected,
-		marker:   "> ",
+func List[T any](items *[]T) *ListC[T] {
+	l := &ListC[T]{
+		items:  items,
+		marker: "> ",
+	}
+	l.selected = &l.internalSel
+	return l
+}
+
+// Ref stores a reference to this list in the provided pointer.
+func (l *ListC[T]) Ref(ref **ListC[T]) *ListC[T] {
+	*ref = l
+	return l
+}
+
+// Selection binds the selection index to an external pointer.
+func (l *ListC[T]) Selection(sel *int) *ListC[T] {
+	l.selected = sel
+	return l
+}
+
+// Selected returns a pointer to the currently selected item, or nil if empty.
+func (l *ListC[T]) Selected() *T {
+	if l.items == nil || len(*l.items) == 0 {
+		return nil
+	}
+	idx := *l.selected
+	if idx < 0 || idx >= len(*l.items) {
+		return nil
+	}
+	return &(*l.items)[idx]
+}
+
+// Index returns the current selection index.
+func (l *ListC[T]) Index() int {
+	return *l.selected
+}
+
+// Delete removes the currently selected item.
+func (l *ListC[T]) Delete() {
+	if l.items == nil || len(*l.items) == 0 {
+		return
+	}
+	idx := *l.selected
+	if idx < 0 || idx >= len(*l.items) {
+		return
+	}
+	*l.items = append((*l.items)[:idx], (*l.items)[idx+1:]...)
+	if *l.selected >= len(*l.items) && *l.selected > 0 {
+		*l.selected--
 	}
 }
 
@@ -790,6 +891,19 @@ func (l *ListC[T]) First(m any) { l.toSelectionList().First(m) }
 
 // Last moves selection to last item.
 func (l *ListC[T]) Last(m any) { l.toSelectionList().Last(m) }
+
+// BindNav registers navigation keys on the app.
+func (l *ListC[T]) BindNav(app *App, down, up string) *ListC[T] {
+	app.Handle(down, l.Down)
+	app.Handle(up, l.Up)
+	return l
+}
+
+// BindDelete binds a key to delete the selected item.
+func (l *ListC[T]) BindDelete(app *App, key string) *ListC[T] {
+	app.Handle(key, l.Delete)
+	return l
+}
 
 // ============================================================================
 // Tabs - Tab headers
@@ -947,4 +1061,454 @@ func (t AutoTableC) Gap(g int8) AutoTableC {
 func (t AutoTableC) Border(b BorderStyle) AutoTableC {
 	t.border = b
 	return t
+}
+
+// ============================================================================
+// Form Components - Checkbox, Radio, CheckList, Input
+// ============================================================================
+
+// CheckboxC is a toggleable checkbox bound to a *bool.
+type CheckboxC struct {
+	checked     *bool
+	label       string
+	labelPtr    *string
+	checkedMark string
+	unchecked   string
+	style       Style
+	app         *App
+}
+
+// Checkbox creates a checkbox bound to a bool pointer.
+func Checkbox(checked *bool, label string) *CheckboxC {
+	return &CheckboxC{
+		checked:     checked,
+		label:       label,
+		checkedMark: "☑",
+		unchecked:   "☐",
+	}
+}
+
+// CheckboxPtr creates a checkbox with a dynamic label.
+func CheckboxPtr(checked *bool, label *string) *CheckboxC {
+	return &CheckboxC{
+		checked:     checked,
+		labelPtr:    label,
+		checkedMark: "☑",
+		unchecked:   "☐",
+	}
+}
+
+func (c *CheckboxC) Marks(checked, unchecked string) *CheckboxC {
+	c.checkedMark = checked
+	c.unchecked = unchecked
+	return c
+}
+
+func (c *CheckboxC) Style(s Style) *CheckboxC {
+	c.style = s
+	return c
+}
+
+// BindToggle registers a key to toggle this checkbox.
+func (c *CheckboxC) BindToggle(app *App, key string) *CheckboxC {
+	c.app = app
+	app.Handle(key, func() {
+		*c.checked = !*c.checked
+	})
+	return c
+}
+
+// Toggle flips the checked state.
+func (c *CheckboxC) Toggle() {
+	*c.checked = !*c.checked
+}
+
+// Checked returns the current state.
+func (c *CheckboxC) Checked() bool {
+	return *c.checked
+}
+
+// RadioC is a single-selection group bound to *int (selected index).
+type RadioC struct {
+	selected    *int
+	options     []string
+	optionsPtr  *[]string
+	selectedMark string
+	unselected  string
+	style       Style
+	gap         int8
+	horizontal  bool
+	app         *App
+}
+
+// Radio creates a radio group with static options.
+func Radio(selected *int, options ...string) *RadioC {
+	return &RadioC{
+		selected:     selected,
+		options:      options,
+		selectedMark: "◉",
+		unselected:   "○",
+	}
+}
+
+// RadioPtr creates a radio group with dynamic options.
+func RadioPtr(selected *int, options *[]string) *RadioC {
+	return &RadioC{
+		selected:     selected,
+		optionsPtr:   options,
+		selectedMark: "◉",
+		unselected:   "○",
+	}
+}
+
+func (r *RadioC) Marks(selected, unselected string) *RadioC {
+	r.selectedMark = selected
+	r.unselected = unselected
+	return r
+}
+
+func (r *RadioC) Style(s Style) *RadioC {
+	r.style = s
+	return r
+}
+
+func (r *RadioC) Gap(g int8) *RadioC {
+	r.gap = g
+	return r
+}
+
+func (r *RadioC) Horizontal() *RadioC {
+	r.horizontal = true
+	return r
+}
+
+// BindNav registers navigation keys for this radio group.
+func (r *RadioC) BindNav(app *App, next, prev string) *RadioC {
+	r.app = app
+	app.Handle(next, func() { r.Next() })
+	app.Handle(prev, func() { r.Prev() })
+	return r
+}
+
+// Next moves selection to next option.
+func (r *RadioC) Next() {
+	opts := r.getOptions()
+	if *r.selected < len(opts)-1 {
+		*r.selected++
+	}
+}
+
+// Prev moves selection to previous option.
+func (r *RadioC) Prev() {
+	if *r.selected > 0 {
+		*r.selected--
+	}
+}
+
+// Selected returns the currently selected option text.
+func (r *RadioC) Selected() string {
+	opts := r.getOptions()
+	if *r.selected >= 0 && *r.selected < len(opts) {
+		return opts[*r.selected]
+	}
+	return ""
+}
+
+// Index returns the selected index.
+func (r *RadioC) Index() int {
+	return *r.selected
+}
+
+func (r *RadioC) getOptions() []string {
+	if r.optionsPtr != nil {
+		return *r.optionsPtr
+	}
+	return r.options
+}
+
+// CheckListC is a list with per-item checkboxes, similar to todo lists.
+type CheckListC[T any] struct {
+	items         *[]T
+	checked       func(*T) *bool
+	render        func(*T) any
+	selected      *int
+	internalSel   int
+	checkedMark   string
+	uncheckedMark string
+	marker        string
+	markerStyle   Style
+	style         Style
+	selectedStyle Style
+	gap           int8
+	app           *App
+	cached        *SelectionList
+}
+
+// CheckList creates a list where each item has a checkbox.
+func CheckList[T any](items *[]T) *CheckListC[T] {
+	c := &CheckListC[T]{
+		items:         items,
+		checkedMark:   "☑",
+		uncheckedMark: "☐",
+		marker:        "> ",
+	}
+	c.selected = &c.internalSel
+	return c
+}
+
+// Checked sets the function to get the checked state for each item.
+func (c *CheckListC[T]) Checked(fn func(*T) *bool) *CheckListC[T] {
+	c.checked = fn
+	return c
+}
+
+// Render sets a custom render function for item content (after the checkbox).
+func (c *CheckListC[T]) Render(fn func(*T) any) *CheckListC[T] {
+	c.render = fn
+	return c
+}
+
+// Marks sets the checkbox characters.
+func (c *CheckListC[T]) Marks(checked, unchecked string) *CheckListC[T] {
+	c.checkedMark = checked
+	c.uncheckedMark = unchecked
+	return c
+}
+
+// Marker sets the selection indicator.
+func (c *CheckListC[T]) Marker(m string) *CheckListC[T] {
+	c.marker = m
+	return c
+}
+
+func (c *CheckListC[T]) MarkerStyle(s Style) *CheckListC[T] {
+	c.markerStyle = s
+	return c
+}
+
+func (c *CheckListC[T]) Style(s Style) *CheckListC[T] {
+	c.style = s
+	return c
+}
+
+func (c *CheckListC[T]) SelectedStyle(s Style) *CheckListC[T] {
+	c.selectedStyle = s
+	return c
+}
+
+func (c *CheckListC[T]) Gap(g int8) *CheckListC[T] {
+	c.gap = g
+	return c
+}
+
+// BindNav registers navigation keys.
+func (c *CheckListC[T]) BindNav(app *App, down, up string) *CheckListC[T] {
+	c.app = app
+	app.Handle(down, c.Down)
+	app.Handle(up, c.Up)
+	return c
+}
+
+// BindToggle registers a key to toggle the checkbox of the selected item.
+func (c *CheckListC[T]) BindToggle(app *App, key string) *CheckListC[T] {
+	c.app = app
+	app.Handle(key, func() {
+		if c.checked != nil {
+			if item := c.SelectedItem(); item != nil {
+				ptr := c.checked(item)
+				*ptr = !*ptr
+			}
+		}
+	})
+	return c
+}
+
+// BindDelete binds a key to delete the selected item.
+func (c *CheckListC[T]) BindDelete(app *App, key string) *CheckListC[T] {
+	app.Handle(key, c.Delete)
+	return c
+}
+
+// Ref stores a reference to this list.
+func (c *CheckListC[T]) Ref(ref **CheckListC[T]) *CheckListC[T] {
+	*ref = c
+	return c
+}
+
+// SelectedItem returns a pointer to the currently selected item.
+func (c *CheckListC[T]) SelectedItem() *T {
+	if c.items == nil || len(*c.items) == 0 {
+		return nil
+	}
+	idx := *c.selected
+	if idx < 0 || idx >= len(*c.items) {
+		return nil
+	}
+	return &(*c.items)[idx]
+}
+
+// Index returns the current selection index.
+func (c *CheckListC[T]) Index() int {
+	return *c.selected
+}
+
+// Delete removes the currently selected item.
+func (c *CheckListC[T]) Delete() {
+	if c.items == nil || len(*c.items) == 0 {
+		return
+	}
+	idx := *c.selected
+	if idx < 0 || idx >= len(*c.items) {
+		return
+	}
+	*c.items = append((*c.items)[:idx], (*c.items)[idx+1:]...)
+	if *c.selected >= len(*c.items) && *c.selected > 0 {
+		*c.selected--
+	}
+}
+
+func (c *CheckListC[T]) Up(m any)   { c.toSelectionList().Up(m) }
+func (c *CheckListC[T]) Down(m any) { c.toSelectionList().Down(m) }
+
+func (c *CheckListC[T]) toSelectionList() *SelectionList {
+	if c.cached == nil {
+		// Start with explicit functions (may be nil)
+		checkedFn := c.checked
+		renderFn := c.render
+
+		// Infer from struct tags if not explicitly set
+		if checkedFn == nil || renderFn == nil {
+			var sample T
+			t := reflect.TypeOf(sample)
+			if t.Kind() == reflect.Struct {
+				for i := 0; i < t.NumField(); i++ {
+					field := t.Field(i)
+					tag := field.Tag.Get("forme")
+
+					if tag == "checked" && field.Type.Kind() == reflect.Bool && checkedFn == nil {
+						idx := i
+						checkedFn = func(item *T) *bool {
+							v := reflect.ValueOf(item).Elem().Field(idx)
+							return v.Addr().Interface().(*bool)
+						}
+					}
+
+					if tag == "render" && field.Type.Kind() == reflect.String && renderFn == nil {
+						idx := i
+						renderFn = func(item *T) any {
+							v := reflect.ValueOf(item).Elem().Field(idx)
+							return Text(v.Addr().Interface().(*string))
+						}
+					}
+				}
+			}
+		}
+
+		// Store inferred functions so BindToggle etc. can use them
+		c.checked = checkedFn
+		c.render = renderFn
+
+		c.cached = &SelectionList{
+			Items:         c.items,
+			Selected:      c.selected,
+			Marker:        c.marker,
+			MarkerStyle:   c.markerStyle,
+			Style:         c.style,
+			SelectedStyle: c.selectedStyle,
+		}
+
+		// Build the render function with checkbox marks
+		if checkedFn != nil && renderFn != nil {
+			checkedMark := c.checkedMark
+			uncheckedMark := c.uncheckedMark
+			c.cached.Render = func(item *T) any {
+				mark := If(checkedFn(item)).Then(Text(checkedMark)).Else(Text(uncheckedMark))
+				return HBox.Gap(1)(mark, renderFn(item))
+			}
+		} else if checkedFn != nil {
+			checkedMark := c.checkedMark
+			uncheckedMark := c.uncheckedMark
+			c.cached.Render = func(item *T) any {
+				return If(checkedFn(item)).Then(Text(checkedMark)).Else(Text(uncheckedMark))
+			}
+		}
+	}
+	return c.cached
+}
+
+// InputC is a text input with internal state management.
+type InputC struct {
+	field       Field
+	placeholder string
+	width       int
+	mask        rune
+	style       Style
+	app         *App
+}
+
+// Input creates a text input with internal state.
+func Input() *InputC {
+	return &InputC{}
+}
+
+// Placeholder sets the placeholder text.
+func (i *InputC) Placeholder(p string) *InputC {
+	i.placeholder = p
+	return i
+}
+
+// Width sets the input width.
+func (i *InputC) Width(w int) *InputC {
+	i.width = w
+	return i
+}
+
+// Mask sets a password mask character.
+func (i *InputC) Mask(m rune) *InputC {
+	i.mask = m
+	return i
+}
+
+func (i *InputC) Style(s Style) *InputC {
+	i.style = s
+	return i
+}
+
+// BindTo routes unmatched keys to this input.
+func (i *InputC) BindTo(app *App) *InputC {
+	i.app = app
+	app.router.TextInput(&i.field.Value, &i.field.Cursor)
+	return i
+}
+
+// Value returns the current text value.
+func (i *InputC) Value() string {
+	return i.field.Value
+}
+
+// SetValue sets the text value.
+func (i *InputC) SetValue(v string) {
+	i.field.Value = v
+	i.field.Cursor = len(v)
+}
+
+// Clear resets the input.
+func (i *InputC) Clear() {
+	i.field.Clear()
+}
+
+// Field returns a pointer to the internal field (for TextInput compatibility).
+func (i *InputC) Field() *Field {
+	return &i.field
+}
+
+// toTextInput converts to the underlying TextInput for rendering.
+func (i *InputC) toTextInput() TextInput {
+	return TextInput{
+		Field:       &i.field,
+		Placeholder: i.placeholder,
+		Width:       i.width,
+		Mask:        i.mask,
+		Style:       i.style,
+	}
 }

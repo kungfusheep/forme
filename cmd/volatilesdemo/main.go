@@ -190,7 +190,7 @@ func main() {
 	)
 
 	// Header row
-	header := HBox.Style(&Style{BG: headerBG, FG: Cyan, Attr: AttrBold})(
+	header := HBox.CascadeStyle(&Style{BG: headerBG, FG: Cyan, Attr: AttrBold})(
 		Text("Symbol").Width(colSymbol),
 		Text("Price").Width(colPrice),
 		Text("Chg").Width(colChange),
@@ -268,7 +268,7 @@ func main() {
 			},
 		)
 
-		return HBox.Style(&Style{BG: bg})(
+		return HBox.CascadeStyle(&Style{BG: bg})(
 			Text(&m.Symbol).Width(colSymbol).FG(White).Bold(),
 			Text(&m.Price).Width(colPrice).FG(BrightWhite),
 			Text(&m.Change).Width(colChange).FG(changeColor),

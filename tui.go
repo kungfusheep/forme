@@ -471,7 +471,7 @@ type HBoxNode struct {
 	Children     []any
 	Title        string // title for bordered containers
 	Gap          int8
-	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
+	CascadeStyle *Style // style inherited by children (pointer for dynamic themes)
 
 	// Set via chainable methods
 	border   BorderStyle
@@ -485,7 +485,7 @@ type VBoxNode struct {
 	Children     []any
 	Title        string // title for bordered containers
 	Gap          int8
-	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
+	CascadeStyle *Style // style inherited by children (pointer for dynamic themes)
 
 	// Set via chainable methods
 	border   BorderStyle
@@ -499,6 +499,7 @@ type flex struct {
 	width        int16
 	height       int16
 	flexGrow     float32
+	fitContent   bool
 }
 
 // Chainable layout methods for HBox
@@ -742,6 +743,12 @@ func BG(text string, color Color) Span {
 type Field struct {
 	Value  string
 	Cursor int
+}
+
+// Clear resets the field value and cursor.
+func (f *Field) Clear() {
+	f.Value = ""
+	f.Cursor = 0
 }
 
 // FocusGroup tracks which field in a group is focused.

@@ -46,7 +46,7 @@ func main() {
 		{"Eve", 32, "Sydney", "Australia"},
 	}
 
-	app.SetView(VBox.Gap(2).Style(ThemeLight.Accent)(
+	app.SetView(VBox.Gap(2)(
 		Text("AutoTable Demo").FG(Cyan).Bold(),
 		HRule().Style(Style{FG: PaletteColor(238)}),
 

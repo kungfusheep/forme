@@ -40,6 +40,7 @@ type listCompiler interface {
 	toSelectionList() *SelectionList
 }
 
+
 // LayoutFunc positions children given their sizes and available space.
 type LayoutFunc func(children []ChildSize, availW, availH int) []Rect
 
@@ -128,6 +129,7 @@ type Op struct {
 	FlexGrow     float32 // share of remaining space
 	Gap          int8    // gap between children
 	ContentSized bool    // has fixed-width children (don't implicit flex)
+	FitContent   bool    // size to content instead of filling available space
 
 	// Container
 	IsRow           bool        // true=HBox, false=VBox
@@ -137,7 +139,8 @@ type Op struct {
 	Title           string      // border title
 	ChildStart      int16       // first child op index
 	ChildEnd        int16       // last child op index (exclusive)
-	InheritStyle *Style // style inherited by children (pointer for dynamic themes)
+	CascadeStyle *Style // style inherited by children (pointer for dynamic themes)
+	Fill         Color  // container fill color (fills entire area)
 
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
@@ -179,11 +182,13 @@ type Op struct {
 	MarkerWidth      int16          // cached rune count of marker
 
 	// Leader
-	LeaderLabel    string  // static label
-	LeaderValue    string  // static value (OpLeader)
-	LeaderValuePtr *string // pointer value (OpLeaderPtr)
-	LeaderFill     rune    // fill character (default '.')
-	LeaderStyle    Style   // styling
+	LeaderLabel     string   // static label
+	LeaderValue     string   // static value (OpLeader)
+	LeaderValuePtr  *string  // pointer value (OpLeaderPtr)
+	LeaderIntPtr    *int     // pointer to int (OpLeaderIntPtr)
+	LeaderFloatPtr  *float64 // pointer to float64 (OpLeaderFloatPtr)
+	LeaderFill      rune     // fill character (default '.')
+	LeaderStyle     Style    // styling
 
 	// Table
 	TableColumns    []TableColumn  // column definitions
@@ -290,8 +295,10 @@ const (
 
 	OpSelectionList // SelectionList with marker and windowing
 
-	OpLeader    // Leader with static label and value
-	OpLeaderPtr // Leader with pointer value
+	OpLeader         // Leader with static label and value
+	OpLeaderPtr      // Leader with pointer value
+	OpLeaderIntPtr   // Leader with int pointer value
+	OpLeaderFloatPtr // Leader with float64 pointer value
 
 	OpTable // Table with columns and rows
 
@@ -369,9 +376,9 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case ProgressNode:
 		return t.compileProgress(v, parent, depth, elemBase, elemSize)
 	case HBoxNode:
-		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, v.InheritStyle, parent, depth, elemBase, elemSize)
+		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, parent, depth, elemBase, elemSize)
 	case VBoxNode:
-		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, v.InheritStyle, parent, depth, elemBase, elemSize)
+		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, parent, depth, elemBase, elemSize)
 	case IfNode:
 		return t.compileIf(v, parent, depth, elemBase, elemSize)
 	case ForEachNode:
@@ -452,6 +459,12 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileScrollbarC(v, parent, depth)
 	case AutoTableC:
 		return t.compileAutoTableC(v, parent, depth)
+	case *CheckboxC:
+		return t.compileCheckboxC(v, parent, depth, elemBase)
+	case *RadioC:
+		return t.compileRadioC(v, parent, depth)
+	case *InputC:
+		return t.compileInputC(v, parent, depth)
 	case Custom:
 		return t.compileCustom(v, parent, depth)
 	}
@@ -461,7 +474,8 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return fe.compileTo(t, parent, depth)
 	}
 
-	// Check for ListC[T] via interface
+	// Check for ListC[T] or CheckListC[T] via interface
+	// Both implement toSelectionList() which sets up their render functions appropriately
 	if lc, ok := node.(listCompiler); ok {
 		return t.compileSelectionList(lc.toSelectionList(), parent, depth, elemBase, elemSize)
 	}
@@ -1014,7 +1028,7 @@ func (t *Template) compileProgress(v ProgressNode, parent int16, depth int, elem
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, inheritStyle *Style, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, fill Color, inheritStyle *Style, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Kind:            OpContainer,
 		Parent:          parent,
@@ -1024,11 +1038,13 @@ func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex
 		Width:           f.width,
 		Height:          f.height,
 		FlexGrow:        f.flexGrow,
+		FitContent:      f.fitContent,
 		Border:          border,
 		Title:           title,
 		BorderFG:        borderFG,
 		BorderBG:        borderBG,
-		InheritStyle: inheritStyle,
+		Fill:            fill,
+		CascadeStyle:    inheritStyle,
 	}
 
 	idx := t.addOp(op, depth)
@@ -1259,12 +1275,13 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 		v.children,
 		v.gap,
 		false, // isRow
-		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow},
+		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow, fitContent: v.fitContent},
 		v.border,
 		v.title,
 		v.borderFG,
 		v.borderBG,
-		v.style,
+		v.fill,
+		v.inheritStyle,
 		parent,
 		depth,
 		elemBase,
@@ -1277,12 +1294,13 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 		v.children,
 		v.gap,
 		true, // isRow
-		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow},
+		flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow, fitContent: v.fitContent},
 		v.border,
 		v.title,
 		v.borderFG,
 		v.borderBG,
-		v.style,
+		v.fill,
+		v.inheritStyle,
 		parent,
 		depth,
 		elemBase,
@@ -1366,8 +1384,9 @@ func (t *Template) compileProgressC(v ProgressC, parent int16, depth int, elemBa
 	}
 
 	op := Op{
-		Parent: parent,
-		Width:  width,
+		Parent:    parent,
+		Width:     width,
+		TextStyle: v.style, // reuse TextStyle for progress bar color
 	}
 
 	switch val := v.value.(type) {
@@ -1428,9 +1447,21 @@ func (t *Template) compileLeaderC(v LeaderC, parent int16, depth int) int16 {
 	case *string:
 		op.Kind = OpLeaderPtr
 		op.LeaderValuePtr = val
+	case *int:
+		op.Kind = OpLeaderIntPtr
+		op.LeaderIntPtr = val
+	case *float64:
+		op.Kind = OpLeaderFloatPtr
+		op.LeaderFloatPtr = val
+	case int:
+		op.Kind = OpLeader
+		op.LeaderValue = fmt.Sprintf("%d", val)
+	case float64:
+		op.Kind = OpLeader
+		op.LeaderValue = fmt.Sprintf("%.1f", val)
 	default:
 		op.Kind = OpLeader
-		op.LeaderValue = ""
+		op.LeaderValue = fmt.Sprintf("%v", val)
 	}
 
 	return t.addOp(op, depth)
@@ -1494,7 +1525,11 @@ func (t *Template) compileLayerViewC(v LayerViewC, parent int16, depth int) int1
 func (t *Template) compileOverlayC(v OverlayC, parent int16, depth int) int16 {
 	// Compile children into sub-template
 	var childTmpl *Template
-	if len(v.children) > 0 {
+	if len(v.children) == 1 {
+		// single child - use directly to preserve its width/height
+		childTmpl = Build(v.children[0])
+	} else if len(v.children) > 1 {
+		// multiple children - wrap in VBox
 		childTmpl = Build(VBoxNode{Children: v.children})
 	}
 
@@ -1672,6 +1707,49 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 	return t.compileVBoxC(vbox, parent, depth, nil, 0)
 }
 
+func (t *Template) compileCheckboxC(v *CheckboxC, parent int16, depth int, elemBase unsafe.Pointer) int16 {
+	// Checkbox is: [mark] [label]
+	// The mark is conditional based on checked state
+	var labelNode any
+	if v.labelPtr != nil {
+		labelNode = Text(v.labelPtr)
+	} else {
+		labelNode = Text(v.label)
+	}
+
+	// Use If for the checkbox mark
+	mark := If(v.checked).Then(Text(v.checkedMark)).Else(Text(v.unchecked))
+
+	return t.compileHBoxC(HBox.Gap(1)(mark, labelNode), parent, depth, elemBase, 0)
+}
+
+func (t *Template) compileRadioC(v *RadioC, parent int16, depth int) int16 {
+	// Radio is a list of options with selection marks
+	opts := v.getOptions()
+	if len(opts) == 0 {
+		return t.compileTextC(Text("(no options)"), parent, depth, nil, 0)
+	}
+
+	var items []any
+	for i, opt := range opts {
+		idx := i // capture for closure
+		mark := IfOrd(v.selected).Eq(idx).Then(Text(v.selectedMark)).Else(Text(v.unselected))
+		item := HBox.Gap(1)(mark, Text(opt))
+		items = append(items, item)
+	}
+
+	if v.horizontal {
+		return t.compileHBoxC(HBox.Gap(v.gap)(items...), parent, depth, nil, 0)
+	}
+	return t.compileVBoxC(VBox.Gap(v.gap)(items...), parent, depth, nil, 0)
+}
+
+func (t *Template) compileInputC(v *InputC, parent int16, depth int) int16 {
+	// Convert to TextInput and compile
+	ti := v.toTextInput()
+	return t.compile(ti, parent, depth, nil, 0)
+}
+
 // Execute runs all three phases and renders to the buffer.
 func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 	// Clear pending overlays from previous frame
@@ -1697,11 +1775,17 @@ func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 // Each container sets its children's widths. For Rows, this includes flex distribution.
 // elemBase is optional - used for offset-based text in ForEach sub-templates.
 func (t *Template) distributeWidths(screenW int16, elemBase unsafe.Pointer) {
-	// Set root-level ops to screen width first
+	// Set root-level ops to screen width first (or compute intrinsic width if FitContent)
 	for _, idx := range t.byDepth[0] {
 		op := &t.ops[idx]
 		geom := &t.geom[idx]
-		t.setOpWidth(op, geom, screenW, elemBase)
+		if op.FitContent {
+			// Compute intrinsic width from children
+			intrinsicW := t.computeIntrinsicWidth(idx)
+			geom.W = intrinsicW
+		} else {
+			t.setOpWidth(op, geom, screenW, elemBase)
+		}
 	}
 
 	// Process containers depth-by-depth, each setting its children's widths
@@ -1811,7 +1895,7 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 	case OpProgress, OpProgressPtr, OpProgressOff:
 		geom.W = op.Width
 
-	case OpLeader, OpLeaderPtr:
+	case OpLeader, OpLeaderPtr, OpLeaderIntPtr, OpLeaderFloatPtr:
 		geom.W = op.Width
 		if geom.W == 0 {
 			geom.W = 20 // default width
@@ -2178,7 +2262,7 @@ func (t *Template) layout(_ int16) {
 			case OpRichText, OpRichTextPtr, OpRichTextOff:
 				geom.H = 1
 
-			case OpLeader, OpLeaderPtr:
+			case OpLeader, OpLeaderPtr, OpLeaderIntPtr, OpLeaderFloatPtr:
 				geom.H = 1
 
 			case OpTable:
@@ -2594,8 +2678,8 @@ func (t *Template) distributeFlexGrow(rootH int16) {
 			op := &t.ops[idx]
 			geom := &t.geom[idx]
 			if op.Kind == OpContainer && op.Parent == -1 {
-				// Root container fills screen height (unless explicit height set)
-				if op.Height == 0 {
+				// Root container fills screen height (unless explicit height or FitContent)
+				if op.Height == 0 && !op.FitContent {
 					geom.H = rootH
 				}
 			}
@@ -3012,6 +3096,14 @@ func (t *Template) effectiveStyle(s Style) Style {
 	if t.inheritedStyle != nil {
 		// merge Attr (combine both)
 		s.Attr = s.Attr | t.inheritedStyle.Attr
+		// inherit FG if not set
+		if s.FG.Mode == ColorDefault && t.inheritedStyle.FG.Mode != ColorDefault {
+			s.FG = t.inheritedStyle.FG
+		}
+		// inherit BG if not set (cascaded Fill may override below)
+		if s.BG.Mode == ColorDefault && t.inheritedStyle.BG.Mode != ColorDefault {
+			s.BG = t.inheritedStyle.BG
+		}
 		// inherit Transform if not set
 		if s.Transform == TransformNone && t.inheritedStyle.Transform != TransformNone {
 			s.Transform = t.inheritedStyle.Transform
@@ -3053,11 +3145,13 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
-		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
+		style := t.effectiveStyle(op.TextStyle)
+		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, style)
 
 	case OpProgressPtr:
 		ratio := float32(*op.IntPtr) / 100.0
-		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
+		style := t.effectiveStyle(op.TextStyle)
+		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, style)
 
 	case OpRichText:
 		buf.WriteSpans(int(absX), int(absY), op.StaticSpans, int(maxW))
@@ -3074,24 +3168,44 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if width == 0 {
 			width = int(maxW)
 		}
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, op.LeaderStyle)
+		style := t.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, style)
 
 	case OpLeaderPtr:
 		width := int(op.Width)
 		if width == 0 {
 			width = int(maxW)
 		}
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, op.LeaderStyle)
+		style := t.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, style)
+
+	case OpLeaderIntPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		style := t.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%d", *op.LeaderIntPtr), width, op.LeaderFill, style)
+
+	case OpLeaderFloatPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		style := t.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%.1f", *op.LeaderFloatPtr), width, op.LeaderFill, style)
 
 	case OpTable:
 		t.renderTable(buf, op, absX, absY, maxW)
 
 	case OpSparkline:
-		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+		style := t.effectiveStyle(op.SparkStyle)
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, style)
 
 	case OpSparklinePtr:
 		if op.SparkValuesPtr != nil {
-			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+			style := t.effectiveStyle(op.SparkStyle)
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, style)
 		}
 
 	case OpHRule:
@@ -3122,7 +3236,8 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
 			frameIdx := *op.SpinnerFramePtr % len(op.SpinnerFrames)
 			frame := op.SpinnerFrames[frameIdx]
-			buf.WriteStringFast(int(absX), int(absY), frame, op.SpinnerStyle, 1)
+			style := t.effectiveStyle(op.SpinnerStyle)
+			buf.WriteStringFast(int(absX), int(absY), frame, style, 1)
 		}
 
 	case OpScrollbar:
@@ -3186,13 +3301,17 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 	case OpContainer:
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := t.inheritedFill
-		if op.InheritStyle != nil && op.InheritStyle.Fill.Mode != ColorDefault {
-			t.inheritedFill = op.InheritStyle.Fill
+		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
+			t.inheritedFill = op.CascadeStyle.Fill
 		}
 
-		// Fill container area if we have an inherited Fill
-		if t.inheritedFill.Mode != ColorDefault {
-			fillCell := Cell{Rune: ' ', Style: Style{BG: t.inheritedFill}}
+		// Fill container area - direct Fill takes precedence over inherited
+		fillColor := t.inheritedFill
+		if op.Fill.Mode != ColorDefault {
+			fillColor = op.Fill // direct fill doesn't cascade, just fills this container
+		}
+		if fillColor.Mode != ColorDefault {
+			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
 			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
 		}
 
@@ -3204,13 +3323,13 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
-			} else if t.inheritedFill.Mode != ColorDefault {
-				style.BG = t.inheritedFill
+			} else if fillColor.Mode != ColorDefault {
+				style.BG = fillColor
 			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
 			if op.Title != "" {
-				titleStr := "─ " + op.Title + " "
+				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
 				buf.WriteStringFast(int(absX)+1, int(absY), titleStr, style, int(geom.W)-2)
 			}
 		}
@@ -3223,8 +3342,8 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 		// Update inherited style if this container sets one
 		oldInheritedStyle := t.inheritedStyle
-		if op.InheritStyle != nil {
-			t.inheritedStyle = op.InheritStyle
+		if op.CascadeStyle != nil {
+			t.inheritedStyle = op.CascadeStyle
 		}
 
 		// Render children with this container's position as their origin
@@ -3342,16 +3461,19 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	case OpProgress:
 		ratio := float32(op.StaticInt) / 100.0
-		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
+		style := sub.effectiveStyle(op.TextStyle)
+		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, style)
 
 	case OpProgressPtr:
 		ratio := float32(*op.IntPtr) / 100.0
-		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
+		style := sub.effectiveStyle(op.TextStyle)
+		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, style)
 
 	case OpProgressOff:
 		intPtr := (*int)(unsafe.Pointer(uintptr(elemBase) + op.IntOff))
 		ratio := float32(*intPtr) / 100.0
-		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, Style{})
+		style := sub.effectiveStyle(op.TextStyle)
+		buf.WriteProgressBar(int(absX), int(absY), int(op.Width), ratio, style)
 
 	case OpRichText:
 		buf.WriteSpans(int(absX), int(absY), op.StaticSpans, int(maxW))
@@ -3369,24 +3491,44 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if width == 0 {
 			width = int(maxW)
 		}
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, op.LeaderStyle)
+		style := sub.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, style)
 
 	case OpLeaderPtr:
 		width := int(op.Width)
 		if width == 0 {
 			width = int(maxW)
 		}
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, op.LeaderStyle)
+		style := sub.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, style)
+
+	case OpLeaderIntPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		style := sub.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%d", *op.LeaderIntPtr), width, op.LeaderFill, style)
+
+	case OpLeaderFloatPtr:
+		width := int(op.Width)
+		if width == 0 {
+			width = int(maxW)
+		}
+		style := sub.effectiveStyle(op.LeaderStyle)
+		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%.1f", *op.LeaderFloatPtr), width, op.LeaderFill, style)
 
 	case OpTable:
 		sub.renderTable(buf, op, absX, absY, maxW)
 
 	case OpSparkline:
-		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+		style := sub.effectiveStyle(op.SparkStyle)
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, style)
 
 	case OpSparklinePtr:
 		if op.SparkValuesPtr != nil {
-			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, op.SparkStyle)
+			style := sub.effectiveStyle(op.SparkStyle)
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, style)
 		}
 
 	case OpHRule:
@@ -3423,7 +3565,8 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if op.SpinnerFramePtr != nil && len(op.SpinnerFrames) > 0 {
 			frameIdx := *op.SpinnerFramePtr % len(op.SpinnerFrames)
 			frame := op.SpinnerFrames[frameIdx]
-			buf.WriteStringFast(int(absX), int(absY), frame, op.SpinnerStyle, 1)
+			style := sub.effectiveStyle(op.SpinnerStyle)
+			buf.WriteStringFast(int(absX), int(absY), frame, style, 1)
 		}
 
 	case OpScrollbar:
@@ -3487,13 +3630,17 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	case OpContainer:
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := sub.inheritedFill
-		if op.InheritStyle != nil && op.InheritStyle.Fill.Mode != ColorDefault {
-			sub.inheritedFill = op.InheritStyle.Fill
+		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
+			sub.inheritedFill = op.CascadeStyle.Fill
 		}
 
-		// Fill container area if we have an inherited Fill
-		if sub.inheritedFill.Mode != ColorDefault {
-			fillCell := Cell{Rune: ' ', Style: Style{BG: sub.inheritedFill}}
+		// Fill container area - direct Fill takes precedence over inherited
+		fillColor := sub.inheritedFill
+		if op.Fill.Mode != ColorDefault {
+			fillColor = op.Fill // direct fill doesn't cascade, just fills this container
+		}
+		if fillColor.Mode != ColorDefault {
+			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
 			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
 		}
 
@@ -3505,13 +3652,13 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
-			} else if sub.inheritedFill.Mode != ColorDefault {
-				style.BG = sub.inheritedFill
+			} else if fillColor.Mode != ColorDefault {
+				style.BG = fillColor
 			}
 			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
 
 			if op.Title != "" {
-				titleStr := "─ " + op.Title + " "
+				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
 				buf.WriteStringFast(int(absX)+1, int(absY), titleStr, style, int(geom.W)-2)
 			}
 		}
@@ -3524,8 +3671,8 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 		// Update inherited style if this container sets one
 		oldInheritedStyle := sub.inheritedStyle
-		if op.InheritStyle != nil {
-			sub.inheritedStyle = op.InheritStyle
+		if op.CascadeStyle != nil {
+			sub.inheritedStyle = op.CascadeStyle
 		}
 
 		// Recurse into children with this container's position as their origin

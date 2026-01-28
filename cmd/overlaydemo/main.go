@@ -49,7 +49,7 @@ func main() {
 			If(&showModal).Then(OverlayNode{
 				Backdrop: true,
 				Centered: true,
-				Child: VBox.Width(50).Border(BorderRounded).Style(&Style{BG: PaletteColor(236)})(
+				Child: VBox.Width(50).Border(BorderRounded).Fill(PaletteColor(236))(
 					Text("Modal Dialog  ").FG(Cyan).Bold(),
 					SpaceH(1),
 					Text(&modalMessage).FG(White),
