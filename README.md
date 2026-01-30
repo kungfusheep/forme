@@ -1,13 +1,13 @@
-![logo](./logo.svg)
+<!-- ![logo](./logo.svg) -->
 
 # forme
 
 Declarative terminal UI for Go.
 
-![hero](./hero.png)
+![hero](./hero.gif)
 
 ```go
-VBox.Border(BorderDouble).BorderFG(Green).Title("SYS").FitContent().CascadeStyle(&green)(
+VBox.Title("SYS").Border(BorderDouble).BorderFG(Green).FitContent().CascadeStyle(&green)(
     If(&online).
         Then(Text("● ONLINE")).
         Else(Text("● OFFLINE").FG(Red)),
