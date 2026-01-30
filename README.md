@@ -18,6 +18,11 @@ VBox.Title("SYS").Border(BorderDouble).BorderFG(Green).FitContent().CascadeStyle
 )
 ```
 
+- **Declarative** — describe your UI as a tree, not a sequence of draw calls
+- **Fast** — compiled templates, layered rendering, blitting for smooth scrolling
+- **Flexbox layout** — VBox/HBox with Grow, Gap, Width, borders, cascading styles
+- **Batteries included** — sparklines, tables, leaders, progress bars, lists, text input, vim-style jump labels
+
 ## Install
 
 ```bash

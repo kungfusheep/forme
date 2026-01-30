@@ -1098,6 +1098,8 @@ func CheckboxPtr(checked *bool, label *string) *CheckboxC {
 	}
 }
 
+func (c *CheckboxC) Ref(f func(*CheckboxC)) *CheckboxC { f(c); return c }
+
 func (c *CheckboxC) Marks(checked, unchecked string) *CheckboxC {
 	c.checkedMark = checked
 	c.unchecked = unchecked
@@ -1160,6 +1162,8 @@ func RadioPtr(selected *int, options *[]string) *RadioC {
 		unselected:   "○",
 	}
 }
+
+func (r *RadioC) Ref(f func(*RadioC)) *RadioC { f(r); return r }
 
 func (r *RadioC) Marks(selected, unselected string) *RadioC {
 	r.selectedMark = selected
@@ -1450,6 +1454,8 @@ type InputC struct {
 func Input() *InputC {
 	return &InputC{}
 }
+
+func (i *InputC) Ref(f func(*InputC)) *InputC { f(i); return i }
 
 // Placeholder sets the placeholder text.
 func (i *InputC) Placeholder(p string) *InputC {
