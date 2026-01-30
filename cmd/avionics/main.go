@@ -251,7 +251,7 @@ func main() {
 		Handle("n", func(m riffkey.Match) { selectedMode = 0 }).
 		Handle("w", func(m riffkey.Match) { selectedMode = 1 }).
 		Handle("d", func(m riffkey.Match) { selectedMode = 2 }).
-		Handle("tab", func(m riffkey.Match) { selectedMode = (selectedMode + 1) % 3 })
+		Handle("<tab>", func(m riffkey.Match) { selectedMode = (selectedMode + 1) % 3 })
 
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)

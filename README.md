@@ -4,6 +4,8 @@
 
 Declarative terminal UI for Go.
 
+![hero](./hero.png)
+
 ```go
 VBox.Border(BorderDouble).BorderFG(Green).Title("SYS").FitContent().CascadeStyle(&green)(
     If(&online).
@@ -13,7 +15,7 @@ VBox.Border(BorderDouble).BorderFG(Green).Title("SYS").FitContent().CascadeStyle
     Leader("CPU", &cpu),
     Leader("MEM", &mem),
     Sparkline(&history),
-),
+)
 ```
 
 ## Install
@@ -21,6 +23,21 @@ VBox.Border(BorderDouble).BorderFG(Green).Title("SYS").FitContent().CascadeStyle
 ```bash
 go get github.com/kungfusheep/forme
 ```
+
+## Quick Start
+
+```go
+package main
+
+import . "github.com/kungfusheep/forme"
+
+func main() {
+    app, _ := NewApp()
+    app.SetView(Text("Hello, terminal!")).Run()
+}
+```
+
+---
 
 ## Dynamic Content
 
@@ -59,6 +76,20 @@ Text("hello").Bold().FG(Red).BG(Black)
 //         PaletteColor(202)     // 256 palette
 //         RGB(256, 128, 64)     // true color
 //         Hex(0xFF8041)
+```
+
+### CascadeStyle
+
+Apply a style that cascades down to all children:
+
+```go
+green := Style{FG: Green}
+
+VBox.CascadeStyle(&green)(
+    Text("I'm green"),
+    Text("Me too"),
+    Text("Override").FG(Red),  // still works
+)
 ```
 
 ## Iteration
@@ -130,7 +161,7 @@ app.Handle("<enter>", func() { submit() })
 
 ## Full Example
 
-A complete todo app in 30 lines:
+A simple todo app:
 
 ```go
 package main
@@ -155,10 +186,10 @@ func main() {
                 BindDelete(app, "<C-d>"),
             HBox.Gap(1)(
                 Text("Add:"),
-                TextInput{Field: &input, Width: 30}
+                TextInput{Field: &input, Width: 30},
             ),
         )).
-       Handle("<enter>", func() {
+        Handle("<enter>", func() {
             if input.Value != "" {
                 todos = append(todos, Todo{Text: input.Value})
                 input.Clear()
@@ -172,15 +203,16 @@ func main() {
 
 ## Demos
 
-```bash
-go run ./cmd/todo           # todo app (above)
-go run ./cmd/happypath      # basic patterns
-go run ./cmd/tabledemo      # AutoTable
-go run ./cmd/widgetdemo     # custom widgets
-go run ./cmd/jumpdemo       # vim-style jump labels
-go run ./cmd/minivim        # full editor
-```
+| Demo | Description |
+|------|-------------|
+| `go run ./cmd/hero` | The hero screenshot above |
+| `go run ./cmd/todo` | Todo app with checklist |
+| `go run ./cmd/happypath` | Basic layout patterns |
+| `go run ./cmd/tabledemo` | AutoTable showcase |
+| `go run ./cmd/widgetdemo` | Custom widget examples |
+| `go run ./cmd/jumpdemo` | Vim-style jump labels |
+| `go run ./cmd/minivim` | Full text editor |
 
 ## License
 
-MIT
+Apache-2.0 License. See [LICENSE](./LICENSE) for details.

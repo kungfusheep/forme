@@ -84,6 +84,9 @@ type Template struct {
 	inheritedStyle *Style
 	inheritedFill  Color // cascades through nested containers
 
+	// vertical clip: maximum Y coordinate for rendering (exclusive, 0 = no clip)
+	clipMaxY int16
+
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
 }
@@ -2783,6 +2786,9 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 		}
 	} else {
 		availH = rootH
+		if op.Border.Horizontal != 0 {
+			availH -= 2 // subtract own border from available content space
+		}
 	}
 
 	// If this container has explicit height, use that
@@ -2842,9 +2848,9 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 		usedH += int16(op.Gap) * (childCount - 1)
 	}
 
-	// Distribute remaining space
+	// Distribute remaining space (handles both expansion and shrinkage)
 	remaining := availH - usedH
-	if remaining > 0 && totalFlex > 0 {
+	if remaining != 0 && totalFlex > 0 {
 		distributed := int16(0)
 		for i, childIdx := range flexChildren {
 			childGeom := &t.geom[childIdx]
@@ -2856,7 +2862,11 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 				extraH = remaining - distributed
 			}
 			distributed += extraH
-			childGeom.H = childGeom.ContentH + extraH
+			h := childGeom.ContentH + extraH
+			if h < 0 {
+				h = 0
+			}
+			childGeom.H = h
 		}
 
 		// Recalculate child positions with new heights
@@ -3346,6 +3356,16 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			t.inheritedStyle = op.CascadeStyle
 		}
 
+		// Set vertical clip for children (content area bottom)
+		oldClipMaxY := t.clipMaxY
+		contentBottom := absY + geom.H
+		if op.Border.Horizontal != 0 {
+			contentBottom -= 1 // don't render into bottom border
+		}
+		if t.clipMaxY == 0 || contentBottom < t.clipMaxY {
+			t.clipMaxY = contentBottom
+		}
+
 		// Render children with this container's position as their origin
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
@@ -3355,9 +3375,10 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			t.renderOp(buf, i, absX, absY, contentW)
 		}
 
-		// Restore inherited style and fill
+		// Restore inherited style, fill, and clip
 		t.inheritedStyle = oldInheritedStyle
 		t.inheritedFill = oldInheritedFill
+		t.clipMaxY = oldClipMaxY
 
 	case OpIf:
 		// Render active branch if condition is true
@@ -3366,6 +3387,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			op.ThenTmpl.app = t.app
 			op.ThenTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
 			op.ThenTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
+			op.ThenTmpl.clipMaxY = t.clipMaxY              // propagate vertical clip
 			op.ThenTmpl.pendingOverlays = op.ThenTmpl.pendingOverlays[:0]
 			op.ThenTmpl.render(buf, absX, absY, geom.W)
 			// Propagate overlays from sub-template to main template
@@ -3374,6 +3396,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			op.ElseTmpl.app = t.app
 			op.ElseTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
 			op.ElseTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
+			op.ElseTmpl.clipMaxY = t.clipMaxY              // propagate vertical clip
 			op.ElseTmpl.pendingOverlays = op.ElseTmpl.pendingOverlays[:0]
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
 			t.pendingOverlays = append(t.pendingOverlays, op.ElseTmpl.pendingOverlays...)
@@ -3409,6 +3432,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			tmpl = op.SwitchDef
 		}
 		if tmpl != nil {
+			tmpl.clipMaxY = t.clipMaxY // propagate vertical clip
 			tmpl.render(buf, absX, absY, geom.W)
 		}
 	}
@@ -3416,6 +3440,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 // renderSubTemplate renders a sub-template (for ForEach) with element-bound data.
 func (t *Template) renderSubTemplate(buf *Buffer, sub *Template, globalX, globalY, maxW int16, elemBase unsafe.Pointer) {
+	sub.clipMaxY = t.clipMaxY // propagate vertical clip
 	// Render root-level ops in sub-template
 	for i := range sub.ops {
 		if sub.ops[i].Parent == -1 {
@@ -3750,6 +3775,39 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 		endIdx = startIdx + op.SelectionListPtr.MaxVisible
 		if endIdx > sliceHdr.Len {
 			endIdx = sliceHdr.Len
+		}
+	}
+
+	// clamp to vertical clip region so the list doesn't render past its container
+	if t.clipMaxY > 0 {
+		availableRows := int(t.clipMaxY - absY)
+		if availableRows <= 0 {
+			return
+		}
+		if endIdx-startIdx > availableRows {
+			endIdx = startIdx + availableRows
+		}
+		// re-adjust scroll offset if selection would be outside the clipped window
+		if op.SelectionListPtr != nil && selectedIdx >= 0 {
+			effectiveVisible := endIdx - startIdx
+			if selectedIdx < startIdx {
+				startIdx = selectedIdx
+				endIdx = startIdx + effectiveVisible
+				if endIdx > sliceHdr.Len {
+					endIdx = sliceHdr.Len
+				}
+				op.SelectionListPtr.offset = startIdx
+			} else if selectedIdx >= startIdx+effectiveVisible {
+				startIdx = selectedIdx - effectiveVisible + 1
+				if startIdx < 0 {
+					startIdx = 0
+				}
+				endIdx = startIdx + effectiveVisible
+				if endIdx > sliceHdr.Len {
+					endIdx = sliceHdr.Len
+				}
+				op.SelectionListPtr.offset = startIdx
+			}
 		}
 	}
 

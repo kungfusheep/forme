@@ -11,13 +11,13 @@ import (
 
 // Debug timing
 var (
-	DebugTiming      bool
-	DebugFullRedraw  bool // force full redraws instead of diff-based (set TUI_FULL_REDRAW=1 to enable)
-	DebugFlush       bool // dump flush debug info (set TUI_DEBUG_FLUSH=1 to enable)
-	lastBuildTime    time.Duration
-	lastLayoutTime   time.Duration
-	lastRenderTime   time.Duration
-	lastFlushTime    time.Duration
+	DebugTiming     bool
+	DebugFullRedraw bool // force full redraws instead of diff-based (set TUI_FULL_REDRAW=1 to enable)
+	DebugFlush      bool // dump flush debug info (set TUI_DEBUG_FLUSH=1 to enable)
+	lastBuildTime   time.Duration
+	lastLayoutTime  time.Duration
+	lastRenderTime  time.Duration
+	lastFlushTime   time.Duration
 )
 
 func init() {
@@ -44,9 +44,9 @@ type App struct {
 
 	// Multi-view routing
 	viewTemplates map[string]*Template
-	viewRouters     map[string]*riffkey.Router
-	currentView     string
-	viewStack       []string // pushed views (for modal overlays)
+	viewRouters   map[string]*riffkey.Router
+	currentView   string
+	viewStack     []string // pushed views (for modal overlays)
 
 	// State
 	running    bool
