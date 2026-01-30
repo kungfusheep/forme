@@ -776,11 +776,7 @@ func List[T any](items *[]T) *ListC[T] {
 	return l
 }
 
-// Ref stores a reference to this list in the provided pointer.
-func (l *ListC[T]) Ref(ref **ListC[T]) *ListC[T] {
-	*ref = l
-	return l
-}
+func (l *ListC[T]) Ref(f func(*ListC[T])) *ListC[T] { f(l); return l }
 
 // Selection binds the selection index to an external pointer.
 func (l *ListC[T]) Selection(sel *int) *ListC[T] {
@@ -1333,11 +1329,7 @@ func (c *CheckListC[T]) BindDelete(app *App, key string) *CheckListC[T] {
 	return c
 }
 
-// Ref stores a reference to this list.
-func (c *CheckListC[T]) Ref(ref **CheckListC[T]) *CheckListC[T] {
-	*ref = c
-	return c
-}
+func (c *CheckListC[T]) Ref(f func(*CheckListC[T])) *CheckListC[T] { f(c); return c }
 
 // SelectedItem returns a pointer to the currently selected item.
 func (c *CheckListC[T]) SelectedItem() *T {

@@ -22,6 +22,7 @@ func main() {
 		{Name: "Build something cool", Done: false},
 	}
 	var taskList *CheckListC[Task]
+	_ = taskList
 
 	app.SetView(VBox.Border(BorderRounded).Title("Form Components Demo").Gap(1)(
 		// Checkbox - toggle with 'a'
@@ -52,7 +53,7 @@ func main() {
 				Render(func(t *Task) any { return Text(&t.Name) }).
 				BindNav(app, "j", "k").
 				BindToggle(app, "x").
-				Ref(&taskList),
+				Ref(func(c *CheckListC[Task]) { taskList = c }),
 		),
 
 		HRule(),

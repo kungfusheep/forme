@@ -21,7 +21,7 @@ func TestListCNavigation(t *testing.T) {
 
 	listComp := List(&items).Render(func(item *TestItem) any {
 		return Text(&item.Name)
-	}).Ref(&list)
+	}).Ref(func(l *ListC[TestItem]) { list = l })
 
 	// Build and execute template to initialize len
 	tmpl := Build(VBox(listComp))
@@ -84,11 +84,9 @@ func TestListCRendersText(t *testing.T) {
 		{Name: "Banana", Done: true},
 	}
 
-	var list *ListC[TestItem]
-
 	listComp := List(&items).Render(func(item *TestItem) any {
 		return Text(&item.Name)
-	}).Ref(&list)
+	})
 
 	tmpl := Build(VBox(listComp))
 	buf := NewBuffer(40, 5)
@@ -121,7 +119,7 @@ func TestListCDelete(t *testing.T) {
 
 	listComp := List(&items).Render(func(item *TestItem) any {
 		return Text(&item.Name)
-	}).Ref(&list)
+	}).Ref(func(l *ListC[TestItem]) { list = l })
 
 	// Need to compile/execute to set len
 	tmpl := Build(VBox(listComp))
