@@ -121,6 +121,8 @@ func NewInlineApp() (*App, error) {
 	return app, nil
 }
 
+func (a *App) Ref(f func(*App)) *App { f(a); return a }
+
 // ClearOnExit sets whether the inline app should clear its content on exit.
 // If true, the rendered content disappears when the app stops.
 // If false (default), the content remains visible and cursor moves below it.
@@ -270,6 +272,8 @@ func (a *App) View(name string, view any) *ViewBuilder {
 		router: router,
 	}
 }
+
+func (vb *ViewBuilder) Ref(f func(*ViewBuilder)) *ViewBuilder { f(vb); return vb }
 
 // Handle registers a key handler for this view.
 func (vb *ViewBuilder) Handle(pattern string, handler func(riffkey.Match)) *ViewBuilder {

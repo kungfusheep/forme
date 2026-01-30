@@ -592,6 +592,8 @@ func FLEDs(states ...bool) *FlexNode {
 
 // Chainable modifiers
 
+func (n *FlexNode) Ref(f func(*FlexNode)) *FlexNode { f(n); return n }
+
 func (n *FlexNode) Gap(g int8) *FlexNode {
 	n.gap = g
 	return n
