@@ -79,7 +79,7 @@ Text("hello").Bold().FG(Red).BG(Black)
 // Colors: Red, Green, Blue, Cyan, Magenta, Yellow, White, Black
 //         BrightRed, BrightGreen, ...
 //         PaletteColor(202)     // 256 palette
-//         RGB(256, 128, 64)     // true color
+//         RGB(255, 128, 64)     // true color
 //         Hex(0xFF8041)
 ```
 
@@ -139,13 +139,45 @@ Widget(
 )
 ```
 
-## Input
+## Input Handling
+
+Key bindings can be declared on components or on the app/view:
 
 ```go
-app.Handle("q", app.Stop)
-app.Handle("<C-c>", app.Stop)           // ctrl+c
-app.Handle("<enter>", func() { submit() })
+// declarative — on the component
+List(&items).BindVimNav().Handle("<Enter>", func(item *Item) { ... })
+
+// view-level
+app.View("main", myUI).
+    Handle("q", app.Stop).
+    Handle("<C-c>", app.Stop)
 ```
+
+See [docs/input.md](docs/input.md) for full key pattern syntax.
+
+## Text Input
+
+```go
+Input().Placeholder("Search...").Bind()
+```
+
+`.Bind()` routes unmatched keys to the input. Arrow keys, backspace,
+Ctrl-a/e/k/u all work out of the box.
+
+## FilterList
+
+Drop-in fuzzy-filterable list:
+
+```go
+FilterList(&items, func(s *string) string { return *s }).
+    Placeholder("type to filter...").
+    Render(func(s *string) any { return Text(s) }).
+    Handle("<Enter>", func(s *string) { ... }).
+    HandleClear("<Esc>", app.Stop)
+```
+
+Supports fzf query syntax: `foo` (fuzzy), `'exact`, `^prefix`, `suffix$`,
+`!negation`, `a b` (AND), `a | b` (OR).
 
 ## Components
 
@@ -154,15 +186,24 @@ app.Handle("<enter>", func() { submit() })
 | `Text(s)` | Text (string or *string) |
 | `VBox` / `HBox` | Vertical / horizontal layout |
 | `Space()` | Flexible spacer |
-| `HRule()` | Horizontal line |
+| `HRule()` / `VRule()` | Horizontal / vertical line |
 | `Leader` | Label with dot leader |
 | `Progress` | Progress bar |
 | `Sparkline` | Mini line chart |
+| `Spinner` | Animated spinner |
 | `ForEach` | Slice iteration |
 | `If().Then().Else()` | Conditional |
+| `Switch().Case()` | Multi-branch conditional |
 | `AutoTable` | Struct slice to table |
-| `List` / `CheckList` | Navigable lists |
+| `List` | Navigable selection list |
+| `CheckList` | List with checkboxes |
+| `FilterList` | Fuzzy-filterable list with input |
+| `Input` | Text input with declarative binding |
+| `Radio` | Radio button group |
+| `Tabs` | Tab bar |
 | `Widget` | Custom render function |
+| `Overlay` | Modal / popup |
+| `Jump` | Vim-easymotion labels |
 
 ## Full Example
 
@@ -194,7 +235,7 @@ func main() {
 				TextInput{Field: &input, Width: 30},
 			),
 		)).
-		Handle("<enter>", func() {
+		Handle("<Enter>", func() {
 			if input.Value != "" {
 				todos = append(todos, Todo{Text: input.Value})
 				input.Clear()
@@ -206,16 +247,52 @@ func main() {
 }
 ```
 
+A fuzzy finder:
+
+```go
+package main
+
+import (
+	"fmt"
+	. "github.com/kungfusheep/forme"
+)
+
+func main() {
+	languages := []string{"Go", "Rust", "Python", "JavaScript", "TypeScript"}
+	status := "type to filter"
+
+	app, _ := NewApp()
+	app.View("main",
+		VBox.Border(BorderRounded).Title("fuzzy finder")(
+			FilterList(&languages, func(s *string) string { return *s }).
+				Placeholder("type to filter...").
+				Render(func(s *string) any { return Text(s) }).
+				Handle("<Enter>", func(s *string) {
+					status = fmt.Sprintf("selected: %s", *s)
+				}).
+				HandleClear("<Esc>", app.Stop),
+			Space(),
+			HRule(),
+			Text(&status).Dim(),
+		),
+	).Handle("q", app.Stop)
+
+	app.RunFrom("main")
+}
+```
+
 ## Demos
 
 | Demo | Description |
 |------|-------------|
 | `go run ./cmd/hero` | The hero screenshot above |
 | `go run ./cmd/todo` | Todo app with checklist |
+| `go run ./cmd/forme-fzf` | Fuzzy finder with FilterList |
 | `go run ./cmd/happypath` | Basic layout patterns |
 | `go run ./cmd/tabledemo` | AutoTable showcase |
 | `go run ./cmd/widgetdemo` | Custom widget examples |
 | `go run ./cmd/jumpdemo` | Vim-style jump labels |
+| `go run ./cmd/routing` | Multi-view navigation |
 | `go run ./cmd/minivim` | Full text editor |
 
 ## License

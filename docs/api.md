@@ -10,11 +10,17 @@ app, err := NewApp()
 
 | Method | Description |
 |--------|-------------|
-| `SetView(view any)` | Set the root view |
-| `Handle(pattern string, fn func(riffkey.Match))` | Register key handler |
+| `SetView(view any)` | Set the root view (single-view apps) |
+| `View(name, view any)` | Register a named view |
+| `Handle(pattern string, fn)` | Register key handler (`func()`, `func(any)`, `func(riffkey.Match)`) |
 | `Run() error` | Start the app |
+| `RunFrom(name string)` | Start from a named view |
 | `Stop()` | Exit the app |
+| `RequestRender()` | Request a render (safe from any goroutine) |
 | `RenderNow()` | Force immediate render |
+| `OnBeforeRender(fn func())` | Callback before each render |
+| `OnAfterRender(fn func())` | Callback after each render |
+| `OnResize(fn func(w, h int))` | Callback on terminal resize |
 | `EnterJumpMode()` | Activate jump label mode |
 | `ExitJumpMode()` | Deactivate jump label mode |
 
@@ -45,19 +51,20 @@ Pass pointers so values are read at render time:
 count := 0
 app.SetView(Text(&count))
 
-app.Handle("j", func(_ riffkey.Match) {
+app.Handle("j", func() {
     count++
-    // Re-render happens automatically after input handlers
+    // re-render happens automatically after input handlers
 })
 ```
 
 Rendering occurs:
 - After input handlers complete
-- When `RenderNow()` is called explicitly
+- When `RequestRender()` is called (safe from any goroutine)
+- When `RenderNow()` is called (immediate, mutex-protected)
 
 ```go
-// Force immediate render (e.g., from a goroutine)
-app.RenderNow()
+// from a goroutine
+app.RequestRender()
 ```
 
 ## Layers
