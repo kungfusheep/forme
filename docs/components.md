@@ -31,7 +31,7 @@ VBox.Grow(1)(...)                  // Flex grow factor
 VBox.Title("Panel")(...)           // Border title
 VBox.BorderFG(Cyan)(...)           // Border color
 VBox.Fill(Black)(...)              // Fill container area
-VBox.InheritStyle(&style)(...)     // Style inheritance for children
+VBox.CascadeStyle(&style)(...)     // Style inheritance for children
 ```
 
 Chain multiple:
@@ -124,11 +124,12 @@ Navigable list with selection:
 
 ```go
 items := []string{"Apple", "Banana", "Cherry"}
-selected := 0
 
-list := List(&items, &selected).
+List(&items).
     Marker("> ").
     MaxVisible(10).
+    BindVimNav().
+    Render(func(s *string) any { return Text(s) }).
     Style(Style{BG: PaletteColor(235)}).
     SelectedStyle(Style{BG: PaletteColor(238)})
 ```
@@ -142,9 +143,9 @@ type Item struct {
 }
 
 items := []Item{...}
-selected := 0
 
-list := List(&items, &selected).
+List(&items).
+    BindNav("j", "k").
     Render(func(item *Item) any {
         return HBox(
             Text(&item.Icon),
@@ -155,38 +156,160 @@ list := List(&items, &selected).
     SelectedStyle(Style{BG: PaletteColor(236)})
 ```
 
-Navigation methods:
+Selection is managed internally. Use `.Selection(&idx)` to bind to an external index,
+or `.Ref(func(l *ListC[Item]) { myList = l })` for a reference.
+
+### Declarative Bindings
+
+Bindings are declared on the component — no `*App` needed:
 
 ```go
-app.Handle("j", func(_ riffkey.Match) { list.Down(nil) })
-app.Handle("k", func(_ riffkey.Match) { list.Up(nil) })
-app.Handle("g", func(_ riffkey.Match) { list.First(nil) })
-app.Handle("G", func(_ riffkey.Match) { list.Last(nil) })
+List(&items).
+    BindNav("j", "k").                    // up/down
+    BindPageNav("<C-d>", "<C-u>").        // page up/down
+    BindFirstLast("g", "G").              // first/last
+    BindVimNav().                         // all of the above with vim defaults
+    BindDelete("dd").                     // delete selected item
+    Handle("<Enter>", func(item *Item) {  // action on selected item
+        // item is a pointer to the selected element
+    })
 ```
 
-## TextInput
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `Render(fn func(*T) any)` | Custom item rendering |
+| `Marker(s string)` | Selection marker (default `"> "`) |
+| `MaxVisible(n int)` | Max visible items (0 = all) |
+| `Selection(sel *int)` | Bind to external selection index |
+| `Style(s Style)` | Default row style |
+| `SelectedStyle(s Style)` | Selected row style |
+| `MarkerStyle(s Style)` | Marker style |
+| `BindNav(down, up string)` | Bind navigation keys |
+| `BindVimNav()` | j/k, Ctrl-d/u, g/G |
+| `BindDelete(key string)` | Bind delete key |
+| `Handle(key, fn func(*T))` | Action on selected item |
+| `Selected() *T` | Get selected item |
+| `Index() int` | Get selected index |
+
+## FilterList
+
+Drop-in filterable list with fzf-style fuzzy matching. Composes an input,
+filter and selection list into a single template node:
+
+```go
+FilterList(&items, func(s *string) string { return *s }).
+    Placeholder("type to filter...").
+    MaxVisible(20).
+    Render(func(s *string) any { return Text(s) }).
+    Handle("<Enter>", func(s *string) {
+        fmt.Println("selected:", *s)
+    }).
+    HandleClear("<Esc>", app.Stop)
+```
+
+The second argument extracts searchable text from each item. For structs:
+
+```go
+type Profile struct {
+    Name    string
+    Service string
+}
+
+FilterList(&profiles, func(p *Profile) string {
+    return p.Name + " " + p.Service
+}).Render(func(p *Profile) any {
+    return HBox(Text(&p.Name), Space(), Text(&p.Service).Dim())
+})
+```
+
+Navigation uses Ctrl-n/Ctrl-p by default (no conflict with text input).
+All printable keys go to the filter input.
+
+### Query Syntax
+
+Inherits fzf query syntax:
+
+| Pattern | Meaning |
+|---------|---------|
+| `foo` | Fuzzy match |
+| `'foo` | Exact substring |
+| `^foo` | Prefix match |
+| `foo$` | Suffix match |
+| `!foo` | Negated match |
+| `a b` | AND (both must match) |
+| `a \| b` | OR (either matches) |
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `Placeholder(s string)` | Input placeholder text |
+| `Render(fn func(*T) any)` | Custom item rendering |
+| `MaxVisible(n int)` | Max visible items |
+| `Handle(key, fn func(*T))` | Action on selected original item |
+| `HandleClear(key, fallback)` | Clear filter if active, else fallback |
+| `BindNav(down, up string)` | Override nav keys |
+| `Selected() *T` | Selected item in original slice |
+| `SelectedIndex() int` | Index in original slice |
+| `Clear()` | Reset filter and input |
+| `Active() bool` | Whether a filter is applied |
+| `Border(b BorderStyle)` | Border style |
+| `Title(s string)` | Border title |
+| `Style(s Style)` | Default row style |
+| `SelectedStyle(s Style)` | Selected row style |
+| `Marker(s string)` | Selection marker |
+
+## Input
+
+Text input with declarative binding:
+
+```go
+Input().
+    Placeholder("Enter text...").
+    Width(30).
+    Bind()
+```
+
+`.Bind()` routes unmatched keys to the input automatically — arrow keys,
+backspace, Ctrl-a/e/k/u all work. No manual `HandleUnmatched` needed.
+
+Access the value:
+
+```go
+var myInput *InputC
+
+Input().
+    Placeholder("Search...").
+    Bind().
+    Ref(func(i *InputC) { myInput = i })
+
+// later
+myInput.Value()     // current text
+myInput.SetValue(s) // set text
+myInput.Clear()     // reset
+```
+
+For password fields:
+
+```go
+Input().Placeholder("Password").Mask('*').Bind()
+```
+
+### Raw TextInput
+
+The lower-level `TextInput` struct is still available:
 
 ```go
 field := Field{}
-focus := FocusGroup{}
 
 TextInput{
     Field:       &field,
-    FocusGroup:  &focus,
-    FocusIndex:  0,
     Placeholder: "Enter text",
     Width:       30,
-    Mask:        '*',  // For passwords
+    Mask:        '*',
 }
-```
-
-Handle text input in router:
-
-```go
-handler := riffkey.NewTextHandler(&field.Value, &field.Cursor)
-app.Router().HandleUnmatched(func(k riffkey.Key) bool {
-    return handler.HandleKey(k)
-})
 ```
 
 ## LayerView
@@ -209,7 +332,7 @@ Modal/popup:
 ```go
 If(&showModal).Then(
     Overlay.Centered().Backdrop()(
-        VBox.Width(50).Border(BorderRounded).Style(&Style{BG: PaletteColor(236)})(
+        VBox.Width(50).Border(BorderRounded).Fill(PaletteColor(236))(
             Text("Title").Bold(),
             SpaceH(1),
             Text("Content"),
@@ -260,9 +383,9 @@ Tabs(modes, &selected).
 Tab styles:
 
 ```go
-TabsStyleBracket  // [NAV] [EDIT] [HELP]
-TabsStylePipe     // NAV | EDIT | HELP
-TabsStyleNone     // NAV  EDIT  HELP
+TabsStyleBracket    // [NAV] [EDIT] [HELP]
+TabsStyleUnderline  // NAV  EDIT  HELP  (active item underlined)
+TabsStyleBox        // boxed tab style
 ```
 
 ## Widget

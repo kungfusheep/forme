@@ -4,9 +4,11 @@
 
 ```go
 Style{
-    FG:   Cyan,
-    BG:   Black,
-    Attr: AttrBold | AttrUnderline,
+    FG:        Cyan,
+    BG:        Black,
+    Fill:      Blue,                // fill empty cells in this container
+    Attr:      AttrBold | AttrUnderline,
+    Transform: Uppercase,          // text transform (Uppercase, Lowercase, Capitalize)
 }
 ```
 
@@ -33,7 +35,7 @@ PaletteColor(236)  // Dark gray (good for modal backgrounds)
 Terminal support varies.
 
 ```go
-RGBColor(255, 128, 0)  // Orange
+RGB(255, 128, 0)  // Orange
 ```
 
 ### Default
@@ -70,9 +72,11 @@ Text("Hello").Style(Style{
 ```go
 AttrBold
 AttrDim
+AttrItalic
 AttrUnderline
 AttrBlink
-AttrReverse
+AttrInverse
+AttrStrikethrough
 ```
 
 Combine with bitwise OR:
@@ -132,14 +136,17 @@ Progress(75).Style(Style{FG: Green})
 Spinner(&frame).Style(Style{FG: Cyan})
 ```
 
-### SelectionList
+### List / FilterList
 
 ```go
-&SelectionList{
-    Style:         Style{BG: PaletteColor(235)},      // Normal items
-    SelectedStyle: Style{BG: PaletteColor(238)},      // Selected item
-    MarkerStyle:   Style{FG: Cyan},                   // Selection marker
-}
+List(&items).
+    Style(Style{BG: PaletteColor(235)}).          // Normal items
+    SelectedStyle(Style{BG: PaletteColor(238)}).  // Selected item
+    MarkerStyle(Style{FG: Cyan})                  // Selection marker
+
+FilterList(&items, extract).
+    Style(Style{BG: PaletteColor(235)}).
+    SelectedStyle(Style{BG: PaletteColor(238)})
 ```
 
 ## Container Fill
@@ -161,12 +168,12 @@ Fill does NOT cascade to children — it only fills the container itself.
 
 ## Style Inheritance
 
-Containers can pass styles to their children using `InheritStyle`:
+Containers can pass styles to their children using `CascadeStyle`:
 
 ```go
 theme := Style{FG: Cyan, BG: Black, Attr: AttrBold}
 
-VBox.InheritStyle(&theme)(
+VBox.CascadeStyle(&theme)(
     Text("Inherits Cyan FG, Black BG, Bold"),
     Text("Same here"),
 )
@@ -177,7 +184,7 @@ VBox.InheritStyle(&theme)(
 **Empty style inherits everything:**
 
 ```go
-VBox.InheritStyle(&Style{FG: Red, Attr: AttrBold})(
+VBox.CascadeStyle(&Style{FG: Red, Attr: AttrBold})(
     Text("Hello"),  // Red + Bold
 )
 ```
@@ -187,7 +194,7 @@ VBox.InheritStyle(&Style{FG: Red, Attr: AttrBold})(
 When a child has an explicit style, only certain properties merge:
 
 ```go
-VBox.InheritStyle(&Style{FG: Red, Attr: AttrBold})(
+VBox.CascadeStyle(&Style{FG: Red, Attr: AttrBold})(
     Text("Override").FG(Green),  // Green FG, Bold (attr merged)
 )
 ```
@@ -196,28 +203,34 @@ VBox.InheritStyle(&Style{FG: Red, Attr: AttrBold})(
 - `Transform` — inherited if child doesn't set one
 - `FG`, `BG` — NOT inherited when child sets any style property
 
-### Fill in InheritStyle
+### Container Fill vs Style Fill
 
-If you use `Fill` inside `InheritStyle`, it cascades to nested containers:
+Two different mechanisms:
+
+**`.Fill()` on VBox/HBox** — fills the container's area with a color. Does not cascade.
 
 ```go
-VBox.InheritStyle(&Style{FG: White, Fill: Blue})(
-    VBox.InheritStyle(&Style{FG: Yellow})(  // no Fill specified
+VBox.Fill(PaletteColor(236))(...)  // only this container is filled
+```
+
+**`Fill` field on `Style`** — when set via `CascadeStyle`, cascades to nested containers:
+
+```go
+VBox.CascadeStyle(&Style{FG: White, Fill: Blue})(
+    VBox.CascadeStyle(&Style{FG: Yellow})(  // no Fill specified
         Text("Yellow on Blue"),              // inherits Blue fill
     ),
 )
 ```
-
-Use `.Fill()` for non-cascading container backgrounds, `InheritStyle.Fill` for cascading.
 
 ### Scoped Inheritance
 
 Nested containers create new scopes:
 
 ```go
-VBox.InheritStyle(&Style{FG: Red})(
+VBox.CascadeStyle(&Style{FG: Red})(
     Text("Red"),
-    VBox.InheritStyle(&Style{FG: Green})(
+    VBox.CascadeStyle(&Style{FG: Green})(
         Text("Green"),
     ),
     Text("Red again"),  // parent style restored
@@ -227,7 +240,7 @@ VBox.InheritStyle(&Style{FG: Red})(
 Works through conditionals and loops:
 
 ```go
-VBox.InheritStyle(&baseStyle)(
+VBox.CascadeStyle(&baseStyle)(
     If(&showDetails).Then(
         Text("Inherits baseStyle"),
     ),
@@ -239,13 +252,13 @@ VBox.InheritStyle(&baseStyle)(
 
 ### Dynamic Themes
 
-Because `InheritStyle` uses a pointer, you can change themes at runtime:
+Because `CascadeStyle` uses a pointer, you can change themes at runtime:
 
 ```go
 var theme = Style{FG: Cyan}
 
 app.SetView(
-    VBox.InheritStyle(&theme)(
+    VBox.CascadeStyle(&theme)(
         Text("Themed content"),
     ),
 )

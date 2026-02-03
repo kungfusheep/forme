@@ -74,29 +74,30 @@ app.Router().HandleUnmatched(func(k riffkey.Key) bool {
 })
 ```
 
-Useful for text input:
+For text input, prefer the declarative `Input` component:
 
 ```go
-handler := riffkey.NewTextHandler(&field.Value, &field.Cursor)
-app.Router().HandleUnmatched(func(k riffkey.Key) bool {
-    return handler.HandleKey(k)
-})
+Input().Placeholder("Search...").Bind()
 ```
+
+`.Bind()` automatically routes unmatched keys to the input via the
+`HandleUnmatched` path. Arrow keys, backspace, Ctrl-a/e/k/u are all
+handled. See [components.md](components.md#input) for details.
 
 ## View-Specific Handlers
 
 Handlers can be set on views:
 
 ```go
-app.SetView(
-    VBox(...),
-).
+app.View("main", VBox(...)).
     Handle("j", down).
     Handle("k", up).
     Handle("q", quit)
+
+app.RunFrom("main")
 ```
 
-Or separately:
+Or on the app directly:
 
 ```go
 app.SetView(VBox(...))
@@ -104,13 +105,28 @@ app.Handle("j", down)
 app.Handle("k", up)
 ```
 
-## Handler Function
+## Declarative Bindings
+
+Components can declare their own bindings — no `*App` reference needed:
 
 ```go
-func(m riffkey.Match) {
-    // m.Key - the key that was pressed
-    // m.Pattern - the pattern that matched
-}
+List(&items).
+    BindNav("j", "k").
+    BindDelete("dd").
+    Handle("<Enter>", func(item *Item) { ... })
+```
+
+Bindings are collected during template compilation and wired to the
+router automatically.
+
+## Handler Function
+
+Handlers accept multiple signatures:
+
+```go
+func(m riffkey.Match) { ... }  // full match info
+func(any) { ... }              // match as any
+func() { ... }                 // simple callback
 ```
 
 ## Common Patterns
