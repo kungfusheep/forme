@@ -2,6 +2,20 @@ package forme
 
 import "reflect"
 
+// binding represents a declared key binding on a component.
+// stored as data during construction, wired to a router during setup.
+type binding struct {
+	pattern string
+	handler any
+}
+
+// textInputBinding represents an InputC that wants unmatched keys routed to it.
+type textInputBinding struct {
+	value    *string
+	cursor   *int
+	onChange func(string) // optional callback when value changes
+}
+
 // ============================================================================
 // Functional Component API
 // ============================================================================
@@ -504,7 +518,7 @@ func (v VRuleC) Height(h int16) VRuleC {
 // ============================================================================
 
 type ProgressC struct {
-	value any   // int (0-100) or *int
+	value any // int (0-100) or *int
 	width int16
 	style Style
 }
@@ -753,16 +767,17 @@ func (f ForEachC[T]) compileTo(t *Template, parent int16, depth int) int16 {
 // ============================================================================
 
 type ListC[T any] struct {
-	items         *[]T
-	selected      *int
-	internalSel   int  // used when no external selection provided
-	render        func(*T) any
-	marker        string
-	markerStyle   Style
-	maxVisible    int
-	style         Style
-	selectedStyle Style
-	cached        *SelectionList // cached instance for consistent reference
+	items            *[]T
+	selected         *int
+	internalSel      int // used when no external selection provided
+	render           func(*T) any
+	marker           string
+	markerStyle      Style
+	maxVisible       int
+	style            Style
+	selectedStyle    Style
+	cached           *SelectionList // cached instance for consistent reference
+	declaredBindings []binding
 }
 
 // List creates a selectable list with internal selection management.
@@ -799,6 +814,26 @@ func (l *ListC[T]) Selected() *T {
 // Index returns the current selection index.
 func (l *ListC[T]) Index() int {
 	return *l.selected
+}
+
+// SetIndex sets the selection index directly.
+func (l *ListC[T]) SetIndex(i int) {
+	*l.selected = i
+}
+
+// ClampSelection ensures the selection index is within bounds.
+func (l *ListC[T]) ClampSelection() {
+	n := len(*l.items)
+	if n == 0 {
+		*l.selected = 0
+		return
+	}
+	if *l.selected >= n {
+		*l.selected = n - 1
+	}
+	if *l.selected < 0 {
+		*l.selected = 0
+	}
 }
 
 // Delete removes the currently selected item.
@@ -888,18 +923,57 @@ func (l *ListC[T]) First(m any) { l.toSelectionList().First(m) }
 // Last moves selection to last item.
 func (l *ListC[T]) Last(m any) { l.toSelectionList().Last(m) }
 
-// BindNav registers navigation keys on the app.
-func (l *ListC[T]) BindNav(app *App, down, up string) *ListC[T] {
-	app.Handle(down, l.Down)
-	app.Handle(up, l.Up)
+func (l *ListC[T]) BindNav(down, up string) *ListC[T] {
+	l.declaredBindings = append(l.declaredBindings,
+		binding{pattern: down, handler: l.Down},
+		binding{pattern: up, handler: l.Up},
+	)
 	return l
 }
 
-// BindDelete binds a key to delete the selected item.
-func (l *ListC[T]) BindDelete(app *App, key string) *ListC[T] {
-	app.Handle(key, l.Delete)
+func (l *ListC[T]) BindPageNav(pageDown, pageUp string) *ListC[T] {
+	l.declaredBindings = append(l.declaredBindings,
+		binding{pattern: pageDown, handler: l.PageDown},
+		binding{pattern: pageUp, handler: l.PageUp},
+	)
 	return l
 }
+
+func (l *ListC[T]) BindFirstLast(first, last string) *ListC[T] {
+	l.declaredBindings = append(l.declaredBindings,
+		binding{pattern: first, handler: l.First},
+		binding{pattern: last, handler: l.Last},
+	)
+	return l
+}
+
+// BindVimNav wires the standard vim-style navigation keys:
+// j/k for line movement, Ctrl-d/Ctrl-u for page, g/G for first/last.
+func (l *ListC[T]) BindVimNav() *ListC[T] {
+	return l.BindNav("j", "k").BindPageNav("<C-d>", "<C-u>").BindFirstLast("g", "G")
+}
+
+func (l *ListC[T]) BindDelete(key string) *ListC[T] {
+	l.declaredBindings = append(l.declaredBindings,
+		binding{pattern: key, handler: l.Delete},
+	)
+	return l
+}
+
+// Handle registers a key binding that passes the currently selected item
+// to the callback. If nothing is selected, the callback is not called.
+func (l *ListC[T]) Handle(key string, fn func(*T)) *ListC[T] {
+	l.declaredBindings = append(l.declaredBindings,
+		binding{pattern: key, handler: func() {
+			if item := l.Selected(); item != nil {
+				fn(item)
+			}
+		}},
+	)
+	return l
+}
+
+func (l *ListC[T]) bindings() []binding { return l.declaredBindings }
 
 // ============================================================================
 // Tabs - Tab headers
@@ -1065,13 +1139,13 @@ func (t AutoTableC) Border(b BorderStyle) AutoTableC {
 
 // CheckboxC is a toggleable checkbox bound to a *bool.
 type CheckboxC struct {
-	checked     *bool
-	label       string
-	labelPtr    *string
-	checkedMark string
-	unchecked   string
-	style       Style
-	app         *App
+	checked          *bool
+	label            string
+	labelPtr         *string
+	checkedMark      string
+	unchecked        string
+	style            Style
+	declaredBindings []binding
 }
 
 // Checkbox creates a checkbox bound to a bool pointer.
@@ -1107,14 +1181,14 @@ func (c *CheckboxC) Style(s Style) *CheckboxC {
 	return c
 }
 
-// BindToggle registers a key to toggle this checkbox.
-func (c *CheckboxC) BindToggle(app *App, key string) *CheckboxC {
-	c.app = app
-	app.Handle(key, func() {
-		*c.checked = !*c.checked
-	})
+func (c *CheckboxC) BindToggle(key string) *CheckboxC {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: key, handler: c.Toggle},
+	)
 	return c
 }
+
+func (c *CheckboxC) bindings() []binding { return c.declaredBindings }
 
 // Toggle flips the checked state.
 func (c *CheckboxC) Toggle() {
@@ -1128,15 +1202,15 @@ func (c *CheckboxC) Checked() bool {
 
 // RadioC is a single-selection group bound to *int (selected index).
 type RadioC struct {
-	selected    *int
-	options     []string
-	optionsPtr  *[]string
-	selectedMark string
-	unselected  string
-	style       Style
-	gap         int8
-	horizontal  bool
-	app         *App
+	selected         *int
+	options          []string
+	optionsPtr       *[]string
+	selectedMark     string
+	unselected       string
+	style            Style
+	gap              int8
+	horizontal       bool
+	declaredBindings []binding
 }
 
 // Radio creates a radio group with static options.
@@ -1182,13 +1256,15 @@ func (r *RadioC) Horizontal() *RadioC {
 	return r
 }
 
-// BindNav registers navigation keys for this radio group.
-func (r *RadioC) BindNav(app *App, next, prev string) *RadioC {
-	r.app = app
-	app.Handle(next, func() { r.Next() })
-	app.Handle(prev, func() { r.Prev() })
+func (r *RadioC) BindNav(next, prev string) *RadioC {
+	r.declaredBindings = append(r.declaredBindings,
+		binding{pattern: next, handler: func() { r.Next() }},
+		binding{pattern: prev, handler: func() { r.Prev() }},
+	)
 	return r
 }
+
+func (r *RadioC) bindings() []binding { return r.declaredBindings }
 
 // Next moves selection to next option.
 func (r *RadioC) Next() {
@@ -1228,20 +1304,20 @@ func (r *RadioC) getOptions() []string {
 
 // CheckListC is a list with per-item checkboxes, similar to todo lists.
 type CheckListC[T any] struct {
-	items         *[]T
-	checked       func(*T) *bool
-	render        func(*T) any
-	selected      *int
-	internalSel   int
-	checkedMark   string
-	uncheckedMark string
-	marker        string
-	markerStyle   Style
-	style         Style
-	selectedStyle Style
-	gap           int8
-	app           *App
-	cached        *SelectionList
+	items            *[]T
+	checked          func(*T) *bool
+	render           func(*T) any
+	selected         *int
+	internalSel      int
+	checkedMark      string
+	uncheckedMark    string
+	marker           string
+	markerStyle      Style
+	style            Style
+	selectedStyle    Style
+	gap              int8
+	declaredBindings []binding
+	cached           *SelectionList
 }
 
 // CheckList creates a list where each item has a checkbox.
@@ -1301,33 +1377,71 @@ func (c *CheckListC[T]) Gap(g int8) *CheckListC[T] {
 	return c
 }
 
-// BindNav registers navigation keys.
-func (c *CheckListC[T]) BindNav(app *App, down, up string) *CheckListC[T] {
-	c.app = app
-	app.Handle(down, c.Down)
-	app.Handle(up, c.Up)
+func (c *CheckListC[T]) BindNav(down, up string) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: down, handler: c.Down},
+		binding{pattern: up, handler: c.Up},
+	)
 	return c
 }
 
-// BindToggle registers a key to toggle the checkbox of the selected item.
-func (c *CheckListC[T]) BindToggle(app *App, key string) *CheckListC[T] {
-	c.app = app
-	app.Handle(key, func() {
-		if c.checked != nil {
-			if item := c.SelectedItem(); item != nil {
-				ptr := c.checked(item)
-				*ptr = !*ptr
+func (c *CheckListC[T]) BindPageNav(pageDown, pageUp string) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: pageDown, handler: c.PageDown},
+		binding{pattern: pageUp, handler: c.PageUp},
+	)
+	return c
+}
+
+func (c *CheckListC[T]) BindFirstLast(first, last string) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: first, handler: c.First},
+		binding{pattern: last, handler: c.Last},
+	)
+	return c
+}
+
+// BindVimNav wires the standard vim-style navigation keys:
+// j/k for line movement, Ctrl-d/Ctrl-u for page, g/G for first/last.
+func (c *CheckListC[T]) BindVimNav() *CheckListC[T] {
+	return c.BindNav("j", "k").BindPageNav("<C-d>", "<C-u>").BindFirstLast("g", "G")
+}
+
+func (c *CheckListC[T]) BindToggle(key string) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: key, handler: func() {
+			if c.checked != nil {
+				if item := c.SelectedItem(); item != nil {
+					ptr := c.checked(item)
+					*ptr = !*ptr
+				}
 			}
-		}
-	})
+		}},
+	)
 	return c
 }
 
-// BindDelete binds a key to delete the selected item.
-func (c *CheckListC[T]) BindDelete(app *App, key string) *CheckListC[T] {
-	app.Handle(key, c.Delete)
+func (c *CheckListC[T]) BindDelete(key string) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: key, handler: c.Delete},
+	)
 	return c
 }
+
+// Handle registers a key binding that passes the currently selected item
+// to the callback. If nothing is selected, the callback is not called.
+func (c *CheckListC[T]) Handle(key string, fn func(*T)) *CheckListC[T] {
+	c.declaredBindings = append(c.declaredBindings,
+		binding{pattern: key, handler: func() {
+			if item := c.SelectedItem(); item != nil {
+				fn(item)
+			}
+		}},
+	)
+	return c
+}
+
+func (c *CheckListC[T]) bindings() []binding { return c.declaredBindings }
 
 func (c *CheckListC[T]) Ref(f func(*CheckListC[T])) *CheckListC[T] { f(c); return c }
 
@@ -1363,8 +1477,12 @@ func (c *CheckListC[T]) Delete() {
 	}
 }
 
-func (c *CheckListC[T]) Up(m any)   { c.toSelectionList().Up(m) }
-func (c *CheckListC[T]) Down(m any) { c.toSelectionList().Down(m) }
+func (c *CheckListC[T]) Up(m any)       { c.toSelectionList().Up(m) }
+func (c *CheckListC[T]) Down(m any)     { c.toSelectionList().Down(m) }
+func (c *CheckListC[T]) PageUp(m any)   { c.toSelectionList().PageUp(m) }
+func (c *CheckListC[T]) PageDown(m any) { c.toSelectionList().PageDown(m) }
+func (c *CheckListC[T]) First(m any)    { c.toSelectionList().First(m) }
+func (c *CheckListC[T]) Last(m any)     { c.toSelectionList().Last(m) }
 
 func (c *CheckListC[T]) toSelectionList() *SelectionList {
 	if c.cached == nil {
@@ -1439,7 +1557,7 @@ type InputC struct {
 	width       int
 	mask        rune
 	style       Style
-	app         *App
+	declaredTIB *textInputBinding
 }
 
 // Input creates a text input with internal state.
@@ -1472,12 +1590,15 @@ func (i *InputC) Style(s Style) *InputC {
 	return i
 }
 
-// BindTo routes unmatched keys to this input.
-func (i *InputC) BindTo(app *App) *InputC {
-	i.app = app
-	app.router.TextInput(&i.field.Value, &i.field.Cursor)
+func (i *InputC) Bind() *InputC {
+	i.declaredTIB = &textInputBinding{
+		value:  &i.field.Value,
+		cursor: &i.field.Cursor,
+	}
 	return i
 }
+
+func (i *InputC) textBinding() *textInputBinding { return i.declaredTIB }
 
 // Value returns the current text value.
 func (i *InputC) Value() string {

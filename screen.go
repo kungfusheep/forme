@@ -115,7 +115,7 @@ func (s *Screen) EnterRawMode() error {
 		return nil
 	}
 
-	termios, err := unix.IoctlGetTermios(s.fd, unix.TIOCGETA)
+	termios, err := unix.IoctlGetTermios(s.fd, ioctlGetTermios)
 	if err != nil {
 		return fmt.Errorf("failed to get termios: %w", err)
 	}
@@ -134,7 +134,7 @@ func (s *Screen) EnterRawMode() error {
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
 
-	if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, &raw); err != nil {
+	if err := unix.IoctlSetTermios(s.fd, ioctlSetTermios, &raw); err != nil {
 		return fmt.Errorf("failed to set raw mode: %w", err)
 	}
 
@@ -168,7 +168,7 @@ func (s *Screen) ExitRawMode() error {
 	signal.Stop(s.sigChan)
 
 	if s.origTermios != nil {
-		if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, s.origTermios); err != nil {
+		if err := unix.IoctlSetTermios(s.fd, ioctlSetTermios, s.origTermios); err != nil {
 			return fmt.Errorf("failed to restore termios: %w", err)
 		}
 	}
@@ -185,7 +185,7 @@ func (s *Screen) EnterInlineMode() error {
 		return nil
 	}
 
-	termios, err := unix.IoctlGetTermios(s.fd, unix.TIOCGETA)
+	termios, err := unix.IoctlGetTermios(s.fd, ioctlGetTermios)
 	if err != nil {
 		return fmt.Errorf("failed to get termios: %w", err)
 	}
@@ -204,7 +204,7 @@ func (s *Screen) EnterInlineMode() error {
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
 
-	if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, &raw); err != nil {
+	if err := unix.IoctlSetTermios(s.fd, ioctlSetTermios, &raw); err != nil {
 		return fmt.Errorf("failed to set raw mode: %w", err)
 	}
 
@@ -243,7 +243,7 @@ func (s *Screen) ExitInlineMode(linesUsed int, clear bool) error {
 		if linesUsed > 1 {
 			clearBuf.WriteString(fmt.Sprintf("\x1b[%dA", linesUsed-1))
 		}
-		clearBuf.WriteString("\r") // Ensure at start of line
+		clearBuf.WriteString("\r")      // Ensure at start of line
 		clearBuf.WriteString("\x1b[0m") // Reset style
 		s.writer.Write(clearBuf.Bytes())
 	} else if linesUsed > 0 {
@@ -252,7 +252,7 @@ func (s *Screen) ExitInlineMode(linesUsed int, clear bool) error {
 		if linesUsed > 1 {
 			moveBuf.WriteString(fmt.Sprintf("\x1b[%dB", linesUsed-1)) // Move to last line of content
 		}
-		moveBuf.WriteString("\r\n") // New line after content
+		moveBuf.WriteString("\r\n")    // New line after content
 		moveBuf.WriteString("\x1b[0m") // Reset style
 		s.writer.Write(moveBuf.Bytes())
 	} else {
@@ -263,7 +263,7 @@ func (s *Screen) ExitInlineMode(linesUsed int, clear bool) error {
 	signal.Stop(s.sigChan)
 
 	if s.origTermios != nil {
-		if err := unix.IoctlSetTermios(s.fd, unix.TIOCSETA, s.origTermios); err != nil {
+		if err := unix.IoctlSetTermios(s.fd, ioctlSetTermios, s.origTermios); err != nil {
 			return fmt.Errorf("failed to restore termios: %w", err)
 		}
 	}
