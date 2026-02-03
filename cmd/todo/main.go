@@ -16,9 +16,9 @@ func main() {
 	app.SetView(
 		VBox.Border(BorderRounded).Title("Todo").FitContent().Gap(1)(
 			CheckList(&todos).
-				BindNav(app, "<C-n>", "<C-p>").
-				BindToggle(app, "<tab>").
-				BindDelete(app, "<C-d>"),
+				BindNav("<C-n>", "<C-p>").
+				BindToggle("<tab>").
+				BindDelete("<C-d>"),
 			HBox.Gap(1)(
 				Text("Add:"),
 				TextInput{Field: &input, Width: 30},

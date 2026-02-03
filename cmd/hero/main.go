@@ -11,7 +11,6 @@ func main() {
 	cpu, mem := 72, 48
 	online := true
 	history := []float64{3, 5, 2, 7, 4, 6, 3, 5, 8, 4}
-	accent := Style{FG: Green}
 	tick := 0
 
 	app, err := NewApp()
@@ -20,7 +19,7 @@ func main() {
 	}
 
 	app.SetView(
-		VBox.Border(BorderDouble).BorderFG(Green).Title("SYS").FitContent().CascadeStyle(&accent)(
+		VBox.Border(BorderDouble).Title("SYS").FitContent()(
 			If(&online).
 				Then(Text("● ONLINE")).
 				Else(Text("● OFFLINE").FG(Red)),

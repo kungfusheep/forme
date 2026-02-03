@@ -40,6 +40,21 @@ type listCompiler interface {
 	toSelectionList() *SelectionList
 }
 
+// bindable is implemented by components that declare key bindings as data.
+type bindable interface {
+	bindings() []binding
+}
+
+// textInputBindable is implemented by InputC for text input routing.
+type textInputBindable interface {
+	textBinding() *textInputBinding
+}
+
+// templateTree is implemented by compound components that compose existing
+// building blocks into a template subtree.
+type templateTree interface {
+	toTemplate() any
+}
 
 // LayoutFunc positions children given their sizes and available space.
 type LayoutFunc func(children []ChildSize, availW, availH int) []Rect
@@ -89,6 +104,10 @@ type Template struct {
 
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
+
+	// Declarative bindings collected during compile, wired during setup
+	pendingBindings []binding
+	pendingTIB      *textInputBinding
 }
 
 // pendingOverlay stores info needed to render an overlay after main content
@@ -99,6 +118,18 @@ type pendingOverlay struct {
 // SetApp links this template to an App for jump mode support.
 func (t *Template) SetApp(a *App) {
 	t.app = a
+}
+
+func (t *Template) collectBindings(node any) {
+	if b, ok := node.(bindable); ok {
+		t.pendingBindings = append(t.pendingBindings, b.bindings()...)
+	}
+}
+
+func (t *Template) collectTextInputBinding(node any) {
+	if tib, ok := node.(textInputBindable); ok {
+		t.pendingTIB = tib.textBinding()
+	}
 }
 
 // Geom holds runtime geometry for an op.
@@ -135,22 +166,22 @@ type Op struct {
 	FitContent   bool    // size to content instead of filling available space
 
 	// Container
-	IsRow           bool        // true=HBox, false=VBox
-	Border          BorderStyle // border style
-	BorderFG        *Color      // border foreground color
-	BorderBG        *Color      // border background color
-	Title           string      // border title
-	ChildStart      int16       // first child op index
-	ChildEnd        int16       // last child op index (exclusive)
-	CascadeStyle *Style // style inherited by children (pointer for dynamic themes)
-	Fill         Color  // container fill color (fills entire area)
+	IsRow        bool        // true=HBox, false=VBox
+	Border       BorderStyle // border style
+	BorderFG     *Color      // border foreground color
+	BorderBG     *Color      // border background color
+	Title        string      // border title
+	ChildStart   int16       // first child op index
+	ChildEnd     int16       // last child op index (exclusive)
+	CascadeStyle *Style      // style inherited by children (pointer for dynamic themes)
+	Fill         Color       // container fill color (fills entire area)
 
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
 	CondNode ConditionNode // for If (builder-style conditions)
-	ThenTmpl *Template   // for If
-	ElseTmpl *Template   // for If/Else
-	IterTmpl *Template  // for ForEach
+	ThenTmpl *Template     // for If
+	ElseTmpl *Template     // for If/Else
+	IterTmpl *Template     // for ForEach
 	SlicePtr unsafe.Pointer
 	ElemSize uintptr
 
@@ -174,9 +205,9 @@ type Op struct {
 	LayerHeight int16  // viewport height (0 = fill available)
 
 	// RichText
-	StaticSpans []Span   // for static spans
-	SpansPtr    *[]Span  // for pointer to spans
-	SpansOff    uintptr  // for ForEach offset
+	StaticSpans []Span  // for static spans
+	SpansPtr    *[]Span // for pointer to spans
+	SpansOff    uintptr // for ForEach offset
 
 	// SelectionList
 	SelectionListPtr *SelectionList // pointer to the list for len/offset updates
@@ -185,28 +216,28 @@ type Op struct {
 	MarkerWidth      int16          // cached rune count of marker
 
 	// Leader
-	LeaderLabel     string   // static label
-	LeaderValue     string   // static value (OpLeader)
-	LeaderValuePtr  *string  // pointer value (OpLeaderPtr)
-	LeaderIntPtr    *int     // pointer to int (OpLeaderIntPtr)
-	LeaderFloatPtr  *float64 // pointer to float64 (OpLeaderFloatPtr)
-	LeaderFill      rune     // fill character (default '.')
-	LeaderStyle     Style    // styling
+	LeaderLabel    string   // static label
+	LeaderValue    string   // static value (OpLeader)
+	LeaderValuePtr *string  // pointer value (OpLeaderPtr)
+	LeaderIntPtr   *int     // pointer to int (OpLeaderIntPtr)
+	LeaderFloatPtr *float64 // pointer to float64 (OpLeaderFloatPtr)
+	LeaderFill     rune     // fill character (default '.')
+	LeaderStyle    Style    // styling
 
 	// Table
-	TableColumns    []TableColumn  // column definitions
-	TableRowsPtr    *[][]string    // pointer to row data
-	TableShowHeader bool           // show header row
+	TableColumns     []TableColumn // column definitions
+	TableRowsPtr     *[][]string   // pointer to row data
+	TableShowHeader  bool          // show header row
 	TableHeaderStyle Style         // style for header
 	TableRowStyle    Style         // style for rows
 	TableAltStyle    Style         // alternating row style
 
 	// Sparkline
-	SparkValues    []float64   // static values
-	SparkValuesPtr *[]float64  // pointer values
-	SparkMin       float64     // min value (0 = auto)
-	SparkMax       float64     // max value (0 = auto)
-	SparkStyle     Style       // styling
+	SparkValues    []float64  // static values
+	SparkValuesPtr *[]float64 // pointer values
+	SparkMin       float64    // min value (0 = auto)
+	SparkMax       float64    // max value (0 = auto)
+	SparkStyle     Style      // styling
 
 	// HRule/VRule
 	RuleChar  rune  // line character
@@ -250,25 +281,25 @@ type Op struct {
 	JumpStyle    Style  // label style override (zero = use app default)
 
 	// TextInput
-	TextInputFieldPtr      *Field      // Field-based API (bundles Value+Cursor)
-	TextInputFocusGroupPtr *FocusGroup // shared focus tracker
-	TextInputFocusIndex    int         // this field's index in focus group
-	TextInputValuePtr       *string // bound text value (legacy)
-	TextInputCursorPtr      *int    // bound cursor position (legacy)
-	TextInputFocusedPtr     *bool   // show cursor only when true (legacy)
-	TextInputPlaceholder    string  // placeholder text
-	TextInputMask           rune    // password mask (0 = none)
-	TextInputStyle          Style   // text style
-	TextInputPlaceholderSty Style   // placeholder style
-	TextInputCursorStyle    Style   // cursor style
+	TextInputFieldPtr       *Field      // Field-based API (bundles Value+Cursor)
+	TextInputFocusGroupPtr  *FocusGroup // shared focus tracker
+	TextInputFocusIndex     int         // this field's index in focus group
+	TextInputValuePtr       *string     // bound text value (legacy)
+	TextInputCursorPtr      *int        // bound cursor position (legacy)
+	TextInputFocusedPtr     *bool       // show cursor only when true (legacy)
+	TextInputPlaceholder    string      // placeholder text
+	TextInputMask           rune        // password mask (0 = none)
+	TextInputStyle          Style       // text style
+	TextInputPlaceholderSty Style       // placeholder style
+	TextInputCursorStyle    Style       // cursor style
 
 	// Overlay
-	OverlayCentered   bool      // center on screen
-	OverlayX, OverlayY int16    // explicit position
-	OverlayBackdrop   bool      // draw backdrop
-	OverlayBackdropFG Color     // backdrop color
-	OverlayBG         Color     // background fill for overlay content area
-	OverlayChildTmpl  *Template // compiled child content
+	OverlayCentered    bool      // center on screen
+	OverlayX, OverlayY int16     // explicit position
+	OverlayBackdrop    bool      // draw backdrop
+	OverlayBackdropFG  Color     // backdrop color
+	OverlayBG          Color     // background fill for overlay content area
+	OverlayChildTmpl   *Template // compiled child content
 }
 
 type OpKind uint8
@@ -463,10 +494,13 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case AutoTableC:
 		return t.compileAutoTableC(v, parent, depth)
 	case *CheckboxC:
+		t.collectBindings(v)
 		return t.compileCheckboxC(v, parent, depth, elemBase)
 	case *RadioC:
+		t.collectBindings(v)
 		return t.compileRadioC(v, parent, depth)
 	case *InputC:
+		t.collectTextInputBinding(v)
 		return t.compileInputC(v, parent, depth)
 	case Custom:
 		return t.compileCustom(v, parent, depth)
@@ -477,9 +511,17 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return fe.compileTo(t, parent, depth)
 	}
 
+	// Check for compound components that produce a template subtree
+	if tc, ok := node.(templateTree); ok {
+		t.collectBindings(node)
+		t.collectTextInputBinding(node)
+		return t.compile(tc.toTemplate(), parent, depth, elemBase, elemSize)
+	}
+
 	// Check for ListC[T] or CheckListC[T] via interface
 	// Both implement toSelectionList() which sets up their render functions appropriately
 	if lc, ok := node.(listCompiler); ok {
+		t.collectBindings(node)
 		return t.compileSelectionList(lc.toSelectionList(), parent, depth, elemBase, elemSize)
 	}
 
@@ -1033,21 +1075,21 @@ func (t *Template) compileProgress(v ProgressNode, parent int16, depth int, elem
 
 func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, fill Color, inheritStyle *Style, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
-		Kind:            OpContainer,
-		Parent:          parent,
-		IsRow:           isRow,
-		Gap:             gap,
-		PercentWidth:    f.percentWidth,
-		Width:           f.width,
-		Height:          f.height,
-		FlexGrow:        f.flexGrow,
-		FitContent:      f.fitContent,
-		Border:          border,
-		Title:           title,
-		BorderFG:        borderFG,
-		BorderBG:        borderBG,
-		Fill:            fill,
-		CascadeStyle:    inheritStyle,
+		Kind:         OpContainer,
+		Parent:       parent,
+		IsRow:        isRow,
+		Gap:          gap,
+		PercentWidth: f.percentWidth,
+		Width:        f.width,
+		Height:       f.height,
+		FlexGrow:     f.flexGrow,
+		FitContent:   f.fitContent,
+		Border:       border,
+		Title:        title,
+		BorderFG:     borderFG,
+		BorderBG:     borderBG,
+		Fill:         fill,
+		CascadeStyle: inheritStyle,
 	}
 
 	idx := t.addOp(op, depth)
@@ -1106,6 +1148,8 @@ func (t *Template) compileIf(v IfNode, parent int16, depth int, elemBase unsafe.
 		}
 		thenTmpl.geom = make([]Geom, len(thenTmpl.ops))
 		op.ThenTmpl = thenTmpl
+		// bubble up declarative bindings from sub-template
+		t.pendingBindings = append(t.pendingBindings, thenTmpl.pendingBindings...)
 	}
 
 	return t.addOp(op, depth)
@@ -1143,6 +1187,7 @@ func (t *Template) compileCondition(cond ConditionNode, parent int16, depth int,
 		}
 		thenTmpl.geom = make([]Geom, len(thenTmpl.ops))
 		op.ThenTmpl = thenTmpl
+		t.pendingBindings = append(t.pendingBindings, thenTmpl.pendingBindings...)
 	}
 
 	// Compile else branch if present
@@ -1160,6 +1205,7 @@ func (t *Template) compileCondition(cond ConditionNode, parent int16, depth int,
 		}
 		elseTmpl.geom = make([]Geom, len(elseTmpl.ops))
 		op.ElseTmpl = elseTmpl
+		t.pendingBindings = append(t.pendingBindings, elseTmpl.pendingBindings...)
 	}
 
 	return t.addOp(op, depth)
@@ -1190,6 +1236,7 @@ func (t *Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth int
 			}
 			caseTmpl.geom = make([]Geom, len(caseTmpl.ops))
 			op.SwitchCases[i] = caseTmpl
+			t.pendingBindings = append(t.pendingBindings, caseTmpl.pendingBindings...)
 		}
 	}
 
@@ -1208,6 +1255,7 @@ func (t *Template) compileSwitch(sw SwitchNodeInterface, parent int16, depth int
 		}
 		defTmpl.geom = make([]Geom, len(defTmpl.ops))
 		op.SwitchDef = defTmpl
+		t.pendingBindings = append(t.pendingBindings, defTmpl.pendingBindings...)
 	}
 
 	return t.addOp(op, depth)
@@ -1559,7 +1607,6 @@ func (t *Template) compileOverlayC(v OverlayC, parent int16, depth int) int16 {
 		OverlayChildTmpl:  childTmpl,
 	}, depth)
 }
-
 
 func (t *Template) compileTabsC(v TabsC, parent int16, depth int) int16 {
 	return t.addOp(Op{
@@ -2813,8 +2860,8 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 
 		childGeom := &t.geom[i]
 
-		// Check for direct flex child (container or layer)
-		if (childOp.Kind == OpContainer || childOp.Kind == OpLayer) && childOp.FlexGrow > 0 {
+		// Check for direct flex child (container, layer or spacer)
+		if (childOp.Kind == OpContainer || childOp.Kind == OpLayer || childOp.Kind == OpSpacer) && childOp.FlexGrow > 0 {
 			totalFlex += childOp.FlexGrow
 			flexChildren = append(flexChildren, i)
 			flexGrowValues = append(flexGrowValues, childOp.FlexGrow)
@@ -3387,7 +3434,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			op.ThenTmpl.app = t.app
 			op.ThenTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
 			op.ThenTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
-			op.ThenTmpl.clipMaxY = t.clipMaxY              // propagate vertical clip
+			op.ThenTmpl.clipMaxY = t.clipMaxY             // propagate vertical clip
 			op.ThenTmpl.pendingOverlays = op.ThenTmpl.pendingOverlays[:0]
 			op.ThenTmpl.render(buf, absX, absY, geom.W)
 			// Propagate overlays from sub-template to main template
@@ -3396,7 +3443,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			op.ElseTmpl.app = t.app
 			op.ElseTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
 			op.ElseTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
-			op.ElseTmpl.clipMaxY = t.clipMaxY              // propagate vertical clip
+			op.ElseTmpl.clipMaxY = t.clipMaxY             // propagate vertical clip
 			op.ElseTmpl.pendingOverlays = op.ElseTmpl.pendingOverlays[:0]
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
 			t.pendingOverlays = append(t.pendingOverlays, op.ElseTmpl.pendingOverlays...)
@@ -4546,4 +4593,3 @@ func opKindName(k OpKind) string {
 	}
 	return fmt.Sprintf("Op(%d)", k)
 }
-

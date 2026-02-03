@@ -63,6 +63,9 @@ type App struct {
 	// Resize callback
 	onResize func(width, height int)
 
+	// Before-render callback (for syncing state before layout)
+	onBeforeRender func()
+
 	// After-render callback (for cursor updates after layout is known)
 	onAfterRender func()
 
@@ -219,6 +222,7 @@ func (a *App) SetView(view any) *App {
 
 	a.template = Build(view)
 	a.template.SetApp(a) // Link for jump mode support
+	a.wireBindings(a.template, a.router)
 	// Create buffer pool for async clearing (or reuse existing)
 	size := a.screen.Size()
 	if a.pool == nil {
@@ -227,6 +231,28 @@ func (a *App) SetView(view any) *App {
 		a.pool.Resize(size.Width, size.Height)
 	}
 	return a
+}
+
+// wireBindings registers all declarative component bindings on the given router.
+func (a *App) wireBindings(tmpl *Template, router *riffkey.Router) {
+	for _, b := range tmpl.pendingBindings {
+		switch h := b.handler.(type) {
+		case func(riffkey.Match):
+			pattern := b.pattern
+			router.Handle(pattern, func(m riffkey.Match) { h(m); a.RequestRender() })
+		case func(any):
+			pattern := b.pattern
+			router.Handle(pattern, func(_ riffkey.Match) { h(nil); a.RequestRender() })
+		case func():
+			pattern := b.pattern
+			router.Handle(pattern, func(_ riffkey.Match) { h(); a.RequestRender() })
+		}
+	}
+	if tmpl.pendingTIB != nil {
+		th := riffkey.NewTextHandler(tmpl.pendingTIB.value, tmpl.pendingTIB.cursor)
+		th.OnChange = tmpl.pendingTIB.onChange
+		router.HandleUnmatched(th.HandleKey)
+	}
 }
 
 // ViewBuilder allows chaining Handle() calls after View().
@@ -262,8 +288,9 @@ func (a *App) View(name string, view any) *ViewBuilder {
 	// Compile template and create router for this view
 	tmpl := Build(view)
 	tmpl.SetApp(a) // Link for jump mode support
-	a.viewTemplates[name] = tmpl
 	router := riffkey.NewRouter()
+	a.wireBindings(tmpl, router)
+	a.viewTemplates[name] = tmpl
 	a.viewRouters[name] = router
 
 	return &ViewBuilder{
@@ -276,8 +303,17 @@ func (a *App) View(name string, view any) *ViewBuilder {
 func (vb *ViewBuilder) Ref(f func(*ViewBuilder)) *ViewBuilder { f(vb); return vb }
 
 // Handle registers a key handler for this view.
-func (vb *ViewBuilder) Handle(pattern string, handler func(riffkey.Match)) *ViewBuilder {
-	vb.router.Handle(pattern, handler)
+// Accepts func(riffkey.Match), func(any), or func() for convenience.
+// Automatically requests a re-render after the handler runs.
+func (vb *ViewBuilder) Handle(pattern string, handler any) *ViewBuilder {
+	switch h := handler.(type) {
+	case func(riffkey.Match):
+		vb.router.Handle(pattern, func(m riffkey.Match) { h(m); vb.app.RequestRender() })
+	case func(any):
+		vb.router.Handle(pattern, func(_ riffkey.Match) { h(nil); vb.app.RequestRender() })
+	case func():
+		vb.router.Handle(pattern, func(_ riffkey.Match) { h(); vb.app.RequestRender() })
+	}
 	return vb
 }
 
@@ -289,6 +325,9 @@ func (a *App) UpdateView(name string, view any) {
 	}
 	tmpl := Build(view)
 	tmpl.SetApp(a) // Link for jump mode support
+	if router, ok := a.viewRouters[name]; ok {
+		a.wireBindings(tmpl, router)
+	}
 	a.viewTemplates[name] = tmpl
 }
 
@@ -447,6 +486,12 @@ func (a *App) OnResize(fn func(width, height int)) {
 	a.onResize = fn
 }
 
+// OnBeforeRender sets a callback to be called before each render.
+// Use this to sync state (e.g., filter updates) before layout runs.
+func (a *App) OnBeforeRender(fn func()) {
+	a.onBeforeRender = fn
+}
+
 // OnAfterRender sets a callback to be called after each render completes.
 // Use this to update cursor position after layout is known.
 func (a *App) OnAfterRender(fn func()) {
@@ -488,6 +533,11 @@ func (a *App) render() {
 
 	if a.pool == nil {
 		return // No pool
+	}
+
+	// sync state before layout (e.g., filter updates)
+	if a.onBeforeRender != nil {
+		a.onBeforeRender()
 	}
 
 	// clear active layer before render (will be set if a layer has visible cursor)

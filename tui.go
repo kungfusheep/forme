@@ -1,4 +1,4 @@
-// Package tui provides a high-performance terminal UI framework.
+// Package forme provides a high-performance terminal UI framework.
 package forme
 
 import "unsafe"
@@ -47,7 +47,7 @@ type ColorMode uint8
 
 const (
 	ColorDefault ColorMode = iota // Terminal default
-	Color16                       // Basic 16 colors (0-15)
+	Color16                       // Basic 16 colours (0-15)
 	Color256                      // 256 color palette (0-255)
 	ColorRGB                      // 24-bit true color
 )
@@ -64,12 +64,12 @@ func DefaultColor() Color {
 	return Color{Mode: ColorDefault}
 }
 
-// BasicColor returns one of the 16 basic terminal colors.
+// BasicColor returns one of the 16 basic terminal colours.
 func BasicColor(index uint8) Color {
 	return Color{Mode: Color16, Index: index}
 }
 
-// PaletteColor returns one of the 256 palette colors.
+// PaletteColor returns one of the 256 palette colours.
 func PaletteColor(index uint8) Color {
 	return Color{Mode: Color256, Index: index}
 }
@@ -89,7 +89,7 @@ func Hex(hex uint32) Color {
 	}
 }
 
-// LerpColor blends between two colors. t=0 returns a, t=1 returns b.
+// LerpColor blends between two colours. t=0 returns a, t=1 returns b.
 func LerpColor(a, b Color, t float64) Color {
 	// Clamp t to 0-1
 	if t < 0 {
@@ -104,7 +104,7 @@ func LerpColor(a, b Color, t float64) Color {
 	)
 }
 
-// Standard basic colors for convenience.
+// Standard basic colours for convenience.
 var (
 	Black   = BasicColor(0)
 	Red     = BasicColor(1)
@@ -126,12 +126,12 @@ var (
 	BrightWhite   = BasicColor(15)
 )
 
-// Equal returns true if two colors are equal.
+// Equal returns true if two colours are equal.
 func (c Color) Equal(other Color) bool {
 	return c == other
 }
 
-// Style combines foreground, background colors and attributes.
+// Style combines foreground, background colours and attributes.
 type Style struct {
 	FG        Color
 	BG        Color // text background (behind characters)
@@ -140,7 +140,7 @@ type Style struct {
 	Transform TextTransform // text case transformation (uppercase, lowercase, etc.)
 }
 
-// DefaultStyle returns a style with default colors and no attributes.
+// DefaultStyle returns a style with default colours and no attributes.
 func DefaultStyle() Style {
 	return Style{
 		FG: DefaultColor(),
@@ -256,14 +256,14 @@ type Flex struct {
 	FlexGrow     float32 // share of remaining space (0 = none, 1 = equal share)
 }
 
-// Text displays text content.
+// TextNode displays text content.
 type TextNode struct {
 	Flex
 	Content any   // string or *string
 	Style   Style // styling (use Attr for bold, dim, etc.)
 }
 
-// Leader displays "Label.....Value" with dots filling the space.
+// LeaderNode displays "Label.....Value" with dots filling the space.
 // Supports pointer bindings for dynamic updates.
 type LeaderNode struct {
 	Label any   // string or *string
@@ -300,7 +300,7 @@ type Table struct {
 	AltRowStyle Style         // style for alternating rows (if non-zero)
 }
 
-// Sparkline displays a mini chart using Unicode block characters.
+// SparklineNode displays a mini chart using Unicode block characters.
 // Values are normalized to fit within the available height (1 character).
 // Uses: ▁▂▃▄▅▆▇█
 type SparklineNode struct {
@@ -311,21 +311,21 @@ type SparklineNode struct {
 	Style  Style   // styling
 }
 
-// HRule draws a horizontal line that fills available width.
+// HRuleNode draws a horizontal line that fills available width.
 // Default character is '─' (box drawing light horizontal).
 type HRuleNode struct {
 	Char  rune  // line character (0 = '─')
 	Style Style // styling
 }
 
-// VRule draws a vertical line that fills available height.
+// VRuleNode draws a vertical line that fills available height.
 // Default character is '│' (box drawing light vertical).
 type VRuleNode struct {
 	Char  rune  // line character (0 = '│')
 	Style Style // styling
 }
 
-// Spacer creates empty space with specified dimensions.
+// SpacerNode creates empty space with specified dimensions.
 // If no dimensions are set, Spacer grows to fill available space (implicit Grow(1)).
 // With explicit Width/Height, it becomes a fixed-size spacer.
 //
@@ -349,7 +349,7 @@ func (s SpacerNode) Grow(g float32) SpacerNode { s.flexGrow = g; return s }
 // FG sets the foreground color for the fill character.
 func (s SpacerNode) FG(c Color) SpacerNode { s.Style.FG = c; return s }
 
-// Spinner displays an animated loading indicator.
+// SpinnerNode displays an animated loading indicator.
 // The Frame pointer controls which animation frame to show.
 // Increment Frame and re-render to animate.
 type SpinnerNode struct {
@@ -370,7 +370,7 @@ var SpinnerLine = []string{"-", "\\", "|", "/"}
 // SpinnerCircle is a circle spinner.
 var SpinnerCircle = []string{"◐", "◓", "◑", "◒"}
 
-// Scrollbar displays a visual scroll indicator.
+// ScrollbarNode displays a visual scroll indicator.
 // Vertical by default; set Horizontal to true for horizontal scrollbar.
 type ScrollbarNode struct {
 	ContentSize int   // total content size
@@ -393,7 +393,7 @@ const (
 	TabsStyleBracket                    // tabs with [ ] brackets
 )
 
-// Tabs displays a row of tab headers with active tab indicator.
+// TabsNode displays a row of tab headers with active tab indicator.
 type TabsNode struct {
 	Labels        []string  // tab labels
 	Selected      *int      // pointer to selected tab index
@@ -437,7 +437,7 @@ type Custom struct {
 	Render func(buf *Buffer, x, y, w, h int16)
 }
 
-// Jump wraps a component to make it a jump target.
+// JumpNode wraps a component to make it a jump target.
 // When jump mode is active, a label is displayed at this component's position.
 // When the user types the label, OnSelect is called.
 type JumpNode struct {
@@ -446,7 +446,7 @@ type JumpNode struct {
 	Style    Style  // Optional: per-target label style override
 }
 
-// Progress displays a progress bar.
+// ProgressNode displays a progress bar.
 type ProgressNode struct {
 	Flex
 	Value    any   // int or *int (0-100)
@@ -465,7 +465,7 @@ type LayerViewNode struct {
 // Grow sets the flex grow factor for this layer.
 func (l LayerViewNode) Grow(factor float32) LayerViewNode { l.FlexGrow = factor; return l }
 
-// HBox arranges children horizontally.
+// HBoxNode arranges children horizontally.
 type HBoxNode struct {
 	flex
 	Children     []any
@@ -479,7 +479,7 @@ type HBoxNode struct {
 	borderBG *Color
 }
 
-// VBox arranges children vertically.
+// VBoxNode arranges children vertically.
 type VBoxNode struct {
 	flex
 	Children     []any
@@ -672,7 +672,7 @@ type Span struct {
 	Style Style
 }
 
-// RichText displays text with mixed inline styles.
+// RichTextNode displays text with mixed inline styles.
 // Spans can be []Span (static) or *[]Span (dynamic binding).
 type RichTextNode struct {
 	Flex
@@ -789,7 +789,7 @@ type TextInput struct {
 	CursorStyle      Style  // Cursor style (zero = reverse video)
 }
 
-// Overlay displays content floating above the main view.
+// OverlayNode displays content floating above the main view.
 // Use for modals, dialogs, and floating windows.
 // Control visibility with forme.If:
 //

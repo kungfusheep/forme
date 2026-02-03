@@ -51,8 +51,8 @@ func main() {
 			CheckList(&tasks).
 				Checked(func(t *Task) *bool { return &t.Done }).
 				Render(func(t *Task) any { return Text(&t.Name) }).
-				BindNav(app, "j", "k").
-				BindToggle(app, "x").
+				BindNav("j", "k").
+				BindToggle("x").
 				Ref(func(c *CheckListC[Task]) { taskList = c }),
 		),
 
