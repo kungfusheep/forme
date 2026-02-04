@@ -29,15 +29,15 @@ type Market struct {
 	Trend     string // ▲ ▼ ●
 
 	// internal state
-	priceVal    float64
-	changeVal   float64
-	bidVal      float64
-	askVal      float64
-	volumeVal   int
-	highVal     float64
-	lowVal      float64
-	history     []float64
-	historyIdx  int
+	priceVal   float64
+	changeVal  float64
+	bidVal     float64
+	askVal     float64
+	volumeVal  int
+	highVal    float64
+	lowVal     float64
+	history    []float64
+	historyIdx int
 }
 
 func (m *Market) update() {
@@ -175,18 +175,18 @@ func main() {
 
 	// Column widths
 	const (
-		colSymbol  = 10
-		colPrice   = 12
-		colChange  = 9
-		colPct     = 8
-		colBid     = 11
-		colAsk     = 11
-		colSpread  = 6
-		colVolume  = 8
-		colHigh    = 11
-		colLow     = 11
-		colTime    = 9
-		colSpark   = 20
+		colSymbol = 10
+		colPrice  = 12
+		colChange = 9
+		colPct    = 8
+		colBid    = 11
+		colAsk    = 11
+		colSpread = 6
+		colVolume = 8
+		colHigh   = 11
+		colLow    = 11
+		colTime   = 9
+		colSpark  = 20
 	)
 
 	// Header row

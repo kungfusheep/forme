@@ -477,6 +477,7 @@ type HBoxNode struct {
 	border   BorderStyle
 	borderFG *Color
 	borderBG *Color
+	margin   [4]int16 // top, right, bottom, left
 }
 
 // VBoxNode arranges children vertically.
@@ -491,6 +492,7 @@ type VBoxNode struct {
 	border   BorderStyle
 	borderFG *Color
 	borderBG *Color
+	margin   [4]int16 // top, right, bottom, left
 }
 
 // flex contains internal layout properties (use chainable methods to set).
@@ -525,6 +527,24 @@ func (r HBoxNode) BorderFG(c Color) HBoxNode { r.borderFG = &c; return r }
 // BorderBG sets the border background color.
 func (r HBoxNode) BorderBG(c Color) HBoxNode { r.borderBG = &c; return r }
 
+// Margin sets uniform margin on all sides.
+func (r HBoxNode) Margin(all int16) HBoxNode {
+	r.margin = [4]int16{all, all, all, all}
+	return r
+}
+
+// MarginXY sets vertical and horizontal margin.
+func (r HBoxNode) MarginXY(vertical, horizontal int16) HBoxNode {
+	r.margin = [4]int16{vertical, horizontal, vertical, horizontal}
+	return r
+}
+
+// MarginTRBL sets individual margins for each side.
+func (r HBoxNode) MarginTRBL(top, right, bottom, left int16) HBoxNode {
+	r.margin = [4]int16{top, right, bottom, left}
+	return r
+}
+
 // Chainable layout methods for VBox
 
 // WidthPct sets width as percentage of parent (0.5 = 50%).
@@ -547,6 +567,24 @@ func (c VBoxNode) BorderFG(fg Color) VBoxNode { c.borderFG = &fg; return c }
 
 // BorderBG sets the border background color.
 func (c VBoxNode) BorderBG(bg Color) VBoxNode { c.borderBG = &bg; return c }
+
+// Margin sets uniform margin on all sides.
+func (c VBoxNode) Margin(all int16) VBoxNode {
+	c.margin = [4]int16{all, all, all, all}
+	return c
+}
+
+// MarginXY sets vertical and horizontal margin.
+func (c VBoxNode) MarginXY(vertical, horizontal int16) VBoxNode {
+	c.margin = [4]int16{vertical, horizontal, vertical, horizontal}
+	return c
+}
+
+// MarginTRBL sets individual margins for each side.
+func (c VBoxNode) MarginTRBL(top, right, bottom, left int16) VBoxNode {
+	c.margin = [4]int16{top, right, bottom, left}
+	return c
+}
 
 // IfNode conditionally renders content.
 type IfNode struct {

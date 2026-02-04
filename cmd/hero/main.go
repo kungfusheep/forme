@@ -19,13 +19,13 @@ func main() {
 	}
 
 	app.SetView(
-		VBox.Border(BorderDouble).Title("SYS").FitContent()(
+		VBox.Margin(10).Border(BorderDouble).Title("SYS").FitContent()(
 			If(&online).
 				Then(Text("● ONLINE")).
 				Else(Text("● OFFLINE").FG(Red)),
 			HRule(),
 			Leader("CPU", &cpu),
-			Leader("MEM", &mem),
+			Leader("MEM", &mem).Margin(1),
 			Sparkline(&history),
 		),
 	).Handle("q", app.Stop)

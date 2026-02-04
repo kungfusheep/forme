@@ -64,6 +64,7 @@ type VBoxC struct {
 	percentWidth float32
 	flexGrow     float32
 	fitContent   bool
+	margin       [4]int16 // top, right, bottom, left
 	children     []any
 }
 
@@ -174,6 +175,30 @@ func (f VBoxFn) FitContent() VBoxFn {
 	}
 }
 
+func (f VBoxFn) Margin(all int16) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.margin = [4]int16{all, all, all, all}
+		return v
+	}
+}
+
+func (f VBoxFn) MarginXY(vertical, horizontal int16) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.margin = [4]int16{vertical, horizontal, vertical, horizontal}
+		return v
+	}
+}
+
+func (f VBoxFn) MarginTRBL(top, right, bottom, left int16) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.margin = [4]int16{top, right, bottom, left}
+		return v
+	}
+}
+
 // VBox is the vertical container constructor
 var VBox VBoxFn = func(children ...any) VBoxC {
 	return VBoxC{children: children}
@@ -196,6 +221,7 @@ type HBoxC struct {
 	percentWidth float32
 	flexGrow     float32
 	fitContent   bool
+	margin       [4]int16 // top, right, bottom, left
 	children     []any
 }
 
@@ -306,6 +332,30 @@ func (f HBoxFn) FitContent() HBoxFn {
 	}
 }
 
+func (f HBoxFn) Margin(all int16) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.margin = [4]int16{all, all, all, all}
+		return h
+	}
+}
+
+func (f HBoxFn) MarginXY(vertical, horizontal int16) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.margin = [4]int16{vertical, horizontal, vertical, horizontal}
+		return h
+	}
+}
+
+func (f HBoxFn) MarginTRBL(top, right, bottom, left int16) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.margin = [4]int16{top, right, bottom, left}
+		return h
+	}
+}
+
 // HBox is the horizontal container constructor
 var HBox HBoxFn = func(children ...any) HBoxC {
 	return HBoxC{children: children}
@@ -355,7 +405,8 @@ func Widget(
 type TextC struct {
 	content any // string or *string
 	style   Style
-	width   int16 // explicit width (0 = content-sized)
+	width   int16    // explicit width (0 = content-sized)
+	margin  [4]int16 // top, right, bottom, left
 }
 
 func Text(content any) TextC {
@@ -412,6 +463,10 @@ func (t TextC) Width(w int16) TextC {
 	return t
 }
 
+func (t TextC) Margin(all int16) TextC            { t.margin = [4]int16{all, all, all, all}; return t }
+func (t TextC) MarginXY(v, h int16) TextC         { t.margin = [4]int16{v, h, v, h}; return t }
+func (t TextC) MarginTRBL(a, b, c, d int16) TextC { t.margin = [4]int16{a, b, c, d}; return t }
+
 // ============================================================================
 // Spacer - Empty space
 // ============================================================================
@@ -422,6 +477,7 @@ type SpacerC struct {
 	char     rune
 	style    Style
 	flexGrow float32
+	margin   [4]int16
 }
 
 func Space() SpacerC {
@@ -461,13 +517,18 @@ func (s SpacerC) Grow(g float32) SpacerC {
 	return s
 }
 
+func (s SpacerC) Margin(all int16) SpacerC            { s.margin = [4]int16{all, all, all, all}; return s }
+func (s SpacerC) MarginXY(v, h int16) SpacerC         { s.margin = [4]int16{v, h, v, h}; return s }
+func (s SpacerC) MarginTRBL(a, b, c, d int16) SpacerC { s.margin = [4]int16{a, b, c, d}; return s }
+
 // ============================================================================
 // HRule - Horizontal line
 // ============================================================================
 
 type HRuleC struct {
-	char  rune
-	style Style
+	char   rune
+	style  Style
+	margin [4]int16
 }
 
 func HRule() HRuleC {
@@ -484,6 +545,10 @@ func (h HRuleC) Style(s Style) HRuleC {
 	return h
 }
 
+func (h HRuleC) Margin(all int16) HRuleC            { h.margin = [4]int16{all, all, all, all}; return h }
+func (h HRuleC) MarginXY(v, hz int16) HRuleC        { h.margin = [4]int16{v, hz, v, hz}; return h }
+func (h HRuleC) MarginTRBL(a, b, c, d int16) HRuleC { h.margin = [4]int16{a, b, c, d}; return h }
+
 // ============================================================================
 // VRule - Vertical line
 // ============================================================================
@@ -492,6 +557,7 @@ type VRuleC struct {
 	char   rune
 	style  Style
 	height int16
+	margin [4]int16
 }
 
 func VRule() VRuleC {
@@ -513,14 +579,19 @@ func (v VRuleC) Height(h int16) VRuleC {
 	return v
 }
 
+func (v VRuleC) Margin(all int16) VRuleC            { v.margin = [4]int16{all, all, all, all}; return v }
+func (v VRuleC) MarginXY(vt, hz int16) VRuleC       { v.margin = [4]int16{vt, hz, vt, hz}; return v }
+func (v VRuleC) MarginTRBL(a, b, c, d int16) VRuleC { v.margin = [4]int16{a, b, c, d}; return v }
+
 // ============================================================================
 // Progress - Progress bar
 // ============================================================================
 
 type ProgressC struct {
-	value any // int (0-100) or *int
-	width int16
-	style Style
+	value  any // int (0-100) or *int
+	width  int16
+	style  Style
+	margin [4]int16
 }
 
 func Progress(value any) ProgressC {
@@ -537,6 +608,10 @@ func (p ProgressC) Style(s Style) ProgressC {
 	return p
 }
 
+func (p ProgressC) Margin(all int16) ProgressC            { p.margin = [4]int16{all, all, all, all}; return p }
+func (p ProgressC) MarginXY(v, h int16) ProgressC         { p.margin = [4]int16{v, h, v, h}; return p }
+func (p ProgressC) MarginTRBL(a, b, c, d int16) ProgressC { p.margin = [4]int16{a, b, c, d}; return p }
+
 // ============================================================================
 // Spinner - Animated spinner
 // ============================================================================
@@ -545,6 +620,7 @@ type SpinnerC struct {
 	frame  *int
 	frames []string
 	style  Style
+	margin [4]int16
 }
 
 func Spinner(frame *int) SpinnerC {
@@ -561,16 +637,21 @@ func (s SpinnerC) Style(st Style) SpinnerC {
 	return s
 }
 
+func (s SpinnerC) Margin(all int16) SpinnerC            { s.margin = [4]int16{all, all, all, all}; return s }
+func (s SpinnerC) MarginXY(v, h int16) SpinnerC         { s.margin = [4]int16{v, h, v, h}; return s }
+func (s SpinnerC) MarginTRBL(a, b, c, d int16) SpinnerC { s.margin = [4]int16{a, b, c, d}; return s }
+
 // ============================================================================
 // Leader - Label.....Value display
 // ============================================================================
 
 type LeaderC struct {
-	label any // string or *string
-	value any // string or *string
-	width int16
-	fill  rune
-	style Style
+	label  any // string or *string
+	value  any // string or *string
+	width  int16
+	fill   rune
+	style  Style
+	margin [4]int16
 }
 
 func Leader(label, value any) LeaderC {
@@ -592,6 +673,10 @@ func (l LeaderC) Style(s Style) LeaderC {
 	return l
 }
 
+func (l LeaderC) Margin(all int16) LeaderC            { l.margin = [4]int16{all, all, all, all}; return l }
+func (l LeaderC) MarginXY(v, h int16) LeaderC         { l.margin = [4]int16{v, h, v, h}; return l }
+func (l LeaderC) MarginTRBL(a, b, c, d int16) LeaderC { l.margin = [4]int16{a, b, c, d}; return l }
+
 // ============================================================================
 // Sparkline - Mini chart
 // ============================================================================
@@ -602,6 +687,7 @@ type SparklineC struct {
 	min    float64
 	max    float64
 	style  Style
+	margin [4]int16
 }
 
 func Sparkline(values any) SparklineC {
@@ -624,6 +710,13 @@ func (s SparklineC) Style(st Style) SparklineC {
 	return s
 }
 
+func (s SparklineC) Margin(all int16) SparklineC    { s.margin = [4]int16{all, all, all, all}; return s }
+func (s SparklineC) MarginXY(v, h int16) SparklineC { s.margin = [4]int16{v, h, v, h}; return s }
+func (s SparklineC) MarginTRBL(a, b, c, d int16) SparklineC {
+	s.margin = [4]int16{a, b, c, d}
+	return s
+}
+
 // ============================================================================
 // Jump - Jumpable target wrapper
 // ============================================================================
@@ -632,6 +725,7 @@ type JumpC struct {
 	child    any
 	onSelect func()
 	style    Style
+	margin   [4]int16
 }
 
 func Jump(child any, onSelect func()) JumpC {
@@ -643,6 +737,10 @@ func (j JumpC) Style(s Style) JumpC {
 	return j
 }
 
+func (j JumpC) Margin(all int16) JumpC            { j.margin = [4]int16{all, all, all, all}; return j }
+func (j JumpC) MarginXY(v, h int16) JumpC         { j.margin = [4]int16{v, h, v, h}; return j }
+func (j JumpC) MarginTRBL(a, b, c, d int16) JumpC { j.margin = [4]int16{a, b, c, d}; return j }
+
 // ============================================================================
 // LayerView - Display a pre-rendered layer
 // ============================================================================
@@ -652,6 +750,7 @@ type LayerViewC struct {
 	viewHeight int16
 	viewWidth  int16
 	flexGrow   float32
+	margin     [4]int16
 }
 
 func LayerView(layer *Layer) LayerViewC {
@@ -670,6 +769,13 @@ func (l LayerViewC) ViewWidth(w int16) LayerViewC {
 
 func (l LayerViewC) Grow(g float32) LayerViewC {
 	l.flexGrow = g
+	return l
+}
+
+func (l LayerViewC) Margin(all int16) LayerViewC    { l.margin = [4]int16{all, all, all, all}; return l }
+func (l LayerViewC) MarginXY(v, h int16) LayerViewC { l.margin = [4]int16{v, h, v, h}; return l }
+func (l LayerViewC) MarginTRBL(a, b, c, d int16) LayerViewC {
+	l.margin = [4]int16{a, b, c, d}
 	return l
 }
 
@@ -986,6 +1092,7 @@ type TabsC struct {
 	gap           int
 	activeStyle   Style
 	inactiveStyle Style
+	margin        [4]int16
 }
 
 func Tabs(labels []string, selected *int) TabsC {
@@ -1012,6 +1119,10 @@ func (t TabsC) InactiveStyle(s Style) TabsC {
 	return t
 }
 
+func (t TabsC) Margin(all int16) TabsC            { t.margin = [4]int16{all, all, all, all}; return t }
+func (t TabsC) MarginXY(v, h int16) TabsC         { t.margin = [4]int16{v, h, v, h}; return t }
+func (t TabsC) MarginTRBL(a, b, c, d int16) TabsC { t.margin = [4]int16{a, b, c, d}; return t }
+
 // ============================================================================
 // Scrollbar
 // ============================================================================
@@ -1026,6 +1137,7 @@ type ScrollbarC struct {
 	thumbChar   rune
 	trackStyle  Style
 	thumbStyle  Style
+	margin      [4]int16
 }
 
 func Scroll(contentSize, viewSize int, position *int) ScrollbarC {
@@ -1069,6 +1181,13 @@ func (s ScrollbarC) ThumbStyle(st Style) ScrollbarC {
 	return s
 }
 
+func (s ScrollbarC) Margin(all int16) ScrollbarC    { s.margin = [4]int16{all, all, all, all}; return s }
+func (s ScrollbarC) MarginXY(v, h int16) ScrollbarC { s.margin = [4]int16{v, h, v, h}; return s }
+func (s ScrollbarC) MarginTRBL(a, b, c, d int16) ScrollbarC {
+	s.margin = [4]int16{a, b, c, d}
+	return s
+}
+
 // ============================================================================
 // AutoTable - Automatic table from slice of structs
 // ============================================================================
@@ -1082,6 +1201,7 @@ type AutoTableC struct {
 	altRowStyle *Style
 	gap         int8
 	border      BorderStyle
+	margin      [4]int16
 }
 
 // AutoTable creates a table from a slice of structs.
@@ -1130,6 +1250,13 @@ func (t AutoTableC) Gap(g int8) AutoTableC {
 
 func (t AutoTableC) Border(b BorderStyle) AutoTableC {
 	t.border = b
+	return t
+}
+
+func (t AutoTableC) Margin(all int16) AutoTableC    { t.margin = [4]int16{all, all, all, all}; return t }
+func (t AutoTableC) MarginXY(v, h int16) AutoTableC { t.margin = [4]int16{v, h, v, h}; return t }
+func (t AutoTableC) MarginTRBL(a, b, c, d int16) AutoTableC {
+	t.margin = [4]int16{a, b, c, d}
 	return t
 }
 

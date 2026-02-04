@@ -175,6 +175,7 @@ type Op struct {
 	ChildEnd     int16       // last child op index (exclusive)
 	CascadeStyle *Style      // style inherited by children (pointer for dynamic themes)
 	Fill         Color       // container fill color (fills entire area)
+	Margin       [4]int16    // outer margin: top, right, bottom, left
 
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
@@ -302,6 +303,10 @@ type Op struct {
 	OverlayChildTmpl   *Template // compiled child content
 }
 
+// margin helpers — avoid repeating [0]/[1]/[2]/[3] everywhere
+func (op *Op) marginH() int16 { return op.Margin[1] + op.Margin[3] } // left + right
+func (op *Op) marginV() int16 { return op.Margin[0] + op.Margin[2] } // top + bottom
+
 type OpKind uint8
 
 const (
@@ -410,9 +415,9 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case ProgressNode:
 		return t.compileProgress(v, parent, depth, elemBase, elemSize)
 	case HBoxNode:
-		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, parent, depth, elemBase, elemSize)
+		return t.compileContainer(v.Children, v.Gap, true, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, v.margin, parent, depth, elemBase, elemSize)
 	case VBoxNode:
-		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, parent, depth, elemBase, elemSize)
+		return t.compileContainer(v.Children, v.Gap, false, v.flex, v.border, v.Title, v.borderFG, v.borderBG, Color{}, v.CascadeStyle, v.margin, parent, depth, elemBase, elemSize)
 	case IfNode:
 		return t.compileIf(v, parent, depth, elemBase, elemSize)
 	case ForEachNode:
@@ -1073,7 +1078,7 @@ func (t *Template) compileProgress(v ProgressNode, parent int16, depth int, elem
 	return t.addOp(op, depth)
 }
 
-func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, fill Color, inheritStyle *Style, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
+func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex, border BorderStyle, title string, borderFG, borderBG *Color, fill Color, inheritStyle *Style, margin [4]int16, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	op := Op{
 		Kind:         OpContainer,
 		Parent:       parent,
@@ -1090,6 +1095,7 @@ func (t *Template) compileContainer(children []any, gap int8, isRow bool, f flex
 		BorderBG:     borderBG,
 		Fill:         fill,
 		CascadeStyle: inheritStyle,
+		Margin:       margin,
 	}
 
 	idx := t.addOp(op, depth)
@@ -1333,6 +1339,7 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 		v.borderBG,
 		v.fill,
 		v.inheritStyle,
+		v.margin,
 		parent,
 		depth,
 		elemBase,
@@ -1352,6 +1359,7 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 		v.borderBG,
 		v.fill,
 		v.inheritStyle,
+		v.margin,
 		parent,
 		depth,
 		elemBase,
@@ -1364,6 +1372,7 @@ func (t *Template) compileTextC(v TextC, parent int16, depth int, elemBase unsaf
 		Parent:    parent,
 		TextStyle: v.style,
 		Width:     v.width,
+		Margin:    v.margin,
 	}
 
 	switch val := v.content.(type) {
@@ -1398,6 +1407,7 @@ func (t *Template) compileSpacerC(v SpacerC, parent int16, depth int) int16 {
 		FlexGrow:  grow,
 		RuleChar:  v.char,
 		RuleStyle: v.style,
+		Margin:    v.margin,
 	}, depth)
 }
 
@@ -1411,6 +1421,7 @@ func (t *Template) compileHRuleC(v HRuleC, parent int16, depth int) int16 {
 		Parent:    parent,
 		RuleChar:  char,
 		RuleStyle: v.style,
+		Margin:    v.margin,
 	}, depth)
 }
 
@@ -1425,6 +1436,7 @@ func (t *Template) compileVRuleC(v VRuleC, parent int16, depth int) int16 {
 		RuleChar:  char,
 		RuleStyle: v.style,
 		Height:    v.height,
+		Margin:    v.margin,
 	}, depth)
 }
 
@@ -1439,6 +1451,8 @@ func (t *Template) compileProgressC(v ProgressC, parent int16, depth int, elemBa
 		Width:     width,
 		TextStyle: v.style, // reuse TextStyle for progress bar color
 	}
+
+	op.Margin = v.margin
 
 	switch val := v.value.(type) {
 	case int:
@@ -1468,6 +1482,7 @@ func (t *Template) compileSpinnerC(v SpinnerC, parent int16, depth int) int16 {
 		SpinnerFramePtr: v.frame,
 		SpinnerFrames:   frames,
 		SpinnerStyle:    v.style,
+		Margin:          v.margin,
 	}, depth)
 }
 
@@ -1515,6 +1530,7 @@ func (t *Template) compileLeaderC(v LeaderC, parent int16, depth int) int16 {
 		op.LeaderValue = fmt.Sprintf("%v", val)
 	}
 
+	op.Margin = v.margin
 	return t.addOp(op, depth)
 }
 
@@ -1542,6 +1558,7 @@ func (t *Template) compileSparklineC(v SparklineC, parent int16, depth int) int1
 		}
 	}
 
+	op.Margin = v.margin
 	return t.addOp(op, depth)
 }
 
@@ -1552,6 +1569,7 @@ func (t *Template) compileJumpC(v JumpC, parent int16, depth int, elemBase unsaf
 		JumpOnSelect: v.onSelect,
 		JumpStyle:    v.style,
 		ChildStart:   int16(len(t.ops)),
+		Margin:       v.margin,
 	}, depth)
 
 	if v.child != nil {
@@ -1570,6 +1588,7 @@ func (t *Template) compileLayerViewC(v LayerViewC, parent int16, depth int) int1
 		LayerWidth:  v.viewWidth,
 		LayerHeight: v.viewHeight,
 		FlexGrow:    v.flexGrow,
+		Margin:      v.margin,
 	}, depth)
 }
 
@@ -1618,6 +1637,7 @@ func (t *Template) compileTabsC(v TabsC, parent int16, depth int) int16 {
 		TabsGap:           v.gap,
 		TabsActiveStyle:   v.activeStyle,
 		TabsInactiveStyle: v.inactiveStyle,
+		Margin:            v.margin,
 	}, depth)
 }
 
@@ -1647,6 +1667,7 @@ func (t *Template) compileScrollbarC(v ScrollbarC, parent int16, depth int) int1
 		ScrollThumbChar:   thumbChar,
 		ScrollTrackStyle:  v.trackStyle,
 		ScrollThumbStyle:  v.thumbStyle,
+		Margin:            v.margin,
 	}, depth)
 }
 
@@ -1753,6 +1774,7 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 	} else {
 		vbox = VBox(rows...)
 	}
+	vbox.margin = v.margin
 
 	return t.compileVBoxC(vbox, parent, depth, nil, 0)
 }
@@ -1901,18 +1923,21 @@ func (t *Template) computeIntrinsicWidth(idx int16) int16 {
 			intrinsicW += 2
 		}
 
+		// Add margin
+		intrinsicW += op.marginH()
+
 		return intrinsicW
 	}
 
 	// For text, compute string width
 	if op.Kind == OpText {
-		return int16(utf8.RuneCountInString(op.StaticStr))
+		return int16(utf8.RuneCountInString(op.StaticStr)) + op.marginH()
 	}
 	if op.Kind == OpTextPtr && op.StrPtr != nil {
-		return int16(utf8.RuneCountInString(*op.StrPtr))
+		return int16(utf8.RuneCountInString(*op.StrPtr)) + op.marginH()
 	}
 
-	return 0
+	return op.marginH()
 }
 
 // setOpWidth sets a single op's width based on available space.
@@ -2123,14 +2148,19 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 	default:
 		geom.W = availW
 	}
+
+	// generic margin: non-container ops include margin in their outer width
+	if op.Kind != OpContainer && op.marginH() > 0 {
+		geom.W += op.marginH()
+	}
 }
 
 // distributeWidthsToChildren sets widths for all children of a container.
 // For Rows: two-pass (non-flex first, then flex distribution).
 // For Cols: children fill available width.
 func (t *Template) distributeWidthsToChildren(idx int16, op *Op, geom *Geom, elemBase unsafe.Pointer) {
-	// Calculate content width (subtract border)
-	contentW := geom.W
+	// Calculate content width (subtract margin + border)
+	contentW := geom.W - op.marginH()
 	if op.Border.Horizontal != 0 {
 		contentW -= 2
 	}
@@ -2453,21 +2483,26 @@ func (t *Template) layout(_ int16) {
 			case OpContainer:
 				t.layoutContainer(idx, op, geom)
 			}
+
+			// generic margin: non-container ops include margin in their outer height
+			if op.Kind != OpContainer && op.marginV() > 0 {
+				geom.H += op.marginV()
+			}
 		}
 	}
 }
 
 // layoutContainer positions children and computes container height.
 func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
-	// Content area offset for border
-	contentOffX := int16(0)
-	contentOffY := int16(0)
+	// Content area offset for margin + border
+	contentOffX := op.Margin[3] // left margin
+	contentOffY := op.Margin[0] // top margin
 	if op.Border.Horizontal != 0 {
-		contentOffX = 1
-		contentOffY = 1
+		contentOffX += 1
+		contentOffY += 1
 	}
 
-	availW := geom.W
+	availW := geom.W - op.marginH()
 	if op.Border.Horizontal != 0 {
 		availW -= 2
 	}
@@ -2610,6 +2645,7 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 		if op.Border.Horizontal != 0 {
 			geom.H += 2
 		}
+		geom.H += op.marginV()
 	} else {
 		// Vertical layout
 		cursor := int16(0)
@@ -2703,6 +2739,7 @@ func (t *Template) layoutContainer(idx int16, op *Op, geom *Geom) {
 		if op.Border.Horizontal != 0 {
 			geom.H += 2
 		}
+		geom.H += op.marginV()
 	}
 
 	// Store content height before any override (for flex distribution)
@@ -2758,7 +2795,7 @@ func (t *Template) distributeFlexGrow(rootH int16) {
 // This enables VBox children inside an HBox to use flex for vertical distribution.
 func (t *Template) stretchRowChildren(idx int16, op *Op) {
 	geom := &t.geom[idx]
-	availH := geom.H
+	availH := geom.H - op.marginV()
 	if op.Border.Horizontal != 0 {
 		availH -= 2
 	}
@@ -2821,18 +2858,19 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 	var availH int16
 	if op.FlexGrow > 0 && geom.H > 0 {
 		// This container is a flex child - use its own height (already computed)
-		availH = geom.H
+		availH = geom.H - op.marginV()
 		if op.Border.Horizontal != 0 {
 			availH -= 2 // Subtract own border from available content space
 		}
 	} else if op.Parent >= 0 {
 		parentGeom := &t.geom[op.Parent]
-		availH = parentGeom.H
-		if t.ops[op.Parent].Border.Horizontal != 0 {
+		parentOp := &t.ops[op.Parent]
+		availH = parentGeom.H - parentOp.marginV()
+		if parentOp.Border.Horizontal != 0 {
 			availH -= 2 // Account for parent border
 		}
 	} else {
-		availH = rootH
+		availH = rootH - op.marginV()
 		if op.Border.Horizontal != 0 {
 			availH -= 2 // subtract own border from available content space
 		}
@@ -2840,7 +2878,7 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 
 	// If this container has explicit height, use that
 	if op.Height > 0 {
-		availH = op.Height
+		availH = op.Height - op.marginV()
 		if op.Border.Horizontal != 0 {
 			availH -= 2
 		}
@@ -3185,6 +3223,17 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 	absX := globalX + geom.LocalX
 	absY := globalY + geom.LocalY
 
+	// generic margin offset for non-container ops (containers handle margin themselves)
+	if op.Kind != OpContainer && op.marginH()+op.marginV() > 0 {
+		absX += op.Margin[3] // left
+		absY += op.Margin[0] // top
+		maxW -= op.marginH()
+	}
+
+	// content dimensions exclude margin (for ops without margin, marginH/V == 0)
+	contentW := geom.W - op.marginH()
+	contentH := geom.H - op.marginV()
+
 	switch op.Kind {
 	case OpText:
 		style := t.effectiveStyle(op.TextStyle)
@@ -3257,18 +3306,18 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpSparkline:
 		style := t.effectiveStyle(op.SparkStyle)
-		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, style)
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(contentW), op.SparkMin, op.SparkMax, style)
 
 	case OpSparklinePtr:
 		if op.SparkValuesPtr != nil {
 			style := t.effectiveStyle(op.SparkStyle)
-			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, style)
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), op.SparkMin, op.SparkMax, style)
 		}
 
 	case OpHRule:
 		width := int(maxW)
-		if geom.W > 0 {
-			width = int(geom.W)
+		if contentW > 0 {
+			width = int(contentW)
 		}
 		ruleStyle := t.effectiveStyle(op.RuleStyle)
 		for i := 0; i < width; i++ {
@@ -3277,14 +3326,14 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpVRule:
 		ruleStyle := t.effectiveStyle(op.RuleStyle)
-		for i := 0; i < int(geom.H); i++ {
+		for i := 0; i < int(contentH); i++ {
 			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
 	case OpSpacer:
 		// Spacer renders fill character if specified
 		if op.RuleChar != 0 {
-			for x := int16(0); x < geom.W; x++ {
+			for x := int16(0); x < contentW; x++ {
 				buf.Set(int(absX+x), int(absY), Cell{Rune: op.RuleChar, Style: op.RuleStyle})
 			}
 		}
@@ -3323,7 +3372,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 	case OpCustom:
 		// Custom renderer draws itself
 		if op.CustomRenderer != nil {
-			op.CustomRenderer.Render(buf, int(absX), int(absY), int(geom.W), int(geom.H))
+			op.CustomRenderer.Render(buf, int(absX), int(absY), int(contentW), int(contentH))
 		}
 
 	case OpLayout:
@@ -3333,21 +3382,21 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			if childOp.Parent != idx {
 				continue
 			}
-			t.renderOp(buf, i, absX, absY, geom.W)
+			t.renderOp(buf, i, absX, absY, contentW)
 		}
 
 	case OpLayer:
 		// Blit the layer's visible portion to the buffer
 		if op.LayerPtr != nil {
-			layerW := int(geom.W)
+			layerW := int(contentW)
 			if op.LayerWidth > 0 {
 				layerW = int(op.LayerWidth)
 			}
-			op.LayerPtr.SetViewport(layerW, int(geom.H))
+			op.LayerPtr.SetViewport(layerW, int(contentH))
 			op.LayerPtr.screenX = int(absX) // set screen offset for cursor translation
 			op.LayerPtr.screenY = int(absY)
 			op.LayerPtr.prepare() // re-render if dimensions changed
-			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
+			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(contentH))
 
 			// track layer with visible cursor for automatic cursor positioning
 			if op.LayerPtr.cursor.Visible && t.app != nil {
@@ -3356,6 +3405,12 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 
 	case OpContainer:
+		// Margin inset: visible box starts inside the margin
+		boxX := absX + op.Margin[3] // left margin
+		boxY := absY + op.Margin[0] // top margin
+		boxW := geom.W - op.marginH()
+		boxH := geom.H - op.marginV()
+
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := t.inheritedFill
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
@@ -3369,7 +3424,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
-			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
+			buf.FillRect(int(boxX), int(boxY), int(boxW), int(boxH), fillCell)
 		}
 
 		// Draw border if present
@@ -3383,16 +3438,16 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			} else if fillColor.Mode != ColorDefault {
 				style.BG = fillColor
 			}
-			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
+			buf.DrawBorder(int(boxX), int(boxY), int(boxW), int(boxH), op.Border, style)
 
 			if op.Title != "" {
 				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
-				buf.WriteStringFast(int(absX)+1, int(absY), titleStr, style, int(geom.W)-2)
+				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
 			}
 		}
 
-		// Calculate content width (accounting for border)
-		contentW := geom.W
+		// Calculate content width (accounting for margin + border)
+		contentW := boxW
 		if op.Border.Horizontal != 0 {
 			contentW -= 2
 		}
@@ -3405,7 +3460,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 		// Set vertical clip for children (content area bottom)
 		oldClipMaxY := t.clipMaxY
-		contentBottom := absY + geom.H
+		contentBottom := boxY + boxH
 		if op.Border.Horizontal != 0 {
 			contentBottom -= 1 // don't render into bottom border
 		}
@@ -3414,6 +3469,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 
 		// Render children with this container's position as their origin
+		// children's LocalX/Y already include margin+border offsets from layoutContainer
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &t.ops[i]
 			if childOp.Parent != idx {
@@ -3503,6 +3559,17 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	absX := globalX + geom.LocalX
 	absY := globalY + geom.LocalY
+
+	// generic margin offset for non-container ops
+	if op.Kind != OpContainer && op.marginH()+op.marginV() > 0 {
+		absX += op.Margin[3]
+		absY += op.Margin[0]
+		maxW -= op.marginH()
+	}
+
+	// content dimensions exclude margin
+	contentW := geom.W - op.marginH()
+	contentH := geom.H - op.marginV()
 
 	// Helper to merge row background with text style (also applies inherited style)
 	mergeStyle := func(s Style) Style {
@@ -3595,18 +3662,18 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	case OpSparkline:
 		style := sub.effectiveStyle(op.SparkStyle)
-		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(geom.W), op.SparkMin, op.SparkMax, style)
+		buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(contentW), op.SparkMin, op.SparkMax, style)
 
 	case OpSparklinePtr:
 		if op.SparkValuesPtr != nil {
 			style := sub.effectiveStyle(op.SparkStyle)
-			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(geom.W), op.SparkMin, op.SparkMax, style)
+			buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), op.SparkMin, op.SparkMax, style)
 		}
 
 	case OpHRule:
 		width := int(maxW)
-		if geom.W > 0 {
-			width = int(geom.W)
+		if contentW > 0 {
+			width = int(contentW)
 		}
 		ruleStyle := sub.effectiveStyle(op.RuleStyle)
 		for i := 0; i < width; i++ {
@@ -3615,7 +3682,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 	case OpVRule:
 		ruleStyle := sub.effectiveStyle(op.RuleStyle)
-		for i := 0; i < int(geom.H); i++ {
+		for i := 0; i < int(contentH); i++ {
 			buf.Set(int(absX), int(absY)+i, Cell{Rune: op.RuleChar, Style: ruleStyle})
 		}
 
@@ -3623,12 +3690,12 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		// Spacer renders fill character if specified, or just fills background
 		spacerStyle := mergeStyle(op.RuleStyle)
 		if op.RuleChar != 0 {
-			for x := int16(0); x < geom.W; x++ {
+			for x := int16(0); x < contentW; x++ {
 				buf.Set(int(absX+x), int(absY), Cell{Rune: op.RuleChar, Style: spacerStyle})
 			}
 		} else if sub.rowBG.Mode != 0 {
 			// No fill char but we have a row background - fill with spaces
-			for x := int16(0); x < geom.W; x++ {
+			for x := int16(0); x < contentW; x++ {
 				buf.Set(int(absX+x), int(absY), Cell{Rune: ' ', Style: spacerStyle})
 			}
 		}
@@ -3667,7 +3734,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	case OpCustom:
 		// Custom renderer draws itself
 		if op.CustomRenderer != nil {
-			op.CustomRenderer.Render(buf, int(absX), int(absY), int(geom.W), int(geom.H))
+			op.CustomRenderer.Render(buf, int(absX), int(absY), int(contentW), int(contentH))
 		}
 
 	case OpLayout:
@@ -3677,21 +3744,21 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			if childOp.Parent != idx {
 				continue
 			}
-			sub.renderSubOp(buf, i, absX, absY, geom.W, elemBase)
+			sub.renderSubOp(buf, i, absX, absY, contentW, elemBase)
 		}
 
 	case OpLayer:
 		// Blit the layer's visible portion to the buffer
 		if op.LayerPtr != nil {
-			layerW := int(geom.W)
+			layerW := int(contentW)
 			if op.LayerWidth > 0 {
 				layerW = int(op.LayerWidth)
 			}
-			op.LayerPtr.SetViewport(layerW, int(geom.H))
+			op.LayerPtr.SetViewport(layerW, int(contentH))
 			op.LayerPtr.screenX = int(absX) // set screen offset for cursor translation
 			op.LayerPtr.screenY = int(absY)
 			op.LayerPtr.prepare() // re-render if dimensions changed
-			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(geom.H))
+			op.LayerPtr.blit(buf, int(absX), int(absY), layerW, int(contentH))
 
 			// track layer with visible cursor for automatic cursor positioning
 			if op.LayerPtr.cursor.Visible && sub.app != nil {
@@ -3700,6 +3767,12 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 
 	case OpContainer:
+		// Margin inset: visible box starts inside the margin
+		boxX := absX + op.Margin[3]
+		boxY := absY + op.Margin[0]
+		boxW := geom.W - op.marginH()
+		boxH := geom.H - op.marginV()
+
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := sub.inheritedFill
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
@@ -3713,7 +3786,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
-			buf.FillRect(int(absX), int(absY), int(geom.W), int(geom.H), fillCell)
+			buf.FillRect(int(boxX), int(boxY), int(boxW), int(boxH), fillCell)
 		}
 
 		// Draw border if present
@@ -3727,16 +3800,16 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			} else if fillColor.Mode != ColorDefault {
 				style.BG = fillColor
 			}
-			buf.DrawBorder(int(absX), int(absY), int(geom.W), int(geom.H), op.Border, style)
+			buf.DrawBorder(int(boxX), int(boxY), int(boxW), int(boxH), op.Border, style)
 
 			if op.Title != "" {
 				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
-				buf.WriteStringFast(int(absX)+1, int(absY), titleStr, style, int(geom.W)-2)
+				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
 			}
 		}
 
-		// Calculate content width (accounting for border)
-		contentW := geom.W
+		// Calculate content width (accounting for margin + border)
+		contentW := boxW
 		if op.Border.Horizontal != 0 {
 			contentW -= 2
 		}
@@ -3748,6 +3821,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 
 		// Recurse into children with this container's position as their origin
+		// children's LocalX/Y already include margin+border offsets
 		for i := op.ChildStart; i < op.ChildEnd; i++ {
 			childOp := &sub.ops[i]
 			if childOp.Parent != idx {

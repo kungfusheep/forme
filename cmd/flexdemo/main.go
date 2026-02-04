@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
+	"github.com/kungfusheep/riffkey"
 )
 
 // demo showing flex layout with dynamic pointer bindings
@@ -53,33 +53,30 @@ func main() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				state.tick++
-				state.status = fmt.Sprintf("TICK: %04d", state.tick)
-				state.clock = time.Now().Format("15:04:05Z")
+		for range ticker.C {
+			state.tick++
+			state.status = fmt.Sprintf("TICK: %04d", state.tick)
+			state.clock = time.Now().Format("15:04:05Z")
 
-				if state.tick%10 == 0 {
-					state.fuelC--
-					if state.fuelC < 0 {
-						state.fuelC = 100
-					}
-					state.fuelCBar = Bar(state.fuelC/10, 10)
-					state.fuelCText = fmt.Sprintf(" %3d%%", state.fuelC)
-					if state.fuelC < 50 {
-						state.fuelWarning = "*** LOW FUEL WARNING ***"
-					} else {
-						state.fuelWarning = ""
-					}
+			if state.tick%10 == 0 {
+				state.fuelC--
+				if state.fuelC < 0 {
+					state.fuelC = 100
 				}
-				if state.tick%7 == 0 {
-					state.rwr = (state.rwr + 1) % 5
-					state.rwrIndicator = LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
+				state.fuelCBar = Bar(state.fuelC/10, 10)
+				state.fuelCText = fmt.Sprintf(" %3d%%", state.fuelC)
+				if state.fuelC < 50 {
+					state.fuelWarning = "*** LOW FUEL WARNING ***"
+				} else {
+					state.fuelWarning = ""
 				}
-
-				app.RequestRender()
 			}
+			if state.tick%7 == 0 {
+				state.rwr = (state.rwr + 1) % 5
+				state.rwrIndicator = LEDsBracket(state.rwr >= 1, state.rwr >= 2, state.rwr >= 3, state.rwr >= 4)
+			}
+
+			app.RequestRender()
 		}
 	}()
 
@@ -108,7 +105,6 @@ func buildUI(state *State) any {
 				HBox(Text("GEN1 "), Text(Meter(142, 200, 12)), Text(" 142A")),
 				HBox(Text("GEN2 "), Text(Meter(138, 200, 12)), Text(" 138A")),
 				HBox(Text("BATT "), Text(Meter(92, 100, 12)), Text(" 24.8V")),
-				Text(""),
 				Text("LOAD: NOMINAL 280A"),
 				Text("INV-A 115VAC 400HZ OK"),
 			),
