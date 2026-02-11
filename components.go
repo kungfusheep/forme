@@ -1,6 +1,9 @@
 package forme
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+)
 
 // binding represents a declared key binding on a component.
 // stored as data during construction, wired to a router during setup.
@@ -1192,6 +1195,13 @@ func (s ScrollbarC) MarginTRBL(a, b, c, d int16) ScrollbarC {
 // AutoTable - Automatic table from slice of structs
 // ============================================================================
 
+// autoTableSortState tracks the current sort column and direction.
+// allocated once by Sortable, shared via pointer through value copies.
+type autoTableSortState struct {
+	col int  // -1 = unsorted, 0..n-1 = column index
+	asc bool // true = ascending
+}
+
 type AutoTableC struct {
 	data        any      // slice of structs
 	columns     []string // field names to display (nil = all exported)
@@ -1202,6 +1212,8 @@ type AutoTableC struct {
 	gap         int8
 	border      BorderStyle
 	margin      [4]int16
+
+	sortState *autoTableSortState // nil unless Sortable called
 }
 
 // AutoTable creates a table from a slice of structs.
@@ -1258,6 +1270,127 @@ func (t AutoTableC) MarginXY(v, h int16) AutoTableC { t.margin = [4]int16{v, h, 
 func (t AutoTableC) MarginTRBL(a, b, c, d int16) AutoTableC {
 	t.margin = [4]int16{a, b, c, d}
 	return t
+}
+
+// Sortable enables column sorting via jump labels.
+// when the app's jump key is pressed, each column header becomes a jump target.
+// selecting a column sorts ascending; selecting the same column again toggles direction.
+func (t AutoTableC) Sortable() AutoTableC {
+	if t.sortState == nil {
+		t.sortState = &autoTableSortState{col: -1}
+	}
+	return t
+}
+
+// autoTableSort sorts a *[]T slice in-place by the given struct field index.
+func autoTableSort(data any, fieldIdx int, asc bool) {
+	rv := reflect.ValueOf(data)
+	if rv.Kind() != reflect.Ptr {
+		return
+	}
+	slice := rv.Elem()
+	if slice.Kind() != reflect.Slice {
+		return
+	}
+
+	n := slice.Len()
+	if n < 2 {
+		return
+	}
+
+	// copy to avoid aliasing during write-back
+	tmp := make([]reflect.Value, n)
+	for i := 0; i < n; i++ {
+		tmp[i] = reflect.New(slice.Type().Elem()).Elem()
+		tmp[i].Set(slice.Index(i))
+	}
+
+	sortSliceReflect(tmp, fieldIdx, asc)
+
+	for i, v := range tmp {
+		slice.Index(i).Set(v)
+	}
+}
+
+// sortSliceReflect sorts reflected values by a struct field.
+func sortSliceReflect(items []reflect.Value, fieldIdx int, asc bool) {
+	n := len(items)
+	// simple insertion sort -- tables are typically small
+	for i := 1; i < n; i++ {
+		for j := i; j > 0; j-- {
+			a := derefValue(items[j-1]).Field(fieldIdx)
+			b := derefValue(items[j]).Field(fieldIdx)
+			cmp := compareValues(a, b)
+			if !asc {
+				cmp = -cmp
+			}
+			if cmp <= 0 {
+				break
+			}
+			items[j-1], items[j] = items[j], items[j-1]
+		}
+	}
+}
+
+func derefValue(v reflect.Value) reflect.Value {
+	if v.Kind() == reflect.Ptr {
+		return v.Elem()
+	}
+	return v
+}
+
+// compareValues compares two reflected values, handling numeric types natively
+// and falling back to string comparison.
+func compareValues(a, b reflect.Value) int {
+	switch a.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		ai, bi := a.Int(), b.Int()
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+		return 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		ai, bi := a.Uint(), b.Uint()
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+		return 0
+	case reflect.Float32, reflect.Float64:
+		ai, bi := a.Float(), b.Float()
+		if ai < bi {
+			return -1
+		}
+		if ai > bi {
+			return 1
+		}
+		return 0
+	case reflect.String:
+		as, bs := a.String(), b.String()
+		if as < bs {
+			return -1
+		}
+		if as > bs {
+			return 1
+		}
+		return 0
+	default:
+		// fallback: compare string representations
+		as := fmt.Sprintf("%v", a.Interface())
+		bs := fmt.Sprintf("%v", b.Interface())
+		if as < bs {
+			return -1
+		}
+		if as > bs {
+			return 1
+		}
+		return 0
+	}
 }
 
 // ============================================================================

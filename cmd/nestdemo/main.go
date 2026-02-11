@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
 )
 
@@ -58,39 +57,33 @@ func main() {
 	}
 	kvSel := 0
 
-	menuList := &SelectionList{
-		Items:         &menuItems,
-		Selected:      &menuSel,
-		Marker:        "> ",
-		MaxVisible:    10,
-		Style:         Style{BG: PaletteColor(235)},
-		SelectedStyle: Style{BG: PaletteColor(240)},
-		MarkerStyle:   Style{FG: Cyan},
-		Render: func(item *MenuItem) any {
+	menuList := List(&menuItems).
+		Selection(&menuSel).
+		MaxVisible(10).
+		Style(Style{BG: PaletteColor(235)}).
+		SelectedStyle(Style{BG: PaletteColor(240)}).
+		MarkerStyle(Style{FG: Cyan}).
+		Render(func(item *MenuItem) any {
 			return HBox.Gap(1)(
 				Text(&item.Icon).FG(Yellow),
 				Text(&item.Label),
 				Space().Char('_'),
 				Text(&item.Shortcut).FG(BrightBlack),
 			)
-		},
-	}
+		})
 
-	kvList := &SelectionList{
-		Items:         &kvPairs,
-		Selected:      &kvSel,
-		Marker:        "> ",
-		MaxVisible:    4,
-		Style:         Style{BG: PaletteColor(234)},
-		SelectedStyle: Style{BG: PaletteColor(238)},
-		Render: func(kv *KeyValue) any {
+	kvList := List(&kvPairs).
+		Selection(&kvSel).
+		MaxVisible(4).
+		Style(Style{BG: PaletteColor(234)}).
+		SelectedStyle(Style{BG: PaletteColor(238)}).
+		Render(func(kv *KeyValue) any {
 			return HBox(
 				Text(&kv.Key).FG(Cyan),
 				Space().Char('-').Style(Style{FG: BrightBlack}),
 				Text(&kv.Value).FG(Yellow),
 			)
-		},
-	}
+		})
 
 	editorLayer := NewLayer()
 	editorLayer.EnsureSize(80, 20)
@@ -111,24 +104,19 @@ func main() {
 		{Name: "test", IsDir: true, Display: "+ test/"},
 		{Name: "README.md", IsDir: false, Display: "  README.md"},
 	}
-	sidebarSel := 0
 	sidebarVisible := true
 
-	sidebarList := &SelectionList{
-		Items:         &sidebarItems,
-		Selected:      &sidebarSel,
-		Marker:        "> ",
-		MaxVisible:    10,
-		Style:         Style{BG: PaletteColor(235)},
-		SelectedStyle: Style{BG: PaletteColor(238)},
-		Render: func(item *FileItem) any {
+	sidebarList := List(&sidebarItems).
+		MaxVisible(10).
+		Style(Style{BG: PaletteColor(235)}).
+		SelectedStyle(Style{BG: PaletteColor(238)}).
+		Render(func(item *FileItem) any {
 			style := Style{FG: White}
 			if item.IsDir {
 				style.FG = Cyan
 			}
 			return Text(&item.Display).Style(style)
-		},
-	}
+		})
 
 	app, err := NewApp()
 	if err != nil {
@@ -257,8 +245,8 @@ func main() {
 					SpaceH(1),
 					HBox.Border(BorderSingle)(
 						Text("A").FG(Red),
-						Space().Grow(1),
 						Text("B").FG(Green),
+						Space().Grow(1),
 						Space().Grow(2),
 						Text("C").FG(Blue),
 						Space().Grow(1),
@@ -272,18 +260,14 @@ func main() {
 					Text("Styled text inside bordered containers:"),
 					SpaceH(1),
 					VBox.Border(BorderRounded)(
-						HBox(
+						HBox.Gap(2)(
 							Text("Red").FG(Red),
-							SpaceW(1),
 							Text("Green").FG(Green),
-							SpaceW(1),
 							Text("Blue").FG(Blue),
 						),
-						HBox(
+						HBox.Gap(1)(
 							Text("Bold").Bold(),
-							SpaceW(1),
 							Text("Dim").Dim(),
-							SpaceW(1),
 							Text("Underline").Underline(),
 						),
 					),
@@ -300,7 +284,7 @@ func main() {
 						HRule(),
 						Text("Footer").FG(BrightBlack),
 					),
-				)).
+					)).
 			Case(10, // Deep Nesting
 				VBox(
 					Text("5 levels of nesting:"),
@@ -322,7 +306,7 @@ func main() {
 							),
 						),
 					),
-				)).
+					)).
 			Case(11, // HBox + Sidebar + LayerView
 				VBox(
 					Text("HBox with sidebar (SelectionList) + LayerView - replicates editor layout:"),
@@ -343,7 +327,7 @@ func main() {
 					),
 					SpaceH(1),
 					Text("b: toggle sidebar | h/l: navigate sidebar | s/S: scroll editor").FG(BrightBlack),
-				)).
+					)).
 			Case(12, // All Combined Stress Test
 				VBox(
 					Text("Combined stress test (use h/l to navigate list):"),
@@ -373,99 +357,66 @@ func main() {
 			Default(Text("Unknown demo")),
 	))
 
-	app.Handle("j", func(_ riffkey.Match) {
+	nextDemo := func() {
 		if currentDemo < len(demoNames)-1 {
 			currentDemo++
 			demoName = demoNames[currentDemo]
 		}
-	})
-	app.Handle("k", func(_ riffkey.Match) {
+	}
+	prevDemo := func() {
 		if currentDemo > 0 {
 			currentDemo--
 			demoName = demoNames[currentDemo]
 		}
-	})
-	app.Handle("<Down>", func(_ riffkey.Match) {
-		if currentDemo < len(demoNames)-1 {
-			currentDemo++
-			demoName = demoNames[currentDemo]
-		}
-	})
-	app.Handle("<Up>", func(_ riffkey.Match) {
-		if currentDemo > 0 {
-			currentDemo--
-			demoName = demoNames[currentDemo]
-		}
-	})
-
-	app.Handle("l", func(_ riffkey.Match) {
-		if currentDemo == 6 {
+	}
+	selDown := func() {
+		switch currentDemo {
+		case 6:
 			menuList.Down(nil)
-		}
-		if currentDemo == 11 {
+		case 11:
 			sidebarList.Down(nil)
-		}
-		if currentDemo == 12 {
+		case 12:
 			kvList.Down(nil)
 		}
-	})
-	app.Handle("h", func(_ riffkey.Match) {
-		if currentDemo == 6 {
+	}
+	selUp := func() {
+		switch currentDemo {
+		case 6:
 			menuList.Up(nil)
-		}
-		if currentDemo == 11 {
+		case 11:
 			sidebarList.Up(nil)
-		}
-		if currentDemo == 12 {
+		case 12:
 			kvList.Up(nil)
 		}
-	})
-	app.Handle("<Right>", func(_ riffkey.Match) {
-		if currentDemo == 6 {
-			menuList.Down(nil)
-		}
-		if currentDemo == 11 {
-			sidebarList.Down(nil)
-		}
-		if currentDemo == 12 {
-			kvList.Down(nil)
-		}
-	})
-	app.Handle("<Left>", func(_ riffkey.Match) {
-		if currentDemo == 6 {
-			menuList.Up(nil)
-		}
-		if currentDemo == 11 {
-			sidebarList.Up(nil)
-		}
-		if currentDemo == 12 {
-			kvList.Up(nil)
-		}
-	})
+	}
 
-	app.Handle("s", func(_ riffkey.Match) {
+	app.Handle("j", nextDemo)
+	app.Handle("k", prevDemo)
+	app.Handle("<Down>", nextDemo)
+	app.Handle("<Up>", prevDemo)
+	app.Handle("l", selDown)
+	app.Handle("h", selUp)
+	app.Handle("<Right>", selDown)
+	app.Handle("<Left>", selUp)
+
+	app.Handle("s", func() {
 		if currentDemo == 11 {
 			editorLayer.ScrollDown(1)
 		}
 	})
-	app.Handle("S", func(_ riffkey.Match) {
+	app.Handle("S", func() {
 		if currentDemo == 11 {
 			editorLayer.ScrollUp(1)
 		}
 	})
-
-	app.Handle("b", func(_ riffkey.Match) {
+	app.Handle("b", func() {
 		if currentDemo == 11 {
 			sidebarVisible = !sidebarVisible
 		}
 	})
 
-	app.Handle("q", func(_ riffkey.Match) {
-		app.Stop()
-	})
-	app.Handle("<Escape>", func(_ riffkey.Match) {
-		app.Stop()
-	})
+	app.Handle("q", app.Stop)
+	app.Handle("<Escape>", app.Stop)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

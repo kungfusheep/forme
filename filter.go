@@ -1,6 +1,6 @@
 package forme
 
-// Filter[T] provides fzf-style filtering mechanics for a slice of items.
+// Filter provides fzf-style filtering mechanics for a slice of items.
 // it handles query parsing, scoring, filtering and index mapping back to the
 // original source slice. no UI opinions — bring your own rendering.
 //

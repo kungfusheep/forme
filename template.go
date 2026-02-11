@@ -233,6 +233,17 @@ type Op struct {
 	TableRowStyle    Style         // style for rows
 	TableAltStyle    Style         // alternating row style
 
+	// AutoTable (reactive pointer-backed)
+	AutoTableSlicePtr any                 // *[]T -- pointer to slice of structs
+	AutoTableFields   []int               // field indices into the struct
+	AutoTableHeaders  []string            // header labels
+	AutoTableHdrStyle Style               // header style
+	AutoTableRowStyle Style               // row style
+	AutoTableAltStyle *Style              // alternating row style
+	AutoTableGap      int8                // gap between columns
+	AutoTableFill     Color               // row fill for alt rows
+	AutoTableSort     *autoTableSortState // nil unless sorting enabled
+
 	// Sparkline
 	SparkValues    []float64  // static values
 	SparkValuesPtr *[]float64 // pointer values
@@ -339,7 +350,8 @@ const (
 	OpLeaderIntPtr   // Leader with int pointer value
 	OpLeaderFloatPtr // Leader with float64 pointer value
 
-	OpTable // Table with columns and rows
+	OpTable     // Table with columns and rows
+	OpAutoTable // AutoTable with pointer to slice of structs (reactive)
 
 	OpSparkline    // Sparkline with static values
 	OpSparklinePtr // Sparkline with pointer values
@@ -1673,12 +1685,91 @@ func (t *Template) compileScrollbarC(v ScrollbarC, parent int16, depth int) int1
 
 func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int16 {
 	rv := reflect.ValueOf(v.data)
-	if rv.Kind() != reflect.Slice {
-		// not a slice, render error text
-		return t.compileTextC(Text("AutoTable: expected slice"), parent, depth, nil, 0)
+
+	// pointer to slice -> reactive mode (reads data each frame)
+	if rv.Kind() == reflect.Ptr && rv.Elem().Kind() == reflect.Slice {
+		return t.compileAutoTableReactive(v, rv, parent, depth)
 	}
 
-	// get element type (handle pointer elements)
+	if rv.Kind() != reflect.Slice {
+		return t.compileTextC(Text("AutoTable: expected slice or *slice"), parent, depth, nil, 0)
+	}
+
+	// static slice -> snapshot mode (existing behaviour)
+	return t.compileAutoTableStatic(v, rv, parent, depth)
+}
+
+// compileAutoTableReactive compiles an AutoTable backed by *[]T into a single
+// OpAutoTable that reads through the pointer on every render frame.
+func (t *Template) compileAutoTableReactive(v AutoTableC, rv reflect.Value, parent int16, depth int) int16 {
+	sliceType := rv.Elem().Type() // []T
+	elemType := sliceType.Elem()
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+	if elemType.Kind() != reflect.Struct {
+		return t.compileTextC(Text("AutoTable: expected *[]struct"), parent, depth, nil, 0)
+	}
+
+	columns, fieldIndices := autoTableResolveColumns(v.columns, elemType)
+	if len(columns) == 0 {
+		return t.compileTextC(Text("AutoTable: no columns"), parent, depth, nil, 0)
+	}
+
+	headers := v.headers
+	if len(headers) == 0 {
+		headers = make([]string, len(columns))
+		copy(headers, columns)
+	}
+
+	var altFill Color
+	if v.altRowStyle != nil && v.altRowStyle.BG.Mode != ColorDefault {
+		altFill = v.altRowStyle.BG
+	}
+
+	op := Op{
+		Kind:              OpAutoTable,
+		Parent:            parent,
+		AutoTableSlicePtr: v.data,
+		AutoTableFields:   fieldIndices,
+		AutoTableHeaders:  headers,
+		AutoTableHdrStyle: v.headerStyle,
+		AutoTableRowStyle: v.rowStyle,
+		AutoTableAltStyle: v.altRowStyle,
+		AutoTableGap:      v.gap,
+		AutoTableFill:     altFill,
+		AutoTableSort:     v.sortState,
+		Margin:            v.margin,
+	}
+
+	return t.addOp(op, depth)
+}
+
+// autoTableResolveColumns resolves column names to struct field indices.
+func autoTableResolveColumns(explicit []string, elemType reflect.Type) (names []string, indices []int) {
+	if len(explicit) > 0 {
+		for _, name := range explicit {
+			f, ok := elemType.FieldByName(name)
+			if ok {
+				names = append(names, name)
+				indices = append(indices, f.Index[0])
+			}
+		}
+		return
+	}
+	// all exported fields
+	for i := 0; i < elemType.NumField(); i++ {
+		f := elemType.Field(i)
+		if f.PkgPath == "" {
+			names = append(names, f.Name)
+			indices = append(indices, i)
+		}
+	}
+	return
+}
+
+// compileAutoTableStatic compiles a static (non-pointer) slice into a VBox tree (original behaviour).
+func (t *Template) compileAutoTableStatic(v AutoTableC, rv reflect.Value, parent int16, depth int) int16 {
 	elemType := rv.Type().Elem()
 	if elemType.Kind() == reflect.Ptr {
 		elemType = elemType.Elem()
@@ -1687,13 +1778,11 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 		return t.compileTextC(Text("AutoTable: expected slice of structs"), parent, depth, nil, 0)
 	}
 
-	// determine columns
 	columns := v.columns
 	if len(columns) == 0 {
-		// use all exported fields
 		for i := 0; i < elemType.NumField(); i++ {
 			f := elemType.Field(i)
-			if f.PkgPath == "" { // exported
+			if f.PkgPath == "" {
 				columns = append(columns, f.Name)
 			}
 		}
@@ -1703,13 +1792,11 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 		return t.compileTextC(Text("AutoTable: no columns"), parent, depth, nil, 0)
 	}
 
-	// determine headers
 	headers := v.headers
 	if len(headers) == 0 {
 		headers = columns
 	}
 
-	// calculate column widths (max of header and all data)
 	widths := make([]int, len(columns))
 	for i, h := range headers {
 		widths[i] = len(h)
@@ -1731,21 +1818,24 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 		}
 	}
 
-	// build rows
 	var rows []any
 
-	// header row
 	var headerCells []any
 	for i, h := range headers {
 		headerCells = append(headerCells, Text(h).Width(int16(widths[i])).Style(v.headerStyle))
 	}
 	rows = append(rows, HBox.Gap(v.gap)(headerCells...))
 
-	// data rows
 	for i := 0; i < rv.Len(); i++ {
 		elem := rv.Index(i)
 		if elem.Kind() == reflect.Ptr {
 			elem = elem.Elem()
+		}
+
+		isAlt := v.altRowStyle != nil && i%2 == 1
+		rowStyle := v.rowStyle
+		if isAlt {
+			rowStyle = *v.altRowStyle
 		}
 
 		var cells []any
@@ -1755,19 +1845,16 @@ func (t *Template) compileAutoTableC(v AutoTableC, parent int16, depth int) int1
 			if field.IsValid() {
 				str = fmt.Sprintf("%v", field.Interface())
 			}
-
-			cell := Text(str).Width(int16(widths[j]))
-			if v.altRowStyle != nil && i%2 == 1 {
-				cell = cell.Style(*v.altRowStyle)
-			} else {
-				cell = cell.Style(v.rowStyle)
-			}
-			cells = append(cells, cell)
+			cells = append(cells, Text(str).Width(int16(widths[j])).Style(rowStyle))
 		}
-		rows = append(rows, HBox.Gap(v.gap)(cells...))
+
+		row := HBox.Gap(v.gap)
+		if isAlt && rowStyle.BG.Mode != ColorDefault {
+			row = HBox.Gap(v.gap).Fill(rowStyle.BG)
+		}
+		rows = append(rows, row(cells...))
 	}
 
-	// wrap in VBox (with optional border)
 	var vbox VBoxC
 	if v.border.Horizontal != 0 {
 		vbox = VBox.Border(v.border)(rows...)
@@ -1975,6 +2062,9 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 		if geom.W == 0 {
 			geom.W = 20 // default width
 		}
+
+	case OpAutoTable:
+		geom.W = availW
 
 	case OpTable:
 		// Width is sum of column widths
@@ -2344,6 +2434,16 @@ func (t *Template) layout(_ int16) {
 
 			case OpLeader, OpLeaderPtr, OpLeaderIntPtr, OpLeaderFloatPtr:
 				geom.H = 1
+
+			case OpAutoTable:
+				rowCount := 1 // header row
+				if op.AutoTableSlicePtr != nil {
+					rowCount += reflect.ValueOf(op.AutoTableSlicePtr).Elem().Len()
+				}
+				geom.H = int16(rowCount)
+				if geom.H == 0 {
+					geom.H = 1
+				}
 
 			case OpTable:
 				// Height is number of rows + header if shown
@@ -3300,6 +3400,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
 		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%.1f", *op.LeaderFloatPtr), width, op.LeaderFill, style)
+
+	case OpAutoTable:
+		t.renderAutoTable(buf, op, absX, absY, maxW)
 
 	case OpTable:
 		t.renderTable(buf, op, absX, absY, maxW)
@@ -4604,6 +4707,144 @@ func (t *Template) writeTableCell(buf *Buffer, x, y int, text string, width int,
 	for i := 0; i < rightPad; i++ {
 		buf.Set(pos, y, Cell{Rune: ' ', Style: style})
 		pos++
+	}
+}
+
+func (t *Template) renderAutoTable(buf *Buffer, op *Op, absX, absY, maxW int16) {
+	if op.AutoTableSlicePtr == nil {
+		return
+	}
+
+	rv := reflect.ValueOf(op.AutoTableSlicePtr).Elem()
+	nRows := rv.Len()
+	nCols := len(op.AutoTableFields)
+	gap := int(op.AutoTableGap)
+
+	// re-apply sort if active (keeps data consistent after mutations)
+	if ss := op.AutoTableSort; ss != nil && ss.col >= 0 && ss.col < nCols {
+		autoTableSort(op.AutoTableSlicePtr, op.AutoTableFields[ss.col], ss.asc)
+	}
+
+	// compute natural column widths from current data
+	// if sorting is enabled, reserve space for the indicator on every header
+	// since the user can cycle to any column
+	indicatorW := 0
+	if op.AutoTableSort != nil {
+		indicatorW = 2 // " ▲" or " ▼"
+	}
+	widths := make([]int, nCols)
+	for i, h := range op.AutoTableHeaders {
+		widths[i] = len(h) + indicatorW
+	}
+
+	for i := 0; i < nRows; i++ {
+		elem := rv.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
+		for j, fi := range op.AutoTableFields {
+			str := fmt.Sprintf("%v", elem.Field(fi).Interface())
+			if len(str) > widths[j] {
+				widths[j] = len(str)
+			}
+		}
+	}
+
+	// distribute remaining width proportionally to natural column widths
+	availW := int(maxW) - int(absX)
+	totalNatural := 0
+	for _, w := range widths {
+		totalNatural += w
+	}
+	totalGaps := gap * (nCols - 1)
+	remaining := availW - totalNatural - totalGaps
+
+	if remaining > 0 && totalNatural > 0 {
+		for i, w := range widths {
+			extra := remaining * w / totalNatural
+			widths[i] += extra
+		}
+	}
+
+	hdrStyle := t.effectiveStyle(op.AutoTableHdrStyle)
+	y := int(absY)
+
+	// header row
+	x := int(absX)
+	jumpActive := op.AutoTableSort != nil && t.app != nil && t.app.JumpModeActive()
+
+	for i, h := range op.AutoTableHeaders {
+		text := applyTransform(h, hdrStyle.Transform)
+		if op.AutoTableSort != nil && op.AutoTableSort.col == i {
+			if op.AutoTableSort.asc {
+				text += " ▲"
+			} else {
+				text += " ▼"
+			}
+		}
+		t.writeTableCell(buf, x, y, text, widths[i], AlignLeft, hdrStyle)
+
+		// register column header as a jump target for sorting
+		if jumpActive {
+			colIdx := i
+			fieldIdx := op.AutoTableFields[i]
+			ss := op.AutoTableSort
+			slicePtr := op.AutoTableSlicePtr
+			t.app.AddJumpTarget(int16(x), int16(y), func() {
+				if ss.col == colIdx {
+					ss.asc = !ss.asc
+				} else {
+					ss.col = colIdx
+					ss.asc = true
+				}
+				autoTableSort(slicePtr, fieldIdx, ss.asc)
+			}, Style{})
+
+			// draw jump label if assigned (second render pass)
+			jm := t.app.JumpMode()
+			for j := len(jm.Targets) - 1; j >= 0; j-- {
+				target := &jm.Targets[j]
+				if target.X == int16(x) && target.Y == int16(y) && target.Label != "" {
+					style := t.app.JumpStyle().LabelStyle
+					for k, r := range target.Label {
+						buf.Set(x+k, y, Cell{Rune: r, Style: style})
+					}
+					break
+				}
+			}
+		}
+
+		x += widths[i] + gap
+	}
+	y++
+
+	// data rows
+	for i := 0; i < nRows; i++ {
+		elem := rv.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
+
+		rowStyle := t.effectiveStyle(op.AutoTableRowStyle)
+		isAlt := op.AutoTableAltStyle != nil && i%2 == 1
+		if isAlt {
+			rowStyle = t.effectiveStyle(*op.AutoTableAltStyle)
+		}
+
+		// fill entire row background for alt rows
+		if isAlt && op.AutoTableFill.Mode != ColorDefault {
+			for fx := int(absX); fx < int(maxW); fx++ {
+				buf.Set(fx, y, Cell{Rune: ' ', Style: Style{BG: op.AutoTableFill}})
+			}
+		}
+
+		x = int(absX)
+		for j, fi := range op.AutoTableFields {
+			str := fmt.Sprintf("%v", elem.Field(fi).Interface())
+			t.writeTableCell(buf, x, y, str, widths[j], AlignLeft, rowStyle)
+			x += widths[j] + gap
+		}
+		y++
 	}
 }
 

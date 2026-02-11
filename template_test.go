@@ -2,6 +2,7 @@ package forme
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -1179,8 +1180,8 @@ func TestSelectionListDefaultStyle(t *testing.T) {
 	items := []string{"Apple", "Banana", "Cherry"}
 	selected := 1 // Banana selected
 
-	bgColor := PaletteColor(236)      // Default background
-	selectedBG := PaletteColor(240)   // Selected background
+	bgColor := PaletteColor(236)    // Default background
+	selectedBG := PaletteColor(240) // Selected background
 
 	list := &SelectionList{
 		Items:         &items,
@@ -3203,6 +3204,417 @@ func TestAutoTable(t *testing.T) {
 		row1 := buf.GetLine(1)
 		if !containsSubstring(row1, "Dave") {
 			t.Errorf("row 1 missing 'Dave': got %q", row1)
+		}
+	})
+}
+
+func TestAutoTableReactive(t *testing.T) {
+	type Item struct {
+		Name   string
+		Status string
+	}
+
+	t.Run("pointer slice renders reactively", func(t *testing.T) {
+		rows := []Item{
+			{"alpha", "ok"},
+			{"bravo", "fail"},
+		}
+
+		tmpl := Build(AutoTable(&rows).
+			HeaderStyle(Style{Attr: AttrBold}).
+			Gap(2))
+
+		buf := NewBuffer(40, 5)
+		tmpl.Execute(buf, 40, 5)
+
+		header := buf.GetLine(0)
+		if !containsSubstring(header, "Name") {
+			t.Errorf("expected header 'Name', got: %q", header)
+		}
+		if !containsSubstring(header, "Status") {
+			t.Errorf("expected header 'Status', got: %q", header)
+		}
+
+		row0 := buf.GetLine(1)
+		if !containsSubstring(row0, "alpha") {
+			t.Errorf("expected 'alpha' in row 0, got: %q", row0)
+		}
+		row1 := buf.GetLine(2)
+		if !containsSubstring(row1, "bravo") {
+			t.Errorf("expected 'bravo' in row 1, got: %q", row1)
+		}
+
+		// mutate the backing slice and re-render
+		rows[0] = Item{"charlie", "ok"}
+		rows = append(rows, Item{"delta", "ok"})
+
+		buf2 := NewBuffer(40, 6)
+		tmpl.Execute(buf2, 40, 6)
+
+		row0 = buf2.GetLine(1)
+		if !containsSubstring(row0, "charlie") {
+			t.Errorf("after mutation expected 'charlie', got: %q", row0)
+		}
+		row2 := buf2.GetLine(3)
+		if !containsSubstring(row2, "delta") {
+			t.Errorf("after append expected 'delta', got: %q", row2)
+		}
+	})
+
+	t.Run("replace slice contents", func(t *testing.T) {
+		rows := []Item{
+			{"one", "a"},
+			{"two", "b"},
+			{"three", "c"},
+		}
+
+		tmpl := Build(AutoTable(&rows))
+
+		buf := NewBuffer(30, 5)
+		tmpl.Execute(buf, 30, 5)
+
+		if !containsSubstring(buf.GetLine(1), "one") {
+			t.Errorf("expected 'one', got: %q", buf.GetLine(1))
+		}
+
+		// replace with fewer rows
+		rows = rows[:1]
+		rows[0] = Item{"replaced", "x"}
+
+		buf2 := NewBuffer(30, 5)
+		tmpl.Execute(buf2, 30, 5)
+
+		if !containsSubstring(buf2.GetLine(1), "replaced") {
+			t.Errorf("expected 'replaced', got: %q", buf2.GetLine(1))
+		}
+	})
+
+	t.Run("header uppercase transform", func(t *testing.T) {
+		rows := []Item{{"foo", "bar"}}
+
+		tmpl := Build(AutoTable(&rows).
+			HeaderStyle(Style{Transform: TransformUppercase}))
+
+		buf := NewBuffer(30, 3)
+		tmpl.Execute(buf, 30, 3)
+
+		header := buf.GetLine(0)
+		if !containsSubstring(header, "NAME") {
+			t.Errorf("expected 'NAME' (uppercase), got: %q", header)
+		}
+		if !containsSubstring(header, "STATUS") {
+			t.Errorf("expected 'STATUS' (uppercase), got: %q", header)
+		}
+	})
+
+	t.Run("alt row style with fill", func(t *testing.T) {
+		rows := []Item{
+			{"first", "a"},
+			{"second", "b"},
+		}
+
+		altBG := PaletteColor(235)
+		tmpl := Build(AutoTable(&rows).
+			AltRowStyle(Style{BG: altBG}))
+
+		buf := NewBuffer(30, 4)
+		tmpl.Execute(buf, 30, 4)
+
+		// row 0 (index 0) should have default BG
+		cell0 := buf.Get(0, 1)
+		if cell0.Style.BG.Mode != ColorDefault {
+			t.Errorf("row 0 should have default BG, got: %v", cell0.Style.BG)
+		}
+
+		// row 1 (index 1) should have alt BG
+		cell1 := buf.Get(0, 2)
+		if cell1.Style.BG != altBG {
+			t.Errorf("row 1 should have alt BG %v, got: %v", altBG, cell1.Style.BG)
+		}
+	})
+
+	t.Run("columns grow proportionally to fill width", func(t *testing.T) {
+		type Wide struct {
+			Short    string // ~5 chars natural
+			VeryLong string // ~20 chars natural
+		}
+
+		rows := []Wide{
+			{"abc", "this is a long value!"},
+		}
+
+		width := 60
+		tmpl := Build(AutoTable(&rows).Gap(2))
+
+		buf := NewBuffer(width, 3)
+		tmpl.Execute(buf, int16(width), 3)
+
+		header := buf.GetLine(0)
+		t.Logf("header: %q", header)
+
+		// "Short" has natural width 5, "VeryLong" has natural width 20
+		// with proportional grow across 60 chars, Short should grow but less than VeryLong
+		veryLongPos := strings.Index(header, "VeryLong")
+		if veryLongPos < 0 {
+			t.Fatal("couldn't find VeryLong in header")
+		}
+
+		// Short column width = position of VeryLong minus gap(2)
+		shortColWidth := veryLongPos - 2
+		veryLongColWidth := width - veryLongPos
+
+		t.Logf("Short col: %d chars, VeryLong col: %d chars", shortColWidth, veryLongColWidth)
+
+		// Short should have grown beyond its natural 5 chars
+		if shortColWidth <= 5 {
+			t.Errorf("Short column didn't grow: width=%d, natural=5", shortColWidth)
+		}
+
+		// VeryLong should have grown beyond its natural 20 chars
+		if veryLongColWidth <= 20 {
+			t.Errorf("VeryLong column didn't grow: width=%d, natural=20", veryLongColWidth)
+		}
+
+		// VeryLong should be wider than Short (proportional to natural widths)
+		if veryLongColWidth <= shortColWidth {
+			t.Errorf("VeryLong (%d) should be wider than Short (%d)", veryLongColWidth, shortColWidth)
+		}
+	})
+}
+
+func TestAutoTableSort(t *testing.T) {
+	type Row struct {
+		Name string
+		Age  int
+		City string
+	}
+
+	t.Run("autoTableSort ascending by string", func(t *testing.T) {
+		rows := []Row{
+			{"Charlie", 30, "NYC"},
+			{"Alpha", 20, "LA"},
+			{"Bravo", 25, "SF"},
+		}
+
+		// field index 0 = Name
+		autoTableSort(&rows, 0, true)
+
+		if rows[0].Name != "Alpha" || rows[1].Name != "Bravo" || rows[2].Name != "Charlie" {
+			t.Errorf("expected Alpha,Bravo,Charlie got %s,%s,%s", rows[0].Name, rows[1].Name, rows[2].Name)
+		}
+	})
+
+	t.Run("autoTableSort descending by string", func(t *testing.T) {
+		rows := []Row{
+			{"Alpha", 20, "LA"},
+			{"Bravo", 25, "SF"},
+			{"Charlie", 30, "NYC"},
+		}
+
+		autoTableSort(&rows, 0, false)
+
+		if rows[0].Name != "Charlie" || rows[1].Name != "Bravo" || rows[2].Name != "Alpha" {
+			t.Errorf("expected Charlie,Bravo,Alpha got %s,%s,%s", rows[0].Name, rows[1].Name, rows[2].Name)
+		}
+	})
+
+	t.Run("autoTableSort by int is numeric not lexicographic", func(t *testing.T) {
+		rows := []Row{
+			{"C", 30, "NYC"},
+			{"A", 5, "LA"},
+			{"B", 200, "SF"},
+		}
+
+		// field index 1 = Age
+		autoTableSort(&rows, 1, true)
+
+		// numeric: 5, 30, 200 (not lexicographic "200" < "30" < "5")
+		if rows[0].Age != 5 || rows[1].Age != 30 || rows[2].Age != 200 {
+			t.Errorf("expected 5,30,200 got %d,%d,%d", rows[0].Age, rows[1].Age, rows[2].Age)
+		}
+	})
+
+	t.Run("sort state toggles direction on same column", func(t *testing.T) {
+		ss := &autoTableSortState{col: -1}
+
+		// first select col 0 -> ascending
+		ss.col = 0
+		ss.asc = true
+		if ss.col != 0 || !ss.asc {
+			t.Errorf("expected (0, asc), got (%d, asc=%v)", ss.col, ss.asc)
+		}
+
+		// select same col -> toggle to descending
+		ss.asc = !ss.asc
+		if ss.col != 0 || ss.asc {
+			t.Errorf("expected (0, desc), got (%d, asc=%v)", ss.col, ss.asc)
+		}
+
+		// select different col -> ascending
+		ss.col = 2
+		ss.asc = true
+		if ss.col != 2 || !ss.asc {
+			t.Errorf("expected (2, asc), got (%d, asc=%v)", ss.col, ss.asc)
+		}
+	})
+
+	t.Run("sort indicator in header", func(t *testing.T) {
+		rows := []Row{
+			{"Alpha", 20, "LA"},
+			{"Bravo", 25, "SF"},
+		}
+
+		tmpl := Build(AutoTable(&rows).Sortable())
+
+		// initial render: no indicator (col == -1)
+		buf := NewBuffer(60, 5)
+		tmpl.Execute(buf, 60, 5)
+		header := buf.GetLine(0)
+		if containsSubstring(header, "▲") || containsSubstring(header, "▼") {
+			t.Errorf("expected no sort indicator initially, got: %q", header)
+		}
+
+		// manually set sort state on the compiled op and re-render
+		op := &tmpl.ops[0]
+		op.AutoTableSort.col = 0
+		op.AutoTableSort.asc = true
+
+		buf2 := NewBuffer(60, 5)
+		tmpl.Execute(buf2, 60, 5)
+		header = buf2.GetLine(0)
+		if !containsSubstring(header, "Name") || !containsSubstring(header, "▲") {
+			t.Errorf("expected 'Name ▲' in header, got: %q", header)
+		}
+
+		// flip to descending
+		op.AutoTableSort.asc = false
+		buf3 := NewBuffer(60, 5)
+		tmpl.Execute(buf3, 60, 5)
+		header = buf3.GetLine(0)
+		if !containsSubstring(header, "▼") {
+			t.Errorf("expected ▼ indicator, got: %q", header)
+		}
+
+		// switch to Age column
+		op.AutoTableSort.col = 1
+		op.AutoTableSort.asc = true
+		buf4 := NewBuffer(60, 5)
+		tmpl.Execute(buf4, 60, 5)
+		header = buf4.GetLine(0)
+		if !containsSubstring(header, "▲") {
+			t.Errorf("expected ▲ on Age column, got: %q", header)
+		}
+	})
+
+	t.Run("sort with explicit columns", func(t *testing.T) {
+		rows := []Row{
+			{"Charlie", 30, "NYC"},
+			{"Alpha", 20, "LA"},
+			{"Bravo", 25, "SF"},
+		}
+
+		// City is field index 2 in the struct
+		tmpl := Build(AutoTable(&rows).Columns("City", "Name").Sortable())
+
+		// set sort state to sort by first displayed column (City)
+		op := &tmpl.ops[0]
+		op.AutoTableSort.col = 0
+		op.AutoTableSort.asc = true
+
+		// trigger the sort using the field index from the op
+		fieldIdx := op.AutoTableFields[0]
+		autoTableSort(&rows, fieldIdx, true)
+
+		buf := NewBuffer(60, 6)
+		tmpl.Execute(buf, 60, 6)
+
+		// sorted by City asc: LA, NYC, SF
+		r0 := buf.GetLine(1)
+		r1 := buf.GetLine(2)
+		r2 := buf.GetLine(3)
+		if !containsSubstring(r0, "LA") {
+			t.Errorf("expected LA first (city asc), got: %q", r0)
+		}
+		if !containsSubstring(r1, "NYC") {
+			t.Errorf("expected NYC second (city asc), got: %q", r1)
+		}
+		if !containsSubstring(r2, "SF") {
+			t.Errorf("expected SF third (city asc), got: %q", r2)
+		}
+	})
+
+	t.Run("sort preserves reactivity", func(t *testing.T) {
+		rows := []Row{
+			{"Charlie", 30, "NYC"},
+			{"Alpha", 20, "LA"},
+		}
+
+		tmpl := Build(AutoTable(&rows).Sortable())
+
+		// sort ascending by Name (field index 0)
+		autoTableSort(&rows, 0, true)
+
+		buf := NewBuffer(60, 5)
+		tmpl.Execute(buf, 60, 5)
+
+		r0 := buf.GetLine(1)
+		if !containsSubstring(r0, "Alpha") {
+			t.Errorf("expected Alpha first after sort, got: %q", r0)
+		}
+
+		// append works with sorted data (reactivity)
+		rows = append(rows, Row{"Delta", 15, "Boston"})
+
+		buf2 := NewBuffer(60, 6)
+		tmpl.Execute(buf2, 60, 6)
+
+		found := false
+		for line := 1; line < 5; line++ {
+			if containsSubstring(buf2.GetLine(line), "Delta") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected 'Delta' to appear after append (reactivity)")
+		}
+	})
+
+	t.Run("compareValues handles all numeric types", func(t *testing.T) {
+		// int comparison
+		cmp := compareValues(
+			reflect.ValueOf(10),
+			reflect.ValueOf(20),
+		)
+		if cmp >= 0 {
+			t.Errorf("expected 10 < 20, got cmp=%d", cmp)
+		}
+
+		// float comparison
+		cmp = compareValues(
+			reflect.ValueOf(3.14),
+			reflect.ValueOf(2.71),
+		)
+		if cmp <= 0 {
+			t.Errorf("expected 3.14 > 2.71, got cmp=%d", cmp)
+		}
+
+		// string comparison
+		cmp = compareValues(
+			reflect.ValueOf("apple"),
+			reflect.ValueOf("banana"),
+		)
+		if cmp >= 0 {
+			t.Errorf("expected apple < banana, got cmp=%d", cmp)
+		}
+
+		// equal values
+		cmp = compareValues(
+			reflect.ValueOf(42),
+			reflect.ValueOf(42),
+		)
+		if cmp != 0 {
+			t.Errorf("expected equal, got cmp=%d", cmp)
 		}
 	})
 }
