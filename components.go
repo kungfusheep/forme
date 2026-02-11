@@ -1395,7 +1395,7 @@ func (t AutoTableC) bindings() []binding { return t.declaredBindings }
 // autoTableSort sorts a *[]T slice in-place by the given struct field index.
 func autoTableSort(data any, fieldIdx int, asc bool) {
 	rv := reflect.ValueOf(data)
-	if rv.Kind() != reflect.Ptr {
+	if rv.Kind() != reflect.Pointer {
 		return
 	}
 	slice := rv.Elem()

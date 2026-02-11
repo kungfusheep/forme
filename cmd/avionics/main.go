@@ -178,9 +178,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	top := &Style{Transform: TransformUppercase}
 
 	app.SetView(
-		VBox(
+		VBox.CascadeStyle(top)(
 			// header
 			HBox(
 				Text("MFD-1").FG(Green).Bold(),
@@ -207,11 +208,11 @@ func main() {
 			HBox.Gap(4)(
 				// left column - flight data
 				VBox.WidthPct(0.4)(
-					StatusPanel("FLIGHT DATA", 24, []StatusItem{
-						{Label: "ALT", Value: fmt.Sprintf("%.0f FT", altitude), Status: StatusNormal},
-						{Label: "HDG", Value: fmt.Sprintf("%.0f°", heading), Status: StatusNormal},
-						{Label: "MACH", Value: fmt.Sprintf("%.2f", speed), Status: StatusNormal},
-						{Label: "GS", Value: "485 KT", Status: StatusNormal},
+					StatusPanel("flight data", 24, []StatusItem{
+						{Label: "alt", Value: fmt.Sprintf("%.0f FT", altitude), Status: StatusNormal},
+						{Label: "hdg", Value: fmt.Sprintf("%.0f°", heading), Status: StatusNormal},
+						{Label: "mach", Value: fmt.Sprintf("%.2f", speed), Status: StatusNormal},
+						{Label: "gs", Value: "485 KT", Status: StatusNormal},
 					}),
 
 					SpaceH(1),

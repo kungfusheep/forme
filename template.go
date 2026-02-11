@@ -3382,7 +3382,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			width = int(maxW)
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(op.LeaderValue, style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderPtr:
 		width := int(op.Width)
@@ -3390,7 +3392,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			width = int(maxW)
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(*op.LeaderValuePtr, style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderIntPtr:
 		width := int(op.Width)
@@ -3398,7 +3402,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			width = int(maxW)
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%d", *op.LeaderIntPtr), width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(fmt.Sprintf("%d", *op.LeaderIntPtr), style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderFloatPtr:
 		width := int(op.Width)
@@ -3406,7 +3412,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			width = int(maxW)
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%.1f", *op.LeaderFloatPtr), width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(fmt.Sprintf("%.1f", *op.LeaderFloatPtr), style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpAutoTable:
 		t.renderAutoTable(buf, op, absX, absY, maxW)
@@ -3527,6 +3535,12 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			t.inheritedFill = op.CascadeStyle.Fill
 		}
 
+		// Update inherited style if this container sets one (before title rendering)
+		oldInheritedStyle := t.inheritedStyle
+		if op.CascadeStyle != nil {
+			t.inheritedStyle = op.CascadeStyle
+		}
+
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := t.inheritedFill
 		if op.Fill.Mode != ColorDefault {
@@ -3551,7 +3565,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			buf.DrawBorder(int(boxX), int(boxY), int(boxW), int(boxH), op.Border, style)
 
 			if op.Title != "" {
-				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
+				titleTransform := TransformNone
+				if t.inheritedStyle != nil {
+					titleTransform = t.inheritedStyle.Transform
+				}
+				titleStr := string(op.Border.Horizontal) + " " + applyTransform(op.Title, titleTransform) + " "
 				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
 			}
 		}
@@ -3560,12 +3578,6 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		contentW := boxW
 		if op.Border.Horizontal != 0 {
 			contentW -= 2
-		}
-
-		// Update inherited style if this container sets one
-		oldInheritedStyle := t.inheritedStyle
-		if op.CascadeStyle != nil {
-			t.inheritedStyle = op.CascadeStyle
 		}
 
 		// Set vertical clip for children (content area bottom)
@@ -3741,7 +3753,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			width = int(maxW)
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, op.LeaderValue, width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(op.LeaderValue, style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderPtr:
 		width := int(op.Width)
@@ -3749,7 +3763,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			width = int(maxW)
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, *op.LeaderValuePtr, width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(*op.LeaderValuePtr, style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderIntPtr:
 		width := int(op.Width)
@@ -3757,7 +3773,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			width = int(maxW)
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%d", *op.LeaderIntPtr), width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(fmt.Sprintf("%d", *op.LeaderIntPtr), style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderFloatPtr:
 		width := int(op.Width)
@@ -3765,7 +3783,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			width = int(maxW)
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
-		buf.WriteLeader(int(absX), int(absY), op.LeaderLabel, fmt.Sprintf("%.1f", *op.LeaderFloatPtr), width, op.LeaderFill, style)
+		label := applyTransform(op.LeaderLabel, style.Transform)
+		value := applyTransform(fmt.Sprintf("%.1f", *op.LeaderFloatPtr), style.Transform)
+		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpTable:
 		sub.renderTable(buf, op, absX, absY, maxW)
@@ -3889,6 +3909,12 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			sub.inheritedFill = op.CascadeStyle.Fill
 		}
 
+		// Update inherited style if this container sets one (before title rendering)
+		oldInheritedStyle := sub.inheritedStyle
+		if op.CascadeStyle != nil {
+			sub.inheritedStyle = op.CascadeStyle
+		}
+
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := sub.inheritedFill
 		if op.Fill.Mode != ColorDefault {
@@ -3913,7 +3939,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			buf.DrawBorder(int(boxX), int(boxY), int(boxW), int(boxH), op.Border, style)
 
 			if op.Title != "" {
-				titleStr := string(op.Border.Horizontal) + " " + op.Title + " "
+				titleTransform := TransformNone
+				if sub.inheritedStyle != nil {
+					titleTransform = sub.inheritedStyle.Transform
+				}
+				titleStr := string(op.Border.Horizontal) + " " + applyTransform(op.Title, titleTransform) + " "
 				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
 			}
 		}
@@ -3922,12 +3952,6 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		contentW := boxW
 		if op.Border.Horizontal != 0 {
 			contentW -= 2
-		}
-
-		// Update inherited style if this container sets one
-		oldInheritedStyle := sub.inheritedStyle
-		if op.CascadeStyle != nil {
-			sub.inheritedStyle = op.CascadeStyle
 		}
 
 		// Recurse into children with this container's position as their origin
@@ -4140,14 +4164,20 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 					}
 				}
 
+				// apply inherited transform for text items
+				effStyle := t.effectiveStyle(textStyle)
+
 				switch iterOp.Kind {
 				case OpText:
-					buf.WriteStringFast(int(contentX), y, iterOp.StaticStr, textStyle, int(contentW))
+					txt := applyTransform(iterOp.StaticStr, effStyle.Transform)
+					buf.WriteStringFast(int(contentX), y, txt, textStyle, int(contentW))
 				case OpTextPtr:
-					buf.WriteStringFast(int(contentX), y, *iterOp.StrPtr, textStyle, int(contentW))
+					txt := applyTransform(*iterOp.StrPtr, effStyle.Transform)
+					buf.WriteStringFast(int(contentX), y, txt, textStyle, int(contentW))
 				case OpTextOff:
 					strPtr := (*string)(unsafe.Pointer(uintptr(elemPtr) + iterOp.StrOff))
-					buf.WriteStringFast(int(contentX), y, *strPtr, textStyle, int(contentW))
+					txt := applyTransform(*strPtr, effStyle.Transform)
+					buf.WriteStringFast(int(contentX), y, txt, textStyle, int(contentW))
 				case OpRichText:
 					buf.WriteSpans(int(contentX), y, iterOp.StaticSpans, int(contentW))
 				case OpRichTextPtr:
@@ -4246,8 +4276,10 @@ func (t *Template) renderTreeNode(buf *Buffer, op *Op, node *TreeNode, x int, y 
 		buf.Set(posX, *y, Cell{Rune: ' ', Style: op.TreeStyle})
 		posX++
 
-		// Draw label
-		buf.WriteStringFast(posX, *y, node.Label, op.TreeStyle, utf8.RuneCountInString(node.Label))
+		// Draw label (apply inherited transform)
+		effStyle := t.effectiveStyle(op.TreeStyle)
+		labelText := applyTransform(node.Label, effStyle.Transform)
+		buf.WriteStringFast(posX, *y, labelText, op.TreeStyle, utf8.RuneCountInString(labelText))
 		(*y)++
 	}
 
@@ -4498,11 +4530,13 @@ func (t *Template) renderTabs(buf *Buffer, op *Op, geom *Geom, absX, absY int16)
 
 	for i, label := range op.TabsLabels {
 		isSelected := i == selectedIdx
-		style := op.TabsInactiveStyle
+		style := t.effectiveStyle(op.TabsInactiveStyle)
 		if isSelected {
-			style = op.TabsActiveStyle
+			style = t.effectiveStyle(op.TabsActiveStyle)
 		}
 
+		// apply transform to label text
+		label = applyTransform(label, style.Transform)
 		labelLen := utf8.RuneCountInString(label)
 
 		switch op.TabsStyleType {
