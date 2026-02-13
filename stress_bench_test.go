@@ -375,7 +375,7 @@ func BenchmarkAsyncClear100Items(b *testing.B) {
 	}
 }
 
-// BenchmarkSyncClear100Items - 100 items with sync clear for comparison  
+// BenchmarkSyncClear100Items - 100 items with sync clear for comparison
 func BenchmarkSyncClear100Items(b *testing.B) {
 	buf := NewBuffer(80, 120)
 
@@ -402,5 +402,187 @@ func BenchmarkSyncClear100Items(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf.ClearDirty()
 		serial.Execute(buf, 80, 120)
+	}
+}
+
+// === Targeted benchmarks for optimized paths ===
+
+// BenchmarkFlexVBox - VBox with flex children (tests scratch slice reuse)
+func BenchmarkFlexVBox(b *testing.B) {
+	buf := NewBuffer(80, 50)
+	content := "flex content"
+
+	ui := VBoxNode{
+		Children: []any{
+			TextNode{Content: "Header"},
+			VBoxNode{Children: []any{
+				TextNode{Content: &content},
+			}}.Grow(1),
+			VBoxNode{Children: []any{
+				TextNode{Content: &content},
+			}}.Grow(2),
+			VBoxNode{Children: []any{
+				TextNode{Content: &content},
+			}}.Grow(1),
+			TextNode{Content: "Footer"},
+		},
+	}.Height(50)
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 80, 50)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 80, 50)
+	}
+}
+
+// BenchmarkFlexHBox - HBox with flex children (tests scratch slice reuse)
+func BenchmarkFlexHBox(b *testing.B) {
+	buf := NewBuffer(120, 30)
+	content := "flex content"
+
+	ui := HBoxNode{
+		Children: []any{
+			VBoxNode{Children: []any{TextNode{Content: &content}}}.Grow(1),
+			VBoxNode{Children: []any{TextNode{Content: &content}}}.Grow(2),
+			VBoxNode{Children: []any{TextNode{Content: &content}}}.Grow(1),
+		},
+	}
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 120, 30)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 120, 30)
+	}
+}
+
+// BenchmarkBorderedTitles - containers with border titles (tests zero-alloc title render)
+func BenchmarkBorderedTitles(b *testing.B) {
+	buf := NewBuffer(80, 30)
+	val := "100%"
+
+	ui := HBoxNode{
+		Children: []any{
+			VBoxNode{
+				Title:    "STATUS",
+				Children: []any{TextNode{Content: &val}},
+			}.Border(BorderSingle).Grow(1),
+			VBoxNode{
+				Title:    "SYSTEMS",
+				Children: []any{TextNode{Content: &val}},
+			}.Border(BorderSingle).Grow(1),
+			VBoxNode{
+				Title:    "CAPACITY",
+				Children: []any{TextNode{Content: &val}},
+			}.Border(BorderSingle).Grow(1),
+		},
+	}
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 80, 30)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 80, 30)
+	}
+}
+
+// BenchmarkLeaderIntFloat - leader lines with int/float pointers (tests strconv path)
+func BenchmarkLeaderIntFloat(b *testing.B) {
+	buf := NewBuffer(60, 20)
+	cpuVal := 78
+	memVal := 4.2
+	dskVal := 120
+
+	ui := VBoxNode{
+		Children: []any{
+			LeaderNode{Label: "CPU USAGE", Value: &cpuVal},
+			LeaderNode{Label: "MEMORY", Value: &memVal},
+			LeaderNode{Label: "DISK FREE", Value: &dskVal},
+			LeaderNode{Label: "CPU USAGE", Value: &cpuVal},
+			LeaderNode{Label: "MEMORY", Value: &memVal},
+			LeaderNode{Label: "DISK FREE", Value: &dskVal},
+		},
+	}
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 60, 20)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 60, 20)
+	}
+}
+
+// BenchmarkTreeView - tree rendering (tests scratch prefix reuse)
+func BenchmarkTreeView(b *testing.B) {
+	buf := NewBuffer(60, 40)
+
+	root := &TreeNode{
+		Label:    "root",
+		Expanded: true,
+		Children: make([]*TreeNode, 5),
+	}
+	for i := range root.Children {
+		child := &TreeNode{
+			Label:    "child-" + string(rune('A'+i)),
+			Expanded: true,
+			Children: make([]*TreeNode, 3),
+		}
+		for j := range child.Children {
+			child.Children[j] = &TreeNode{
+				Label:    "leaf-" + string(rune('a'+j)),
+				Expanded: false,
+			}
+		}
+		root.Children[i] = child
+	}
+
+	ui := TreeView{
+		Root:          root,
+		ShowRoot:      true,
+		Indent:        2,
+		ShowLines:     true,
+		ExpandedChar:  '▼',
+		CollapsedChar: '▶',
+		LeafChar:      '·',
+	}
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 60, 40)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 60, 40)
+	}
+}
+
+// BenchmarkFillRect - tests optimized FillRect (no border merge for spaces)
+func BenchmarkFillRect(b *testing.B) {
+	buf := NewBuffer(120, 50)
+	cell := Cell{Rune: ' ', Style: Style{BG: Color{Mode: ColorRGB, R: 30, G: 30, B: 60}}}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.FillRect(0, 0, 120, 50, cell)
 	}
 }

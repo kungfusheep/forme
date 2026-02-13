@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/util"
@@ -205,21 +206,22 @@ func (g *fzfGroup) score(candidate string) (int, bool) {
 }
 
 func (t *fzfTerm) score(candidate string) (int, bool) {
-	chars := util.ToChars([]byte(candidate))
+	// avoid []byte copy: algo functions only read from Chars, never mutate the backing slice
+	chars := util.ToChars(unsafe.Slice(unsafe.StringData(candidate), len(candidate)))
 
-	var algoFn func(bool, bool, bool, *util.Chars, []rune, bool, *util.Slab) (algo.Result, *[]int)
+	// direct dispatch: avoids function variable that prevents escape analysis
+	// from proving &chars stays on the stack
+	var result algo.Result
 	switch t.kind {
 	case termExact:
-		algoFn = algo.ExactMatchNaive
+		result, _ = algo.ExactMatchNaive(t.caseSensitive, false, true, &chars, t.patRunes, false, fzfSlab)
 	case termPrefix:
-		algoFn = algo.PrefixMatch
+		result, _ = algo.PrefixMatch(t.caseSensitive, false, true, &chars, t.patRunes, false, fzfSlab)
 	case termSuffix:
-		algoFn = algo.SuffixMatch
+		result, _ = algo.SuffixMatch(t.caseSensitive, false, true, &chars, t.patRunes, false, fzfSlab)
 	default:
-		algoFn = algo.FuzzyMatchV2
+		result, _ = algo.FuzzyMatchV2(t.caseSensitive, false, true, &chars, t.patRunes, false, fzfSlab)
 	}
-
-	result, _ := algoFn(t.caseSensitive, false, true, &chars, t.patRunes, false, fzfSlab)
 	matched := result.Start >= 0
 
 	if t.negated {

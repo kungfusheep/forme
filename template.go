@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -104,6 +105,12 @@ type Template struct {
 
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
+
+	// scratch buffers for per-frame reuse (avoid nil-slice allocs in hot paths)
+	flexScratchIdx  []int16   // flex child indices (shared by VBox + HBox phases)
+	flexScratchGrow []float32 // flex grow values (shared by VBox + HBox phases)
+	flexScratchImpl []int16   // implicit flex children (HBox only)
+	treeScratchPfx  []bool    // tree node line prefix
 
 	// Declarative bindings collected during compile, wired during setup
 	pendingBindings     []binding
@@ -231,6 +238,7 @@ type Op struct {
 	SelectedPtr      *int           // pointer to selected index
 	Marker           string         // selection marker (e.g., "> ")
 	MarkerWidth      int16          // cached rune count of marker
+	MarkerSpaces     string         // pre-computed spaces matching marker width
 
 	// Leader
 	LeaderLabel    string   // static label
@@ -756,6 +764,7 @@ func (t *Template) compileSelectionList(v *SelectionList, parent int16, depth in
 		SelectedPtr:      v.Selected,
 		Marker:           marker,
 		MarkerWidth:      markerWidth,
+		MarkerSpaces:     strings.Repeat(" ", int(markerWidth)),
 	}
 
 	return t.addOp(op, depth)
@@ -2424,12 +2433,9 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 	var totalFlex float32
 	var fixedWidthCount int16 // count of non-flex children with width
 
-	type flexInfo struct {
-		idx      int16
-		flexGrow float32
-	}
-	var flexChildren []flexInfo
-	var implicitFlexChildren []int16 // containers without explicit width
+	flexChildren := t.flexScratchIdx[:0]
+	flexGrowValues := t.flexScratchGrow[:0]
+	implicitFlexChildren := t.flexScratchImpl[:0]
 
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
 		childOp := &t.ops[i]
@@ -2453,7 +2459,8 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 		if effectiveOp.FlexGrow > 0 {
 			// Explicit flex child - defer to pass 2
 			totalFlex += effectiveOp.FlexGrow
-			flexChildren = append(flexChildren, flexInfo{idx: i, flexGrow: effectiveOp.FlexGrow})
+			flexChildren = append(flexChildren, i)
+			flexGrowValues = append(flexGrowValues, effectiveOp.FlexGrow)
 		} else if !effectiveOp.ContentSized && (effectiveOp.Kind == OpContainer || effectiveOp.Kind == OpJump) && effectiveOp.Width == 0 && effectiveOp.PercentWidth == 0 {
 			// Container/Jump without explicit width or fixed-content children - implicit flex
 			implicitFlexChildren = append(implicitFlexChildren, i)
@@ -2466,6 +2473,10 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 			}
 		}
 	}
+
+	t.flexScratchIdx = flexChildren
+	t.flexScratchGrow = flexGrowValues
+	t.flexScratchImpl = implicitFlexChildren
 
 	// Account for gaps - total children that will take space
 	// Note: we track fixedWidthCount during the loop above to avoid double-counting
@@ -2480,11 +2491,11 @@ func (t *Template) distributeHBoxChildWidths(idx int16, op *Op, availW int16, el
 	if remaining > 0 && totalFlex > 0 {
 		// Explicit flex children
 		distributed := int16(0)
-		for i, flex := range flexChildren {
-			childOp := &t.ops[flex.idx]
-			childGeom := &t.geom[flex.idx]
+		for i, childIdx := range flexChildren {
+			childOp := &t.ops[childIdx]
+			childGeom := &t.geom[childIdx]
 
-			flexShare := flex.flexGrow / totalFlex
+			flexShare := flexGrowValues[i] / totalFlex
 			flexW := int16(float32(remaining) * flexShare)
 
 			// Last flex child gets remainder (avoid rounding loss)
@@ -3115,17 +3126,19 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 		}
 	}
 
-	// Calculate used height and total flex grow
+	// Calculate used height and total flex grow (reuse scratch slices)
 	var usedH int16
 	var totalFlex float32
-	var flexChildren []int16
-	var flexGrowValues []float32 // Store flex values (may come from nested template)
+	var childCount int16
+	flexChildren := t.flexScratchIdx[:0]
+	flexGrowValues := t.flexScratchGrow[:0]
 
 	for i := op.ChildStart; i < op.ChildEnd; i++ {
 		childOp := &t.ops[i]
 		if childOp.Parent != idx {
 			continue
 		}
+		childCount++
 
 		childGeom := &t.geom[i]
 
@@ -3152,14 +3165,10 @@ func (t *Template) distributeFlexInCol(idx int16, op *Op, rootH int16) {
 
 		usedH += childGeom.H
 	}
+	t.flexScratchIdx = flexChildren
+	t.flexScratchGrow = flexGrowValues
 
 	// Add gaps to used height
-	childCount := int16(0)
-	for i := op.ChildStart; i < op.ChildEnd; i++ {
-		if t.ops[i].Parent == idx {
-			childCount++
-		}
-	}
 	if childCount > 1 && op.Gap > 0 {
 		usedH += int16(op.Gap) * (childCount - 1)
 	}
@@ -3536,7 +3545,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
 		label := applyTransform(op.LeaderLabel, style.Transform)
-		value := applyTransform(fmt.Sprintf("%d", *op.LeaderIntPtr), style.Transform)
+		var scratch [20]byte
+		b := strconv.AppendInt(scratch[:0], int64(*op.LeaderIntPtr), 10)
+		value := applyTransform(unsafe.String(&b[0], len(b)), style.Transform)
 		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderFloatPtr:
@@ -3546,7 +3557,9 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		}
 		style := t.effectiveStyle(op.LeaderStyle)
 		label := applyTransform(op.LeaderLabel, style.Transform)
-		value := applyTransform(fmt.Sprintf("%.1f", *op.LeaderFloatPtr), style.Transform)
+		var scratch [32]byte
+		b := strconv.AppendFloat(scratch[:0], *op.LeaderFloatPtr, 'f', 1, 64)
+		value := applyTransform(unsafe.String(&b[0], len(b)), style.Transform)
 		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpAutoTable:
@@ -3702,8 +3715,25 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 				if t.inheritedStyle != nil {
 					titleTransform = t.inheritedStyle.Transform
 				}
-				titleStr := string(op.Border.Horizontal) + " " + applyTransform(op.Title, titleTransform) + " "
-				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
+				titleMaxW := int(boxW) - 2
+				titleX := int(boxX) + 1
+				if titleMaxW > 0 {
+					buf.SetFast(titleX, int(boxY), Cell{Rune: op.Border.Horizontal, Style: style})
+					titleX++
+					buf.SetFast(titleX, int(boxY), Cell{Rune: ' ', Style: style})
+					titleX++
+					title := applyTransform(op.Title, titleTransform)
+					titleW := utf8.RuneCountInString(title)
+					availTitleW := titleMaxW - 3 // border char + space before + space after
+					if availTitleW > 0 {
+						if titleW > availTitleW {
+							titleW = availTitleW
+						}
+						buf.WriteStringFast(titleX, int(boxY), title, style, titleW)
+						titleX += titleW
+						buf.SetFast(titleX, int(boxY), Cell{Rune: ' ', Style: style})
+					}
+				}
 			}
 		}
 
@@ -3907,7 +3937,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
 		label := applyTransform(op.LeaderLabel, style.Transform)
-		value := applyTransform(fmt.Sprintf("%d", *op.LeaderIntPtr), style.Transform)
+		var scratch [20]byte
+		b := strconv.AppendInt(scratch[:0], int64(*op.LeaderIntPtr), 10)
+		value := applyTransform(unsafe.String(&b[0], len(b)), style.Transform)
 		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpLeaderFloatPtr:
@@ -3917,7 +3949,9 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		}
 		style := sub.effectiveStyle(op.LeaderStyle)
 		label := applyTransform(op.LeaderLabel, style.Transform)
-		value := applyTransform(fmt.Sprintf("%.1f", *op.LeaderFloatPtr), style.Transform)
+		var scratch [32]byte
+		b := strconv.AppendFloat(scratch[:0], *op.LeaderFloatPtr, 'f', 1, 64)
+		value := applyTransform(unsafe.String(&b[0], len(b)), style.Transform)
 		buf.WriteLeader(int(absX), int(absY), label, value, width, op.LeaderFill, style)
 
 	case OpTable:
@@ -4076,8 +4110,25 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 				if sub.inheritedStyle != nil {
 					titleTransform = sub.inheritedStyle.Transform
 				}
-				titleStr := string(op.Border.Horizontal) + " " + applyTransform(op.Title, titleTransform) + " "
-				buf.WriteStringFast(int(boxX)+1, int(boxY), titleStr, style, int(boxW)-2)
+				titleMaxW := int(boxW) - 2
+				titleX := int(boxX) + 1
+				if titleMaxW > 0 {
+					buf.SetFast(titleX, int(boxY), Cell{Rune: op.Border.Horizontal, Style: style})
+					titleX++
+					buf.SetFast(titleX, int(boxY), Cell{Rune: ' ', Style: style})
+					titleX++
+					title := applyTransform(op.Title, titleTransform)
+					titleW := utf8.RuneCountInString(title)
+					availTitleW := titleMaxW - 3 // border char + space before + space after
+					if availTitleW > 0 {
+						if titleW > availTitleW {
+							titleW = availTitleW
+						}
+						buf.WriteStringFast(titleX, int(boxY), title, style, titleW)
+						titleX += titleW
+						buf.SetFast(titleX, int(boxY), Cell{Rune: ' ', Style: style})
+					}
+				}
 			}
 		}
 
@@ -4199,11 +4250,8 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 		}
 	}
 
-	// Spaces for non-selected items (same width as marker)
-	spaces := ""
-	for i := int16(0); i < op.MarkerWidth; i++ {
-		spaces += " "
-	}
+	// Pre-computed spaces for non-selected items (same width as marker)
+	spaces := op.MarkerSpaces
 
 	contentW := int16(maxW) - op.MarkerWidth
 	contentX := absX + op.MarkerWidth
@@ -4236,9 +4284,7 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 			rowBG = defaultStyle.BG
 		}
 		if rowBG.Mode != 0 {
-			for x := int16(0); x < maxW; x++ {
-				buf.Set(int(absX+x), y, Cell{Rune: ' ', Style: Style{BG: rowBG}})
-			}
+			buf.FillRect(int(absX), y, int(maxW), 1, Cell{Rune: ' ', Style: Style{BG: rowBG}})
 		}
 
 		// Determine marker text and style
@@ -4420,13 +4466,14 @@ func (t *Template) renderTreeNode(buf *Buffer, op *Op, node *TreeNode, x int, y 
 	if node.Expanded || !render {
 		childCount := len(node.Children)
 		for i, child := range node.Children {
-			// Track which levels still have siblings below
-			newPrefix := make([]bool, level+1)
-			copy(newPrefix, linePrefix)
-			if level >= 0 {
-				newPrefix[level] = i < childCount-1
+			// grow shared scratch to fit this level (DFS: ancestors are still valid)
+			for len(t.treeScratchPfx) <= level {
+				t.treeScratchPfx = append(t.treeScratchPfx, false)
 			}
-			t.renderTreeNode(buf, op, child, x, y, level+1, true, newPrefix)
+			if level >= 0 {
+				t.treeScratchPfx[level] = i < childCount-1
+			}
+			t.renderTreeNode(buf, op, child, x, y, level+1, true, t.treeScratchPfx)
 		}
 	}
 }

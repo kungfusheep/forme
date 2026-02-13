@@ -345,15 +345,18 @@ func (s *Screen) Flush() {
 		dirtyCount++
 
 		rowChanged := false
+		backBase := y * s.back.width
+		frontBase := y * s.front.width
 		for x := 0; x < s.width; x++ {
-			backCell := s.back.Get(x, y)
-			if backCell == s.front.Get(x, y) {
+			idx := backBase + x
+			backCell := s.back.cells[idx]
+			if backCell == s.front.cells[frontBase+x] {
 				continue
 			}
 
 			// skip placeholder cells (second half of double-width chars)
 			if backCell.Rune == 0 {
-				s.front.Set(x, y, backCell)
+				s.front.cells[frontBase+x] = backCell
 				continue
 			}
 
@@ -379,9 +382,13 @@ func (s *Screen) Flush() {
 			}
 
 			s.writeCell(&s.buf, backCell)
-			s.front.Set(x, y, backCell)
+			s.front.cells[frontBase+x] = backCell
 			// cursor advances by the display width of the character
-			rw := runewidth.RuneWidth(backCell.Rune)
+			// fast path: ASCII runes are always width 1
+			rw := 1
+			if backCell.Rune >= 0x1100 {
+				rw = runewidth.RuneWidth(backCell.Rune)
+			}
 			if rw == 0 {
 				rw = 1 // zero-width chars still advance cursor by 1 in most terminals
 			}

@@ -485,7 +485,30 @@ func (b *Buffer) ClearLineWithStyle(y int, style Style) {
 }
 
 // FillRect fills a rectangular region with the given cell.
+// Uses direct slice writes (no border merge) for non-border cells,
+// falls back to Set() only when the cell is a border character.
 func (b *Buffer) FillRect(x, y, width, height int, c Cell) {
+	// fast path: non-border fills bypass Set() entirely
+	if c.Rune < boxDrawingMin || c.Rune > boxDrawingMax {
+		for dy := 0; dy < height; dy++ {
+			row := y + dy
+			if row < 0 || row >= b.height {
+				continue
+			}
+			if row > b.dirtyMaxY {
+				b.dirtyMaxY = row
+			}
+			b.dirtyRows[row] = true
+			base := row * b.width
+			for dx := 0; dx < width; dx++ {
+				col := x + dx
+				if col >= 0 && col < b.width {
+					b.cells[base+col] = c
+				}
+			}
+		}
+		return
+	}
 	for dy := 0; dy < height; dy++ {
 		for dx := 0; dx < width; dx++ {
 			b.Set(x+dx, y+dy, c)

@@ -17,7 +17,13 @@ type Filter[T any] struct {
 	extract   func(*T) string
 	lastQuery string
 	query     FzfQuery
-	indices   []int // indices[i] = index into *source for Items[i]
+	indices   []int    // indices[i] = index into *source for Items[i]
+	matches   []scored // reusable scratch for scoring
+}
+
+type scored struct {
+	index int
+	score int
 }
 
 // NewFilter creates a filter over a source slice.
@@ -45,14 +51,12 @@ func (f *Filter[T]) Update(query string) {
 		return
 	}
 
-	// score all source items, collect matches
-	type scored struct {
-		index int
-		score int
-	}
-
+	// score all source items, collect matches (reuse scratch slice)
 	src := *f.source
-	matches := make([]scored, 0, len(src)/2)
+	matches := f.matches[:0]
+	if cap(matches) < len(src) {
+		matches = make([]scored, 0, len(src))
+	}
 	for i := range src {
 		text := f.extract(&src[i])
 		score, ok := f.query.Score(text)
@@ -69,6 +73,8 @@ func (f *Filter[T]) Update(query string) {
 			j--
 		}
 	}
+
+	f.matches = matches // save for reuse next call
 
 	// rebuild Items and indices
 	f.Items = f.Items[:0]
