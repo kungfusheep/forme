@@ -317,6 +317,13 @@ func (a *App) View(name string, view any) *ViewBuilder {
 
 func (vb *ViewBuilder) Ref(f func(*ViewBuilder)) *ViewBuilder { f(vb); return vb }
 
+// NoCounts disables vim-style count prefixes (e.g., 5j) for this view.
+// Use this when the view has text input so digits can be typed.
+func (vb *ViewBuilder) NoCounts() *ViewBuilder {
+	vb.router.NoCounts()
+	return vb
+}
+
 // Handle registers a key handler for this view.
 // Accepts func(riffkey.Match), func(any), or func() for convenience.
 // Automatically requests a re-render after the handler runs.
