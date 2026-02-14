@@ -1,10 +1,4 @@
-// tui-ncdu: Disk usage viewer demo
-// Tests: filesystem data, tree navigation, progress bars, scrolling
-//
-// GAPS FOUND:
-// 1. No Progress bar component - can't show visual size bars inline
-// 2. Can't combine Text + Progress on same Row easily
-// 3. Same fixed slots workaround as fzf for dynamic lists
+// forme-ncdu: Disk usage viewer with reactive List and inline formatting
 package main
 
 import (
@@ -18,22 +12,11 @@ import (
 	. "github.com/kungfusheep/forme"
 )
 
-const maxVisible = 20
-
 type Entry struct {
-	Name  string
-	Size  int64
-	IsDir bool
-}
-
-type State struct {
-	CurrentPath   string
-	Entries       []Entry
-	SelectedIdx   int
-	TotalSize     int64
-	StatusLine    string
-	DisplayLines  [maxVisible]string
-	DisplayBars   [maxVisible]int // percentage for progress bars
+	Name    string
+	Size    int64
+	IsDir   bool
+	Display string
 }
 
 func main() {
@@ -41,114 +24,106 @@ func main() {
 	if len(os.Args) > 1 {
 		startPath = os.Args[1]
 	}
-
 	absPath, err := filepath.Abs(startPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	state := &State{
-		CurrentPath: absPath,
-		StatusLine:  "↑/↓ navigate, Enter=open dir, Backspace=parent, q=quit",
+	currentPath := absPath
+	selectedIdx := 0
+	statusLine := "↑/↓ navigate, Enter=open dir, Backspace=parent, q=quit"
+	var entries []Entry
+
+	scan := func() {
+		dirEntries, err := os.ReadDir(currentPath)
+		if err != nil {
+			statusLine = "Error: " + err.Error()
+			entries = nil
+			return
+		}
+
+		entries = entries[:0]
+		var totalSize int64
+
+		for _, e := range dirEntries {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			entry := Entry{Name: e.Name(), IsDir: e.IsDir()}
+			if e.IsDir() {
+				entry.Size = getDirSize(filepath.Join(currentPath, e.Name()))
+			} else {
+				entry.Size = info.Size()
+			}
+			entries = append(entries, entry)
+			totalSize += entry.Size
+		}
+
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Size > entries[j].Size
+		})
+
+		// format display strings
+		for i := range entries {
+			e := &entries[i]
+			icon := "  "
+			if e.IsDir {
+				icon = "📁"
+			}
+			pct := ""
+			if totalSize > 0 {
+				pct = fmt.Sprintf("%3d%%", e.Size*100/totalSize)
+			}
+			e.Display = fmt.Sprintf("%s %s %s  %s", formatSize(e.Size), pct, icon, e.Name)
+		}
 	}
-	scanDirectory(state)
+	scan()
 
 	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	app.SetView(buildView(state))
-
-	app.Handle("<Up>", func(_ riffkey.Match) {
-		if state.SelectedIdx > 0 {
-			state.SelectedIdx--
-			updateDisplay(state)
-		}
-		app.RequestRender()
-	})
-
-	app.Handle("<Down>", func(_ riffkey.Match) {
-		if state.SelectedIdx < len(state.Entries)-1 {
-			state.SelectedIdx++
-			updateDisplay(state)
-		}
-		app.RequestRender()
-	})
-
-	app.Handle("<Enter>", func(_ riffkey.Match) {
-		if len(state.Entries) > 0 && state.Entries[state.SelectedIdx].IsDir {
-			state.CurrentPath = filepath.Join(state.CurrentPath, state.Entries[state.SelectedIdx].Name)
-			state.SelectedIdx = 0
-			scanDirectory(state)
-		}
-		app.RequestRender()
-	})
+	app.SetView(VBox(
+		Text("Disk Usage Analyzer").Bold(),
+		HBox(Text("Path: "), Text(&currentPath)),
+		Text(""),
+		List(&entries).
+			Selection(&selectedIdx).
+			MaxVisible(20).
+			Render(func(e *Entry) any {
+				return Text(&e.Display)
+			}).
+			BindNav("<Down>", "<Up>").
+			BindPageNav("<PageDown>", "<PageUp>").
+			BindFirstLast("<Home>", "<End>").
+			Handle("<Enter>", func(e *Entry) {
+				if e.IsDir {
+					currentPath = filepath.Join(currentPath, e.Name)
+					selectedIdx = 0
+					scan()
+				}
+			}),
+		Text(""),
+		Text(&statusLine),
+	))
 
 	app.Handle("<BS>", func(_ riffkey.Match) {
-		parent := filepath.Dir(state.CurrentPath)
-		if parent != state.CurrentPath {
-			state.CurrentPath = parent
-			state.SelectedIdx = 0
-			scanDirectory(state)
+		parent := filepath.Dir(currentPath)
+		if parent != currentPath {
+			currentPath = parent
+			selectedIdx = 0
+			scan()
 		}
-		app.RequestRender()
 	})
 
-	app.Handle("q", func(_ riffkey.Match) {
-		app.Stop()
-	})
-
-	app.Handle("<Esc>", func(_ riffkey.Match) {
-		app.Stop()
-	})
+	app.Handle("q", func(_ riffkey.Match) { app.Stop() })
+	app.Handle("<Esc>", func(_ riffkey.Match) { app.Stop() })
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func scanDirectory(state *State) {
-	entries, err := os.ReadDir(state.CurrentPath)
-	if err != nil {
-		state.StatusLine = "Error: " + err.Error()
-		state.Entries = nil
-		updateDisplay(state)
-		return
-	}
-
-	state.Entries = nil
-	state.TotalSize = 0
-
-	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-
-		entry := Entry{
-			Name:  e.Name(),
-			IsDir: e.IsDir(),
-		}
-
-		if e.IsDir() {
-			// Quick size estimate - just count immediate children
-			// Full recursive would be slow
-			entry.Size = getDirSize(filepath.Join(state.CurrentPath, e.Name()))
-		} else {
-			entry.Size = info.Size()
-		}
-
-		state.Entries = append(state.Entries, entry)
-		state.TotalSize += entry.Size
-	}
-
-	// Sort by size descending
-	sort.Slice(state.Entries, func(i, j int) bool {
-		return state.Entries[i].Size > state.Entries[j].Size
-	})
-
-	updateDisplay(state)
 }
 
 func getDirSize(path string) int64 {
@@ -185,69 +160,4 @@ func formatSize(bytes int64) string {
 	default:
 		return fmt.Sprintf("%6d B ", bytes)
 	}
-}
-
-func updateDisplay(state *State) {
-	for i := 0; i < maxVisible; i++ {
-		if i < len(state.Entries) {
-			e := state.Entries[i]
-			prefix := "  "
-			if i == state.SelectedIdx {
-				prefix = "> "
-			}
-			icon := "  "
-			if e.IsDir {
-				icon = "📁"
-			}
-			state.DisplayLines[i] = fmt.Sprintf("%s%s %s  %-30s", prefix, formatSize(e.Size), icon, e.Name)
-
-			// Calculate bar percentage
-			if state.TotalSize > 0 {
-				state.DisplayBars[i] = int(e.Size * 100 / state.TotalSize)
-			} else {
-				state.DisplayBars[i] = 0
-			}
-		} else {
-			state.DisplayLines[i] = ""
-			state.DisplayBars[i] = 0
-		}
-	}
-}
-
-func buildView(state *State) any {
-	return VBoxNode{Children: []any{
-		// Header
-		TextNode{Content: "Disk Usage Analyzer", Style: Style{Attr: AttrBold}},
-		HBoxNode{Children: []any{
-			TextNode{Content: "Path: "},
-			TextNode{Content: &state.CurrentPath},
-		}},
-		TextNode{Content: ""},
-
-		// Entries - using fixed slots
-		TextNode{Content: &state.DisplayLines[0]},
-		TextNode{Content: &state.DisplayLines[1]},
-		TextNode{Content: &state.DisplayLines[2]},
-		TextNode{Content: &state.DisplayLines[3]},
-		TextNode{Content: &state.DisplayLines[4]},
-		TextNode{Content: &state.DisplayLines[5]},
-		TextNode{Content: &state.DisplayLines[6]},
-		TextNode{Content: &state.DisplayLines[7]},
-		TextNode{Content: &state.DisplayLines[8]},
-		TextNode{Content: &state.DisplayLines[9]},
-		TextNode{Content: &state.DisplayLines[10]},
-		TextNode{Content: &state.DisplayLines[11]},
-		TextNode{Content: &state.DisplayLines[12]},
-		TextNode{Content: &state.DisplayLines[13]},
-		TextNode{Content: &state.DisplayLines[14]},
-		TextNode{Content: &state.DisplayLines[15]},
-		TextNode{Content: &state.DisplayLines[16]},
-		TextNode{Content: &state.DisplayLines[17]},
-		TextNode{Content: &state.DisplayLines[18]},
-		TextNode{Content: &state.DisplayLines[19]},
-
-		// Status
-		TextNode{Content: ""},
-		TextNode{Content: &state.StatusLine},
-	}}
 }

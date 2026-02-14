@@ -1,11 +1,4 @@
-// tui-htop: System monitor demo
-// Tests: real-time updates, progress bars, sorting, scrolling
-//
-// GAPS FOUND:
-// 1. No Progress bar component for CPU/Memory visual bars
-// 2. No way to conditionally style text (e.g., bold the active sort column)
-// 3. No colored text support (htop uses colors extensively)
-// RESOLVED: Using SelectionList instead of fixed slots workaround
+// forme-htop: System monitor demo using real-time reactive bindings
 package main
 
 import (
@@ -19,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
+	"github.com/kungfusheep/riffkey"
 )
 
 type Process struct {
@@ -50,22 +43,34 @@ func main() {
 	}
 	refreshData(state)
 
-	// Create SelectionList for processes
-	processList := &SelectionList{
-		Items:      &state.Processes,
-		Selected:   &state.SelectedIdx,
-		MaxVisible: 15, // Limit to 15 visible items with scrolling
-		Render: func(p *Process) any {
-			return TextNode{Content: &p.Display}
-		},
-	}
-
 	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	app.SetView(buildView(state, processList))
+	app.SetView(
+		VBox(
+			Text("System Monitor").Bold(),
+			Text(""),
+			HBox(Text("CPU: "), Text(&state.CPUPercent), Text("%")),
+			HBox(Text("Mem: "), Text(&state.MemUsed), Text(" / "), Text(&state.MemTotal), Text(" ("), Text(&state.MemPercent), Text("%)")),
+			HBox(Text("Uptime: "), Text(&state.Uptime)),
+			Text(""),
+			Text("   PID    CPU%   MEM%  COMMAND"),
+			Text("  ─────  ─────  ─────  ────────────────────"),
+			List(&state.Processes).
+				Selection(&state.SelectedIdx).
+				MaxVisible(15).
+				Render(func(p *Process) any {
+					return Text(&p.Display)
+				}).
+				BindNav("j", "k").
+				BindPageNav("<PageDown>", "<PageUp>").
+				BindFirstLast("<Home>", "<End>"),
+			Text(""),
+			Text(&state.StatusLine),
+		),
+	)
 
 	// Start refresh ticker
 	ticker := time.NewTicker(2 * time.Second)
@@ -75,14 +80,6 @@ func main() {
 			app.RequestRender()
 		}
 	}()
-
-	// Use SelectionList helper methods for navigation
-	app.Handle("<Up>", func(_ riffkey.Match) { processList.Up(nil) })
-	app.Handle("<Down>", func(_ riffkey.Match) { processList.Down(nil) })
-	app.Handle("<PageUp>", func(_ riffkey.Match) { processList.PageUp(nil) })
-	app.Handle("<PageDown>", func(_ riffkey.Match) { processList.PageDown(nil) })
-	app.Handle("<Home>", func(_ riffkey.Match) { processList.First(nil) })
-	app.Handle("<End>", func(_ riffkey.Match) { processList.Last(nil) })
 
 	app.Handle("c", func(_ riffkey.Match) {
 		state.SortBy = "cpu"
@@ -323,44 +320,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-1] + "~"
-}
-
-func buildView(state *State, processList *SelectionList) any {
-	return VBoxNode{Children: []any{
-		// Header
-		TextNode{Content: "System Monitor", Style: Style{Attr: AttrBold}},
-		TextNode{Content: ""},
-
-		// System stats
-		HBoxNode{Children: []any{
-			TextNode{Content: "CPU: "},
-			TextNode{Content: &state.CPUPercent},
-			TextNode{Content: "%"},
-		}},
-		HBoxNode{Children: []any{
-			TextNode{Content: "Mem: "},
-			TextNode{Content: &state.MemUsed},
-			TextNode{Content: " / "},
-			TextNode{Content: &state.MemTotal},
-			TextNode{Content: " ("},
-			TextNode{Content: &state.MemPercent},
-			TextNode{Content: "%)"},
-		}},
-		HBoxNode{Children: []any{
-			TextNode{Content: "Uptime: "},
-			TextNode{Content: &state.Uptime},
-		}},
-		TextNode{Content: ""},
-
-		// Process header
-		TextNode{Content: "   PID    CPU%   MEM%  COMMAND"},
-		TextNode{Content: "  ─────  ─────  ─────  ────────────────────"},
-
-		// Process list - using SelectionList!
-		processList,
-
-		// Status
-		TextNode{Content: ""},
-		TextNode{Content: &state.StatusLine},
-	}}
 }

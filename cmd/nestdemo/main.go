@@ -245,8 +245,8 @@ func main() {
 					SpaceH(1),
 					HBox.Border(BorderSingle)(
 						Text("A").FG(Red),
-						Text("B").FG(Green),
 						Space().Grow(1),
+						Text("B").FG(Green),
 						Space().Grow(2),
 						Text("C").FG(Blue),
 						Space().Grow(1),

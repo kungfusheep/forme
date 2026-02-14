@@ -290,204 +290,122 @@ func main() {
 
 	// Build UI with conditionals (using V2 template for Box, custom Renderer support)
 	// Layout uses Grow() to push footer to bottom of screen
-	app.SetView(VBoxNode{Children: []any{
-		// ══════════════════════════════════════════════════════════════
-		// HEADER SECTION (fixed height)
-		// ══════════════════════════════════════════════════════════════
-		HBoxNode{Gap: 2, Children: []any{
-			TextNode{Content: &state.Hostname},
-			TextNode{Content: "Uptime:"},
-			TextNode{Content: &state.Uptime},
-			// HORIZONTAL GROW: Spacer pushes mode indicator to right side
-			VBoxNode{}.Grow(1),
-			TextNode{Content: "Mode:"},
-			// SWITCH/CASE: Display different text based on ViewMode
+	app.SetView(VBox(
+		// header
+		HBox.Gap(2)(
+			Text(&state.Hostname),
+			Text("Uptime:"),
+			Text(&state.Uptime),
+			Space(),
+			Text("Mode:"),
 			Switch(&state.ViewMode).
-				Case("all", TextNode{Content: "[ALL]"}).
-				Case("compact", TextNode{Content: "[COMPACT]"}).
-				Case("graphs", TextNode{Content: "[GRAPHS]"}).
-				Default(TextNode{Content: "[?]"}),
-		}},
-
-		// Resource bars with threshold indicators
-		HBoxNode{Gap: 1, Children: []any{
-			TextNode{Content: "CPU:"},
-			ProgressNode{Value: &state.CPUTotal, BarWidth: 25},
-			// IfOrd.Gt: Show warning indicator when CPU > 50%
-			IfOrd(&state.CPUTotal).Gt(50).Then(
-				IfOrd(&state.CPUTotal).Gt(80).Then(
-					TextNode{Content: "CRIT", Style: Style{FG: critStyle.FG, Attr: AttrBold}},
-				).Else(
-					TextNode{Content: "WARN", Style: Style{FG: warnStyle.FG}},
-				),
-			).Else(
-				TextNode{Content: "    "},
-			),
-		}},
-		HBoxNode{Gap: 1, Children: []any{
-			TextNode{Content: "MEM:"},
-			ProgressNode{Value: &state.MemTotal, BarWidth: 25},
-			// IfOrd.Gte: Show warning at >= 60%
-			IfOrd(&state.MemTotal).Gte(60).Then(
-				TextNode{Content: "HIGH", Style: Style{FG: warnStyle.FG}},
-			).Else(
-				TextNode{Content: "    "},
-			),
-		}},
-		HBoxNode{Gap: 1, Children: []any{
-			TextNode{Content: "SWP:"},
-			ProgressNode{Value: &state.SwapTotal, BarWidth: 25},
-			// IfOrd.Lt: Show "LOW" when swap < 20% (inverse logic demo)
-			IfOrd(&state.SwapTotal).Lt(20).Then(
-				TextNode{Content: " OK "},
-			).Else(
-				TextNode{Content: "USED", Style: Style{FG: warnStyle.FG}},
-			),
-		}},
-
-		// ══════════════════════════════════════════════════════════════
-		// MAIN CONTENT - HORIZONTAL GROW: Two columns with weighted widths
-		// Left panel Grow(1), Right panel Grow(2) = 1:2 width ratio
-		// ══════════════════════════════════════════════════════════════
-		HBoxNode{Gap: 1, Children: []any{
-			// LEFT PANEL: Grow(1) - gets 1/3 of width
-			VBoxNode{Children: []any{
-				// BORDERED PANEL: Stats with single border
-				VBoxNode{
-					Title: "Stats",
-					Children: []any{
-						Box{
-							Layout: Grid(2, 15, 0), // Wider cells to fit "Sleeping: 139"
-							Children: []any{
-								TextNode{Content: &state.Tasks},
-								TextNode{Content: &state.Running},
-								TextNode{Content: &state.Sleeping},
-								TextNode{Content: &state.Stopped},
-							},
-						},
-					},
-				}.Border(BorderSingle).BorderFG(Cyan),
-
-				// BORDERED PANEL: Load with rounded border
-				VBoxNode{
-					Title: "Load",
-					Children: []any{
-						TextNode{Content: &state.Load},
-					},
-				}.Border(BorderRounded).BorderFG(Green),
-			}}.Grow(1),
-
-			// RIGHT PANEL: Grow(2) - gets 2/3 of width
-			VBoxNode{Children: []any{
-				// SWITCH/CASE: Show different content based on ViewMode
-				Switch(&state.ViewMode).
-					Case("all", VBoxNode{
-						Title: "All Stats",
-						Children: []any{
-							Box{
-								Layout: Grid(3, 15, 1),
-								Children: []any{
-									TextNode{Content: &state.Tasks},
-									TextNode{Content: &state.Threads},
-									TextNode{Content: &state.Running},
-									TextNode{Content: &state.Sleeping},
-									TextNode{Content: &state.Stopped},
-									TextNode{Content: &state.Zombie},
-								},
-							},
-						},
-					}.Border(BorderSingle).BorderFG(Magenta)).
-					Case("compact", HBoxNode{Gap: 2, Children: []any{
-						TextNode{Content: &state.Tasks},
-						TextNode{Content: &state.Running},
-						TextNode{Content: "Load:"},
-						TextNode{Content: &state.Load},
-					}}).
-					Case("graphs", TextNode{Content: "─── Graphs Mode ───"}).
-					Default(TextNode{Content: "Unknown view mode"}),
-
-				// Conditional: CPU Graph (If.Eq demo)
-				If(&state.ShowGraph).Eq(true).Then(
-					VBoxNode{
-						Title: "CPU History",
-						Children: []any{
-							MiniGraph{Values: &state.CPUHistory, Width: 60, Height: 4, Style: cpuStyle},
-						},
-					}.Border(BorderRounded).BorderFG(cpuStyle.FG),
-				),
-			}}.Grow(2),
-		}},
-
-		// ══════════════════════════════════════════════════════════════
-		// MIDDLE SECTION - VERTICAL GROW with weighted children
-		// Graphs Grow(1), Process list Grow(2) = 1:2 height ratio
-		// ══════════════════════════════════════════════════════════════
-		VBoxNode{Children: []any{
-			// GRAPHS SECTION: Grow(1) - gets 1/3 of remaining height
-			VBoxNode{
-				Title: "Timing",
-				Children: []any{
-					HBoxNode{Gap: 1, Children: []any{
-						TextNode{Content: &state.RenderLabel},
-						MiniGraph{Values: &state.RenderHistory, Width: 60, Height: 2, Style: renderStyle},
-					}},
-					HBoxNode{Gap: 1, Children: []any{
-						TextNode{Content: &state.FlushLabel},
-						MiniGraph{Values: &state.FlushHistory, Width: 60, Height: 2, Style: flushStyle},
-					}},
-					HBoxNode{Gap: 2, Children: []any{
-						TextNode{Content: &state.RowStats},
-						TextNode{Content: &state.FPSLabel},
-					}},
-				},
-			}.Border(BorderDouble).BorderFG(Yellow).Grow(1),
-
-			// PROCESS LIST: Grow(2) - gets 2/3 of remaining height
-			If(&state.ShowProcs).Eq(true).Then(VBoxNode{
-				Title: "Processes",
-				Children: []any{
-					// Show "PAUSED" header when paused (If.Ne demo)
-					If(&state.Paused).Ne(false).Then(
-						TextNode{Content: "=== PAUSED ===", Style: Style{FG: warnStyle.FG}},
-					),
-					HBoxNode{Gap: 2, Children: []any{
-						TextNode{Content: " "},
-						TextNode{Content: "  PID"},
-						TextNode{Content: "NAME        "},
-						TextNode{Content: "  CPU"},
-						TextNode{Content: "  MEM"},
-						TextNode{Content: "STATUS  "},
-					}},
-					// ForEach demo with nested conditionals
-					ForEach(&state.Processes, func(p *Process) any {
-						return HBoxNode{Gap: 2, Children: []any{
-							If(&p.Selected).Eq(true).Then(
-								TextNode{Content: ">"},
-							).Else(
-								TextNode{Content: " "},
-							),
-							TextNode{Content: &p.PID},
-							TextNode{Content: &p.Name},
-							TextNode{Content: &p.CPU},
-							TextNode{Content: &p.Mem},
-							TextNode{Content: &p.Status},
-						}}
-					}),
-				},
-			}.Border(BorderSingle).BorderFG(BrightBlue).Grow(2)),
-		}}.Grow(1), // <-- OUTER GROW: This whole section expands vertically
-
-		// ══════════════════════════════════════════════════════════════
-		// FOOTER SECTION (fixed height, stays at bottom)
-		// ══════════════════════════════════════════════════════════════
-		// Conditional: Help bar
-		If(&state.ShowHelp).Eq(true).Then(
-			TextNode{Content: &state.HelpText},
+				Case("all", Text("[ALL]")).
+				Case("compact", Text("[COMPACT]")).
+				Case("graphs", Text("[GRAPHS]")).
+				Default(Text("[?]")),
 		),
 
-		// Render stats (always at bottom)
-		TextNode{Content: &state.Timing},
-	}}).
+		// resource bars with threshold indicators
+		HBox.Gap(1)(
+			Text("CPU:"),
+			Progress(&state.CPUTotal).Width(25),
+			IfOrd(&state.CPUTotal).Gt(50).Then(
+				IfOrd(&state.CPUTotal).Gt(80).Then(
+					Text("CRIT").FG(critStyle.FG).Bold(),
+				).Else(
+					Text("WARN").FG(warnStyle.FG),
+				),
+			).Else(
+				Text("    "),
+			),
+		),
+		HBox.Gap(1)(
+			Text("MEM:"),
+			Progress(&state.MemTotal).Width(25),
+			IfOrd(&state.MemTotal).Gte(60).Then(
+				Text("HIGH").FG(warnStyle.FG),
+			).Else(
+				Text("    "),
+			),
+		),
+		HBox.Gap(1)(
+			Text("SWP:"),
+			Progress(&state.SwapTotal).Width(25),
+			IfOrd(&state.SwapTotal).Lt(20).Then(
+				Text(" OK "),
+			).Else(
+				Text("USED").FG(warnStyle.FG),
+			),
+		),
+
+		// main content - two columns with weighted widths (1:2)
+		HBox.Gap(1)(
+			// left panel
+			VBox.Grow(1)(
+				VBox.Border(BorderSingle).Title("Stats").BorderFG(Cyan)(
+					Box{
+						Layout:   Grid(2, 15, 0),
+						Children: []any{Text(&state.Tasks), Text(&state.Running), Text(&state.Sleeping), Text(&state.Stopped)},
+					},
+				),
+				VBox.Border(BorderRounded).Title("Load").BorderFG(Green)(
+					Text(&state.Load),
+				),
+			),
+
+			// right panel
+			VBox.Grow(2)(
+				Switch(&state.ViewMode).
+					Case("all", VBox.Border(BorderSingle).Title("All Stats").BorderFG(Magenta)(
+						Box{
+							Layout:   Grid(3, 15, 1),
+							Children: []any{Text(&state.Tasks), Text(&state.Threads), Text(&state.Running), Text(&state.Sleeping), Text(&state.Stopped), Text(&state.Zombie)},
+						},
+					)).
+					Case("compact", HBox.Gap(2)(Text(&state.Tasks), Text(&state.Running), Text("Load:"), Text(&state.Load))).
+					Case("graphs", Text("─── Graphs Mode ───")).
+					Default(Text("Unknown view mode")),
+
+				If(&state.ShowGraph).Eq(true).Then(
+					VBox.Border(BorderRounded).Title("CPU History").BorderFG(cpuStyle.FG)(
+						MiniGraph{Values: &state.CPUHistory, Width: 60, Height: 4, Style: cpuStyle},
+					),
+				),
+			),
+		),
+
+		// middle section - vertical grow with weighted children
+		VBox.Grow(1)(
+			VBox.Border(BorderDouble).Title("Timing").BorderFG(Yellow).Grow(1)(
+				HBox.Gap(1)(Text(&state.RenderLabel), MiniGraph{Values: &state.RenderHistory, Width: 60, Height: 2, Style: renderStyle}),
+				HBox.Gap(1)(Text(&state.FlushLabel), MiniGraph{Values: &state.FlushHistory, Width: 60, Height: 2, Style: flushStyle}),
+				HBox.Gap(2)(Text(&state.RowStats), Text(&state.FPSLabel)),
+			),
+
+			If(&state.ShowProcs).Eq(true).Then(
+				VBox.Border(BorderSingle).Title("Processes").BorderFG(BrightBlue).Grow(2)(
+					If(&state.Paused).Ne(false).Then(
+						Text("=== PAUSED ===").FG(warnStyle.FG),
+					),
+					HBox.Gap(2)(Text(" "), Text("  PID"), Text("NAME        "), Text("  CPU"), Text("  MEM"), Text("STATUS  ")),
+					ForEach(&state.Processes, func(p *Process) any {
+						return HBox.Gap(2)(
+							If(&p.Selected).Eq(true).Then(Text(">")).Else(Text(" ")),
+							Text(&p.PID),
+							Text(&p.Name),
+							Text(&p.CPU),
+							Text(&p.Mem),
+							Text(&p.Status),
+						)
+					}),
+				),
+			),
+		),
+
+		// footer
+		If(&state.ShowHelp).Eq(true).Then(Text(&state.HelpText)),
+		Text(&state.Timing),
+	)).
 		// Key handlers
 		Handle("q", func(_ riffkey.Match) {
 			app.Stop()

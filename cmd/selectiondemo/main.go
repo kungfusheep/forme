@@ -40,22 +40,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// SelectionList with complex layout
-	list := &SelectionList{
-		Items:         &commands,
-		Selected:      &selected,
-		Marker:        "> ",
-		MaxVisible:    8,
-		SelectedStyle: Style{BG: PaletteColor(236)},
-		Render: func(cmd *Command) any {
+	list := List(&commands).
+		Selection(&selected).
+		Marker("> ").
+		MaxVisible(8).
+		SelectedStyle(Style{BG: PaletteColor(236)}).
+		Render(func(cmd *Command) any {
 			return HBox.Gap(2)(
 				Text(&cmd.Icon),
 				Text(&cmd.Name),
 				Space().Char('.').Style(Style{FG: BrightBlack}),
 				Text(&cmd.Shortcut).FG(BrightBlack),
 			)
-		},
-	}
+		})
 
 	app.SetView(VBox(
 		Text("Selection List Demo").FG(Cyan).Bold(),
@@ -67,17 +64,15 @@ func main() {
 		Text(&status).FG(BrightBlack),
 
 		// modal overlay
-		If(&showModal).Then(OverlayNode{
-			Backdrop: true,
-			Centered: true,
-			Child: VBox.Border(BorderRounded).Width(45)(
+		If(&showModal).Then(Overlay.Centered().Backdrop()(
+			VBox.Border(BorderRounded).Width(45)(
 				Text(" Command Palette ").FG(Cyan).Bold(),
 				HRule().Style(Style{FG: BrightBlack}),
 				list,
 				HRule().Style(Style{FG: BrightBlack}),
 				Text("j/k:navigate  Enter:select  Esc:close").FG(BrightBlack),
 			),
-		}),
+		)),
 	))
 
 	app.Handle("j", func(_ riffkey.Match) {

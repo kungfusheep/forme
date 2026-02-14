@@ -92,35 +92,35 @@ func main() {
 }
 
 func homeView() any {
-	return VBoxNode{Children: []any{
-		TextNode{Content: &home.Title, Style: Style{Attr: AttrBold}},
-		TextNode{},
-		TextNode{Content: "j/k: change counter"},
-		TextNode{Content: "s: go to settings"},
-		TextNode{Content: "?: help"},
-		TextNode{Content: "q: quit"},
-		TextNode{},
-		ProgressNode{Value: &home.Counter, BarWidth: 30},
-	}}
+	return VBox(
+		Text(&home.Title).Bold(),
+		Text(""),
+		Text("j/k: change counter"),
+		Text("s: go to settings"),
+		Text("?: help"),
+		Text("q: quit"),
+		Text(""),
+		Progress(&home.Counter).Width(30),
+	)
 }
 
 func settingsView() any {
-	return VBoxNode{Children: []any{
-		TextNode{Content: &settings.Title, Style: Style{Attr: AttrBold}},
-		TextNode{},
-		TextNode{Content: "j/k: adjust volume"},
-		TextNode{Content: "Esc: back to home"},
-		TextNode{Content: "?: help"},
-		TextNode{},
-		TextNode{Content: "Volume:"},
-		ProgressNode{Value: &settings.Volume, BarWidth: 30},
-	}}
+	return VBox(
+		Text(&settings.Title).Bold(),
+		Text(""),
+		Text("j/k: adjust volume"),
+		Text("Esc: back to home"),
+		Text("?: help"),
+		Text(""),
+		Text("Volume:"),
+		Progress(&settings.Volume).Width(30),
+	)
 }
 
 func helpView() any {
-	return VBoxNode{Children: []any{
-		TextNode{Content: &help.Title, Style: Style{Attr: AttrBold}},
-		TextNode{},
-		TextNode{Content: &help.Text},
-	}}
+	return VBox(
+		Text(&help.Title).Bold(),
+		Text(""),
+		Text(&help.Text),
+	)
 }
