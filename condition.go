@@ -5,16 +5,18 @@ import (
 	"unsafe"
 )
 
-// Condition builder for type-safe conditionals.
-// The generic *T parameter enforces pointer-passing at compile time.
+// Condition provides type-safe conditional rendering.
+// T must be comparable; use IfOrd for ordered comparisons (Gt, Lt, etc).
 type Condition[T comparable] struct {
 	ptr *T
 }
 
-// If starts a conditional chain. Compile-time enforces pointer:
+// If conditionally renders content based on a pointer value.
+// Requires a pointer, compile-time enforced via generics.
 //
-//	If(&state.Count).Eq(0)    // works
-//	If(state.Count).Eq(0)     // compile error: int is not *int
+//	If(&visible).Then(content)              // show when true
+//	If(&mode).Eq("edit").Then(editor)       // show when equal
+//	If(&count).Ne(0).Then(badge).Else(Text("empty"))
 func If[T comparable](ptr *T) *Condition[T] {
 	return &Condition[T]{ptr: ptr}
 }
@@ -51,12 +53,16 @@ func (c *Condition[T]) Then(node any) *ConditionEval[T] {
 	}
 }
 
-// OrdCondition extends Condition for ordered types (int, float, string).
+// OrdCondition extends Condition with ordering comparisons (Gt, Lt, Gte, Lte).
+// Use IfOrd instead of If when you need numeric/string range checks.
 type OrdCondition[T cmp.Ordered] struct {
 	ptr *T
 }
 
-// IfOrd starts a conditional chain for ordered types (supports Gt, Lt, etc).
+// IfOrd conditionally renders content with ordering comparisons (Gt, Lt, Gte, Lte).
+// T must satisfy cmp.Ordered (int, float64, string, etc).
+//
+//	IfOrd(&cpu).Gt(90.0).Then(Text("HOT").FG(Red))
 func IfOrd[T cmp.Ordered](ptr *T) *OrdCondition[T] {
 	return &OrdCondition[T]{ptr: ptr}
 }
@@ -102,7 +108,7 @@ const (
 	condOpLte
 )
 
-// ConditionEval holds a comparable condition ready for Then/Else
+// ConditionEval holds a prepared condition awaiting Then/Else branches.
 type ConditionEval[T comparable] struct {
 	ptr    *T
 	offset uintptr // offset from element base (for ForEach)
@@ -160,7 +166,7 @@ func (e *ConditionEval[T]) evaluateWithBase(base unsafe.Pointer) bool {
 	}
 }
 
-// OrdConditionEval holds an ordered condition ready for Then/Else
+// OrdConditionEval holds a prepared ordered condition awaiting Then/Else branches.
 type OrdConditionEval[T cmp.Ordered] struct {
 	ptr    *T
 	offset uintptr // offset from element base (for ForEach)
@@ -249,7 +255,8 @@ type conditionNode interface {
 var _ conditionNode = (*ConditionEval[int])(nil)
 var _ conditionNode = (*OrdConditionEval[int])(nil)
 
-// SwitchBuilder for type-safe multi-way branching.
+// SwitchBuilder constructs a type-safe multi-way branch.
+// Use Switch(&ptr) to start, .Case() for branches, .Default() or .End() to finalise.
 type SwitchBuilder[T comparable] struct {
 	ptr   *T
 	cases []switchCase[T]
@@ -297,7 +304,7 @@ func (s *SwitchBuilder[T]) End() *SwitchNode[T] {
 	}
 }
 
-// SwitchNode is the final compiled switch statement
+// SwitchNode is the compiled form of a Switch, ready for template evaluation.
 type SwitchNode[T comparable] struct {
 	ptr   *T
 	cases []switchCase[T]

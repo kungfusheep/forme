@@ -217,7 +217,10 @@ func (f VBoxFn) MarginTRBL(top, right, bottom, left int16) VBoxFn {
 	}
 }
 
-// VBox is the vertical container constructor
+// VBox arranges children in a vertical stack.
+// Use method chaining to configure before calling with children:
+//
+//	VBox.Gap(1).Border(BorderRounded)("Title")(child1, child2)
 var VBox VBoxFn = func(children ...any) VBoxC {
 	return VBoxC{children: children}
 }
@@ -390,7 +393,10 @@ func (f HBoxFn) MarginTRBL(top, right, bottom, left int16) HBoxFn {
 	}
 }
 
-// HBox is the horizontal container constructor
+// HBox arranges children in a horizontal row.
+// Use method chaining to configure before calling with children:
+//
+//	HBox.Gap(2)(Text("left"), Space(), Text("right"))
 var HBox HBoxFn = func(children ...any) HBoxC {
 	return HBoxC{children: children}
 }
@@ -792,6 +798,7 @@ type SpinnerC struct {
 }
 
 // Spinner creates an animated spinner bound to a frame counter.
+// Increment *frame and re-render to advance the animation.
 func Spinner(frame *int) SpinnerC {
 	return SpinnerC{frame: frame, frames: SpinnerBraille}
 }
@@ -842,6 +849,7 @@ type LeaderC struct {
 }
 
 // Leader creates a label.....value display with fill characters.
+// Accepts string or *string for reactive updates.
 func Leader(label, value any) LeaderC {
 	return LeaderC{label: label, value: value, fill: '.'}
 }
@@ -897,7 +905,8 @@ type SparklineC struct {
 	style  Style
 }
 
-// Sparkline creates a mini chart from a slice of values.
+// Sparkline creates a mini bar chart using Unicode block characters (▁▂▃▄▅▆▇█).
+// Pass []float64 or *[]float64 for reactive updates.
 func Sparkline(values any) SparklineC {
 	return SparklineC{values: values}
 }
@@ -957,6 +966,7 @@ type JumpC struct {
 }
 
 // Jump wraps a child component as a jump target.
+// When jump mode is active, a label appears at this position; typing it calls onSelect.
 func Jump(child any, onSelect func()) JumpC {
 	return JumpC{child: child, onSelect: onSelect}
 }
@@ -988,7 +998,8 @@ type LayerViewC struct {
 	margin     [4]int16
 }
 
-// LayerView displays a pre-rendered layer with scrolling support.
+// LayerView displays a scrollable, pre-rendered layer within the view tree.
+// Use for large content that should scroll independently of the main layout.
 func LayerView(layer *Layer) LayerViewC {
 	return LayerViewC{layer: layer}
 }
@@ -1096,6 +1107,9 @@ func (f OverlayFn) BackdropFG(c Color) OverlayFn {
 	}
 }
 
+// Overlay displays content floating above the main view.
+// Use for modals, dialogs, and floating windows.
+// Control visibility with If: If(&showModal).Then(Overlay.Backdrop()(content))
 var Overlay OverlayFn = func(children ...any) OverlayC {
 	return OverlayC{children: children}
 }
@@ -1110,6 +1124,12 @@ type ForEachC[T any] struct {
 }
 
 // ForEach renders a template for each item in a slice.
+// template: func(item *T) any. return a component tree for each item.
+// Pointer fields inside *T are reactive; mutate and re-render to update.
+//
+//	ForEach(&todos, func(t *Todo) any {
+//	    return HBox(Text(&t.Name), Text(&t.Status))
+//	})
 func ForEach[T any](items *[]T, template func(item *T) any) ForEachC[T] {
 	return ForEachC[T]{items: items, template: template}
 }
@@ -1138,8 +1158,10 @@ type ListC[T any] struct {
 	declaredBindings []binding
 }
 
-// List creates a selectable list with internal selection management.
-// Use .Render() to provide custom item rendering.
+// List creates a navigable list from a bound slice.
+// Use .Render(func(*T) any) to customize how items appear,
+// .Handle(key, func(*T)) for per-item key actions,
+// and .BindNav("j","k") or .BindVimNav() for keyboard navigation.
 func List[T any](items *[]T) *ListC[T] {
 	l := &ListC[T]{
 		items:  items,
@@ -1210,13 +1232,15 @@ func (l *ListC[T]) Delete() {
 	}
 }
 
-// Render sets a custom render function for each item.
+// Render customises how each item appears in the list.
+// fn: func(item *T) any. return a component tree for the item.
 func (l *ListC[T]) Render(fn func(*T) any) *ListC[T] {
 	l.render = fn
 	return l
 }
 
-// OnSelect registers a callback that fires when the selection changes.
+// OnSelect fires when the user moves to a different item.
+// fn: func(item *T). receives a pointer to the newly selected item.
 func (l *ListC[T]) OnSelect(fn func(*T)) *ListC[T] {
 	l.onSelect = fn
 	return l
@@ -1360,8 +1384,8 @@ func (l *ListC[T]) BindDelete(key string) *ListC[T] {
 	return l
 }
 
-// Handle registers a key binding that passes the currently selected item
-// to the callback. If nothing is selected, the callback is not called.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected item (skipped if empty).
 func (l *ListC[T]) Handle(key string, fn func(*T)) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: key, handler: func() {
@@ -1389,7 +1413,8 @@ type TabsC struct {
 	margin        [4]int16
 }
 
-// Tabs creates a tab header bar.
+// Tabs creates a row of selectable tab headers.
+// Pair with Switch(&selected) to show the corresponding tab content.
 func Tabs(labels []string, selected *int) TabsC {
 	return TabsC{labels: labels, selected: selected, gap: 2}
 }
@@ -1818,7 +1843,9 @@ type CheckListC[T any] struct {
 	cached           *SelectionList
 }
 
-// CheckList creates a list where each item has a checkbox.
+// CheckList creates a navigable checklist from a bound slice.
+// Items should have struct tags `glyph:"checked"` and `glyph:"render"`,
+// or use .Checked(func(*T) *bool) and .Render(func(*T) any) to configure manually.
 func CheckList[T any](items *[]T) *CheckListC[T] {
 	c := &CheckListC[T]{
 		items:         items,
@@ -1830,13 +1857,15 @@ func CheckList[T any](items *[]T) *CheckListC[T] {
 	return c
 }
 
-// Checked sets the function to get the checked state for each item.
+// Checked provides the bool pointer that controls each item's checkbox.
+// fn: func(item *T) *bool. return a pointer to the item's checked field.
 func (c *CheckListC[T]) Checked(fn func(*T) *bool) *CheckListC[T] {
 	c.checked = fn
 	return c
 }
 
-// Render sets a custom render function for item content (after the checkbox).
+// Render customises how each item appears after its checkbox.
+// fn: func(item *T) any. return a component tree for the item content.
 func (c *CheckListC[T]) Render(fn func(*T) any) *CheckListC[T] {
 	c.render = fn
 	return c
@@ -1953,8 +1982,8 @@ func (c *CheckListC[T]) BindDelete(key string) *CheckListC[T] {
 	return c
 }
 
-// Handle registers a key binding that passes the currently selected item
-// to the callback. If nothing is selected, the callback is not called.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected item (skipped if empty).
 func (c *CheckListC[T]) Handle(key string, fn func(*T)) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: key, handler: func() {

@@ -2,8 +2,6 @@ package glyph
 
 import "unicode/utf8"
 
-// TextViewC displays multi-line text with word wrapping in a layer-backed viewport.
-// Content is re-wrapped only when the text or viewport width changes.
 type TextViewC struct {
 	content          *string
 	layer            *Layer
@@ -14,7 +12,8 @@ type TextViewC struct {
 	declaredBindings []binding
 }
 
-// TextView creates a multi-line text display that wraps to its container width.
+// TextView creates a scrollable multi-line text display with word wrapping.
+// Content is re-wrapped automatically when the text or viewport width changes.
 func TextView(content *string) *TextViewC {
 	tv := &TextViewC{
 		content: content,
@@ -25,21 +24,25 @@ func TextView(content *string) *TextViewC {
 	return tv
 }
 
+// Grow sets the flex grow factor so the view expands to fill available space.
 func (tv *TextViewC) Grow(g float32) *TextViewC {
 	tv.grow = g
 	return tv
 }
 
+// Margin sets uniform margin on all sides.
 func (tv *TextViewC) Margin(all int16) *TextViewC {
 	tv.margin = [4]int16{all, all, all, all}
 	return tv
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (tv *TextViewC) MarginVH(v, h int16) *TextViewC {
 	tv.margin = [4]int16{v, h, v, h}
 	return tv
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (tv *TextViewC) MarginTRBL(t, r, b, l int16) *TextViewC {
 	tv.margin = [4]int16{t, r, b, l}
 	return tv

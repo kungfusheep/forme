@@ -25,16 +25,6 @@ func Field(label string, control any) FormField {
 	return FormField{label: label, control: control}
 }
 
-// FormC is a higher-order form component that arranges labeled fields
-// in a vertical layout with aligned labels and automatic focus management.
-//
-// usage:
-//
-//	Form.LabelBold().OnSubmit(register)(
-//	    Field("Name", Input().Placeholder("Enter your name")),
-//	    Field("Email", Input().Placeholder("you@example.com")),
-//	    Field("Password", Input().Placeholder("password").Mask('*')),
-//	)
 type FormC struct {
 	fields     []FormField
 	fm         *FocusManager
@@ -46,12 +36,16 @@ type FormC struct {
 	onSubmit   func()
 }
 
-// FormFn is a configurable constructor for forms.
-// Configure with methods, then call with fields — same pattern as VBox/HBox.
 type FormFn func(fields ...FormField) *FormC
 
-// Form creates a form from labeled fields.
-// Automatically creates a FocusManager and wires any focusable controls.
+// Form creates a form from labeled fields with aligned labels
+// and automatic focus management. Configure with methods, then call with fields.
+//
+//	Form.LabelBold().OnSubmit(register)(
+//	    Field("Name", Input().Placeholder("Enter your name")),
+//	    Field("Email", Input().Placeholder("you@example.com")),
+//	    Field("Password", Input().Placeholder("password").Mask('*')),
+//	)
 var Form FormFn = func(fields ...FormField) *FormC {
 	f := &FormC{
 		fields: fields,
@@ -307,10 +301,12 @@ const (
 	VOnSubmit                        // validate on form submit
 )
 
-// StringValidator validates a string value.
+// StringValidator validates a string value. Pass to Input().Validate().
+// Return nil for valid, non-nil error for the message to display.
 type StringValidator func(string) error
 
-// BoolValidator validates a boolean value.
+// BoolValidator validates a boolean value. Pass to Checkbox().Validate().
+// Return nil for valid, non-nil error for the message to display.
 type BoolValidator func(bool) error
 
 // VRequired rejects empty strings.

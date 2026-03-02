@@ -65,27 +65,88 @@ func DefaultColor() Color {
 }
 
 // BasicColor returns one of the 16 basic terminal colours.
+// RGB values are pre-populated for colour math (post-processing, lerp, etc.).
 func BasicColor(index uint8) Color {
-	return Color{Mode: Color16, Index: index}
+	rgb := basic16RGB[index&0xF]
+	return Color{Mode: Color16, Index: index, R: rgb[0], G: rgb[1], B: rgb[2]}
 }
 
 // PaletteColor returns one of the 256 palette colours.
+// RGB values are pre-populated for colour math (post-processing, lerp, etc.).
 func PaletteColor(index uint8) Color {
-	return Color{Mode: Color256, Index: index}
+	rgb := palette256RGB[index]
+	return Color{Mode: Color256, Index: index, R: rgb[0], G: rgb[1], B: rgb[2]}
 }
 
-// RGB returns a 24-bit true color.
+// RGB returns a 24-bit true color. If the value matches a basic-16 colour,
+// the more efficient Color16 mode is used automatically.
 func RGB(r, g, b uint8) Color {
+	if idx, ok := rgbToBasic16(r, g, b); ok {
+		return Color{Mode: Color16, Index: idx, R: r, G: g, B: b}
+	}
 	return Color{Mode: ColorRGB, R: r, G: g, B: b}
 }
 
 // Hex returns a 24-bit true color from a hex value (e.g., 0xFF5500).
+// If the value matches a basic-16 colour, the more efficient Color16 mode
+// is used automatically.
 func Hex(hex uint32) Color {
-	return Color{
-		Mode: ColorRGB,
-		R:    uint8((hex >> 16) & 0xFF),
-		G:    uint8((hex >> 8) & 0xFF),
-		B:    uint8(hex & 0xFF),
+	r := uint8((hex >> 16) & 0xFF)
+	g := uint8((hex >> 8) & 0xFF)
+	b := uint8(hex & 0xFF)
+	return RGB(r, g, b)
+}
+
+// standard ANSI basic-16 RGB values
+var basic16RGB = [16][3]uint8{
+	{0, 0, 0},       // 0  black
+	{170, 0, 0},     // 1  red
+	{0, 170, 0},     // 2  green
+	{170, 170, 0},   // 3  yellow
+	{0, 0, 170},     // 4  blue
+	{170, 0, 170},   // 5  magenta
+	{0, 170, 170},   // 6  cyan
+	{170, 170, 170}, // 7  white
+	{85, 85, 85},    // 8  bright black
+	{255, 85, 85},   // 9  bright red
+	{85, 255, 85},   // 10 bright green
+	{255, 255, 85},  // 11 bright yellow
+	{85, 85, 255},   // 12 bright blue
+	{255, 85, 255},  // 13 bright magenta
+	{85, 255, 255},  // 14 bright cyan
+	{255, 255, 255}, // 15 bright white
+}
+
+func rgbToBasic16(r, g, b uint8) (uint8, bool) {
+	for i, c := range basic16RGB {
+		if c[0] == r && c[1] == g && c[2] == b {
+			return uint8(i), true
+		}
+	}
+	return 0, false
+}
+
+// xterm 256-colour palette: [0..15] basic, [16..231] 6x6x6 cube, [232..255] greyscale
+var palette256RGB [256][3]uint8
+
+func init() {
+	// basic 16
+	for i := range 16 {
+		palette256RGB[i] = basic16RGB[i]
+	}
+	// 6x6x6 colour cube (indices 16-231)
+	levels := [6]uint8{0, 95, 135, 175, 215, 255}
+	for r := range 6 {
+		for g := range 6 {
+			for b := range 6 {
+				palette256RGB[16+r*36+g*6+b] = [3]uint8{levels[r], levels[g], levels[b]}
+			}
+		}
+	}
+	// greyscale ramp (indices 232-255)
+	for i := range 24 {
+		v := uint8(8 + i*10)
+		palette256RGB[232+i] = [3]uint8{v, v, v}
 	}
 }
 
@@ -126,6 +187,27 @@ var (
 	BrightWhite   = BasicColor(15)
 )
 
+// refreshBasic16Vars rebuilds the package-level colour vars from basic16RGB.
+// called after OSC 4 detection updates the table with the terminal's actual palette.
+func refreshBasic16Vars() {
+	Black = BasicColor(0)
+	Red = BasicColor(1)
+	Green = BasicColor(2)
+	Yellow = BasicColor(3)
+	Blue = BasicColor(4)
+	Magenta = BasicColor(5)
+	Cyan = BasicColor(6)
+	White = BasicColor(7)
+	BrightBlack = BasicColor(8)
+	BrightRed = BasicColor(9)
+	BrightGreen = BasicColor(10)
+	BrightYellow = BasicColor(11)
+	BrightBlue = BasicColor(12)
+	BrightMagenta = BasicColor(13)
+	BrightCyan = BasicColor(14)
+	BrightWhite = BasicColor(15)
+}
+
 // Equal returns true if two colours are equal.
 func (c Color) Equal(other Color) bool {
 	return c == other
@@ -139,7 +221,7 @@ type Style struct {
 	Attr      Attribute
 	Transform TextTransform // text case transformation (uppercase, lowercase, etc.)
 	Align     Align         // text alignment within allocated width
-	margin    [4]int16      // top, right, bottom, left — non-cascading
+	margin    [4]int16      // top, right, bottom, left (non-cascading)
 }
 
 // DefaultStyle returns a style with default colours and no attributes.

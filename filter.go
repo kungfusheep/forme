@@ -27,8 +27,8 @@ import (
 //	"!'foo"   negated exact match
 //	"!^foo"   negated prefix match
 //	"!foo$"   negated suffix match
-//	"a b"     AND — all space-separated terms must match
-//	"a | b"   OR  — at least one pipe-separated term must match
+//	"a b"     AND   all space-separated terms must match
+//	"a | b"   OR    at least one pipe-separated term must match
 
 func init() {
 	algo.Init("default")
@@ -240,18 +240,18 @@ func (t *fzfTerm) score(candidate string) (int, bool) {
 }
 
 // ============================================================================
-// Filter — headless fzf-style filtering over any slice
+// Filter: headless fzf-style filtering over any slice
 // ============================================================================
 
 // Filter provides fzf-style filtering mechanics for a slice of items.
 // It handles query parsing, scoring, filtering and index mapping back to the
-// original source slice. No UI opinions — bring your own rendering.
+// original source slice. No UI opinions, bring your own rendering.
 //
 // usage:
 //
 //	f := NewFilter(&items, func(item *Item) string { return item.Name })
 //	f.Update("query")           // re-filter when query changes
-//	f.Items                     // filtered+ranked subset — point a ListC at &f.Items
+//	f.Items                     // filtered+ranked subset, point a ListC at &f.Items
 //	f.Original(selectedIndex)   // map filtered index back to source item
 type Filter[T any] struct {
 	Items []T // filtered+ranked subset, safe to point a ListC at &f.Items

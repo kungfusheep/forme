@@ -1,15 +1,5 @@
 package glyph
 
-// FilterListC is a drop-in filterable list. it composes an input, a
-// filter and a list into a single template node.
-//
-// usage:
-//
-//	FilterList(&items, func(p *Profile) string { return p.Name }).
-//	    Placeholder("filter...").
-//	    Render(func(p *Profile) any { return Text(p.Name) }).
-//	    MaxVisible(20).
-//	    Handle("<Enter>", func(p *Profile) { ... })
 type FilterListC[T any] struct {
 	input  *InputC
 	list   *ListC[T]
@@ -22,8 +12,14 @@ type FilterListC[T any] struct {
 	margin      [4]int16
 }
 
-// FilterList creates a filterable list.
-// extract returns the searchable text for each item.
+// FilterList creates a filterable list that composes an input, a filter and a list.
+// extract: func(*T) string. returns the searchable text for each item.
+//
+//	FilterList(&items, func(p *Profile) string { return p.Name }).
+//	    Placeholder("filter...").
+//	    Render(func(p *Profile) any { return Text(p.Name) }).
+//	    MaxVisible(20).
+//	    Handle("<Enter>", func(p *Profile) { ... })
 func FilterList[T any](source *[]T, extract func(*T) string) *FilterListC[T] {
 	f := NewFilter(source, extract)
 	fl := &FilterListC[T]{
@@ -91,7 +87,8 @@ func (fl *FilterListC[T]) Placeholder(p string) *FilterListC[T] {
 	return fl
 }
 
-// Render sets the render function for each list item.
+// Render customises how each item appears in the list.
+// fn: func(item *T) any. return a component tree for the item row.
 func (fl *FilterListC[T]) Render(fn func(*T) any) *FilterListC[T] {
 	fl.list.Render(fn)
 	return fl
@@ -133,8 +130,8 @@ func (fl *FilterListC[T]) MarginTRBL(t, r, b, l int16) *FilterListC[T] {
 	return fl
 }
 
-// Handle registers a key binding that passes the currently selected
-// original source item to the callback.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected source item (skipped if empty).
 func (fl *FilterListC[T]) Handle(key string, fn func(*T)) *FilterListC[T] {
 	fl.list.declaredBindings = append(fl.list.declaredBindings,
 		binding{pattern: key, handler: func() {

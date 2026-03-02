@@ -569,7 +569,7 @@ func ExampleFilterLogC() {
 }
 
 // Scrollable canvas.
-// LayerView displays a Layer — a virtual canvas that can be larger than the viewport.
+// LayerView displays a Layer, a virtual canvas that can be larger than the viewport.
 func ExampleLayerViewC() {
 	layer := NewLayer()
 
@@ -616,7 +616,7 @@ func ExampleJumpC_app() {
 }
 
 // Compile a template.
-// Build compiles a UI tree into a Template — the same step that SetView performs internally. Useful for rendering into a Layer or for headless testing.
+// Build compiles a UI tree into a Template. This is the same step that SetView performs internally. Useful for rendering into a Layer or for headless testing.
 func ExampleBuild() {
 	tmpl := Build(VBox(
 		Text("hello"),
@@ -664,7 +664,7 @@ func ExampleBorderStyle_custom() {
 }
 
 // Text alignment.
-// Align is set via the Style struct — AlignLeft, AlignCenter, or AlignRight within a fixed width.
+// Align is set via the Style struct. AlignLeft, AlignCenter, or AlignRight within a fixed width.
 func ExampleAlign() {
 	VBox(
 		Text("left-aligned"),

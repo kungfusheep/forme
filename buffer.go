@@ -121,7 +121,7 @@ var partialBlocks = [9]rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'
 
 // WriteProgressBar writes a progress bar directly to the buffer.
 // Uses partial block characters for smooth sub-character precision.
-// Background color fills the empty space for seamless appearance.
+// Background color fills the empty space.
 // Writes all cells in a single pass.
 func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	if y < 0 || y >= b.height {
@@ -1146,7 +1146,7 @@ func (b *Buffer) Resize(width, height int) {
 }
 
 // ============================================================================
-// BufferPool — double-buffered rendering
+// BufferPool: double-buffered rendering
 // ============================================================================
 
 // BufferPool manages double-buffered rendering.

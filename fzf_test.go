@@ -225,7 +225,7 @@ func TestFzfQueryScore(t *testing.T) {
 			t.Error("third AND group matches, should match")
 		}
 
-		// second OR group: "slow" present but "cat" missing — fails
+		// second OR group: "slow" present but "cat" missing, fails
 		// other groups also fail
 		_, matched = q.Score("the slow brown fox")
 		if matched {
@@ -315,9 +315,9 @@ func TestFzfAndOrPrecedence(t *testing.T) {
 		{"single | single neither", "foo | bar", "baz", false},
 
 		// --- verify AND binds tighter: "a b | c" is (a AND b) OR c, NOT a AND (b OR c) ---
-		{"precedence: a b | c — AND group matches", "quick fox | zzz", "the quick brown fox", true},
-		{"precedence: a b | c — OR fallback", "quick fox | zzz", "zzz", true},
-		{"precedence: a b | c — only 'quick' not enough", "quick fox | zzz", "the quick brown dog", false},
+		{"precedence: a b | c, AND group matches", "quick fox | zzz", "the quick brown fox", true},
+		{"precedence: a b | c, OR fallback", "quick fox | zzz", "zzz", true},
+		{"precedence: a b | c, only 'quick' not enough", "quick fox | zzz", "the quick brown dog", false},
 	}
 
 	for _, tt := range tests {

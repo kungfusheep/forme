@@ -341,8 +341,9 @@ type AutoTableC struct {
 	declaredBindings []binding
 }
 
-// AutoTable creates a table from a slice of structs.
-// Pass a slice like []MyStruct or []*MyStruct.
+// AutoTable creates a table directly from a slice of structs.
+// Pass a plain slice for a static snapshot, or a pointer (&items) for reactive updates.
+// Columns are derived from exported struct fields; use .Columns() to select and order them.
 func AutoTable(data any) AutoTableC {
 	return AutoTableC{
 		data:        data,

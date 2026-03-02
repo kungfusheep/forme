@@ -83,6 +83,14 @@ type App struct {
 	jumpMode  *JumpMode
 	jumpStyle JumpStyle
 
+	// Post-processing pipeline
+	postProcess   []PostProcess
+	frameCount    uint64
+	startTime     time.Time
+	lastFrameTime time.Time
+	defaultFG     Color // terminal's default FG (detected via OSC 10)
+	defaultBG     Color // terminal's default BG (detected via OSC 11)
+
 	// SetView limit (for catching anti-patterns)
 	setViewCount int
 	setViewLimit int // 0 = unlimited
@@ -579,6 +587,22 @@ func (a *App) Template() *Template {
 	return a.template
 }
 
+// AddPostProcess appends a post-processing pass to the pipeline.
+// Passes run in order after template rendering, before screen flush.
+// Closures captured by the pass act as shader uniforms. Mutate them to
+// change behaviour next frame.
+func (a *App) AddPostProcess(pp PostProcess) *App {
+	a.postProcess = append(a.postProcess, pp)
+	return a
+}
+
+// SetPostProcess replaces the entire post-processing pipeline.
+// Call with no arguments to clear all passes.
+func (a *App) SetPostProcess(passes ...PostProcess) *App {
+	a.postProcess = passes
+	return a
+}
+
 // RequestRender marks that a render is needed.
 // Safe to call from any goroutine.
 func (a *App) RequestRender() {
@@ -682,6 +706,41 @@ func (a *App) render() {
 		lastBuildTime = 0
 		lastLayoutTime = 0
 		lastRenderTime = t1.Sub(t0)
+	}
+
+	// post-processing pipeline: tree-declared ScreenEffects first, then imperative
+	treeEffects := activeTmpl.ScreenEffects()
+	a.screen.forceRGB = len(treeEffects) > 0 || len(a.postProcess) > 0
+	if a.screen.forceRGB {
+		// resolve Color16 cells to detected palette RGB before effects run
+		resolveColor16(buf, size.Width, int(renderHeight))
+
+		now := time.Now()
+		if a.startTime.IsZero() {
+			a.startTime = now
+		}
+		var delta time.Duration
+		if !a.lastFrameTime.IsZero() {
+			delta = now.Sub(a.lastFrameTime)
+		}
+		a.lastFrameTime = now
+
+		ppCtx := PostContext{
+			Width:     size.Width,
+			Height:    int(renderHeight),
+			Frame:     a.frameCount,
+			Delta:     delta,
+			Time:      now.Sub(a.startTime),
+			DefaultFG: a.defaultFG,
+			DefaultBG: a.defaultBG,
+		}
+		for _, pp := range treeEffects {
+			pp(buf, ppCtx)
+		}
+		for _, pp := range a.postProcess {
+			pp(buf, ppCtx)
+		}
+		a.frameCount++
 	}
 
 	// Copy to screen's back buffer for flush
@@ -789,6 +848,9 @@ func (a *App) run(startView string) error {
 		}
 		defer a.screen.ExitRawMode()
 	}
+
+	// detect terminal's default colours for post-processing
+	a.defaultFG, a.defaultBG = a.screen.QueryDefaultColors()
 
 	// Handle resize
 	go a.handleResize()

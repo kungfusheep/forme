@@ -29,7 +29,7 @@ type homepagePkg struct {
 	Desc string
 }
 
-// homepage: section 01 — first app
+// homepage: section 01, first app
 func TestHomepage_firstApp(t *testing.T) {
 	app, _ := NewApp()
 
@@ -44,7 +44,7 @@ func TestHomepage_firstApp(t *testing.T) {
 	_ = app
 }
 
-// homepage: section 02 — compose real layouts
+// homepage: section 02, compose real layouts
 func TestHomepage_composeLayouts(t *testing.T) {
 	var files []string
 	preview := ""
@@ -61,7 +61,7 @@ func TestHomepage_composeLayouts(t *testing.T) {
 	)
 }
 
-// homepage: section 02 — stream anything
+// homepage: section 02, stream anything
 func TestHomepage_streamAnything(t *testing.T) {
 	app, _ := NewApp()
 
@@ -78,7 +78,7 @@ func TestHomepage_streamAnything(t *testing.T) {
 	_ = app
 }
 
-// homepage: section 02 — conditional rendering
+// homepage: section 02, conditional rendering
 func TestHomepage_conditionalRendering(t *testing.T) {
 	connected := true
 	uptime := "3h 42m"
@@ -93,7 +93,7 @@ func TestHomepage_conditionalRendering(t *testing.T) {
 	)
 }
 
-// homepage: section 02 — render any slice
+// homepage: section 02, render any slice
 func TestHomepage_renderAnySlice(t *testing.T) {
 	var commits []homepageCommit
 
@@ -106,7 +106,7 @@ func TestHomepage_renderAnySlice(t *testing.T) {
 	}).BindVimNav()
 }
 
-// homepage: section 02 — process monitor
+// homepage: section 02, process monitor
 func TestHomepage_processMonitor(t *testing.T) {
 	var procs []homepageProc
 	cpuPct := 0.72
@@ -121,7 +121,7 @@ func TestHomepage_processMonitor(t *testing.T) {
 	)
 }
 
-// homepage: section 02 — deploy log
+// homepage: section 02, deploy log
 func TestHomepage_deployLog(t *testing.T) {
 	frame := 0
 	status := "deploying..."
@@ -141,7 +141,7 @@ func TestHomepage_deployLog(t *testing.T) {
 	)
 }
 
-// homepage: section 02 — fuzzy finder
+// homepage: section 02, fuzzy finder
 func TestHomepage_fuzzyFinder(t *testing.T) {
 	var packages []homepagePkg
 
@@ -154,7 +154,7 @@ func TestHomepage_fuzzyFinder(t *testing.T) {
 		}).MaxVisible(15).Border(BorderRounded).Title("packages")
 }
 
-// homepage: section 02 — live dashboard
+// homepage: section 02, live dashboard
 func TestHomepage_liveDashboard(t *testing.T) {
 	var reqData, latData []float64
 	reqRate := "1,204 req/s"
@@ -176,7 +176,7 @@ func TestHomepage_liveDashboard(t *testing.T) {
 	)
 }
 
-// homepage: section 02 — forms with validation
+// homepage: section 02, forms with validation
 func TestHomepage_formsWithValidation(t *testing.T) {
 	var name, email string
 	role := 0

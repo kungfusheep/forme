@@ -106,6 +106,9 @@ type Template struct {
 	// Pending overlays to render after main content (cleared each frame)
 	pendingOverlays []pendingOverlay
 
+	// Pending screen effects collected from tree (cleared each frame)
+	pendingScreenEffects []PostProcess
+
 	// scratch buffers for per-frame reuse (avoid nil-slice allocs in hot paths)
 	flexScratchIdx  []int16   // flex child indices (shared by VBox + HBox phases)
 	flexScratchGrow []float32 // flex grow values (shared by VBox + HBox phases)
@@ -163,7 +166,8 @@ type Geom struct {
 	ContentH       int16 // natural content height (before flex distribution)
 }
 
-// Op represents a single instruction.
+// Op represents a single compiled template instruction.
+// The template compiler produces a flat array of these; Execute walks them to render.
 type Op struct {
 	Kind   OpKind
 	Depth  int8  // tree depth (root children = 0)
@@ -339,12 +343,16 @@ type Op struct {
 	OverlayBackdropFG  Color     // backdrop color
 	OverlayBG          Color     // background fill for overlay content area
 	OverlayChildTmpl   *Template // compiled child content
+
+	// ScreenEffect
+	ScreenEffectFn PostProcess // full-screen post-process function
 }
 
-// margin helpers — avoid repeating [0]/[1]/[2]/[3] everywhere
+// margin helpers (avoid repeating [0]/[1]/[2]/[3] everywhere)
 func (op *Op) marginH() int16 { return op.Margin[1] + op.Margin[3] } // left + right
 func (op *Op) marginV() int16 { return op.Margin[0] + op.Margin[2] } // top + bottom
 
+// OpKind identifies the type of a compiled template instruction.
 type OpKind uint8
 
 const (
@@ -383,19 +391,21 @@ const (
 	OpSparkline    // Sparkline with static values
 	OpSparklinePtr // Sparkline with pointer values
 
-	OpHRule     // Horizontal line
-	OpVRule     // Vertical line
-	OpSpacer    // Empty space
-	OpSpinner   // Animated spinner
-	OpScrollbar // Scroll indicator
-	OpTabs      // Tab headers
-	OpTreeView  // Hierarchical tree
-	OpJump      // Jump target wrapper
-	OpTextInput // Single-line text input
-	OpOverlay   // Floating overlay/modal
+	OpHRule        // Horizontal line
+	OpVRule        // Vertical line
+	OpSpacer       // Empty space
+	OpSpinner      // Animated spinner
+	OpScrollbar    // Scroll indicator
+	OpTabs         // Tab headers
+	OpTreeView     // Hierarchical tree
+	OpJump         // Jump target wrapper
+	OpTextInput    // Single-line text input
+	OpOverlay      // Floating overlay/modal
+	OpScreenEffect // Full-screen post-processing effect
 )
 
-// Build compiles a declarative UI into a Template.
+// Build compiles a declarative UI tree into a Template ready for Execute.
+// All reflection happens here at compile time; Execute is pure pointer reads.
 func Build(ui any) *Template {
 	t := &Template{
 		ops:     make([]Op, 0, 32),
@@ -501,6 +511,9 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 		return t.compileTextInput(v, parent, depth)
 	case OverlayNode:
 		return t.compileOverlay(v, parent, depth)
+	case ScreenEffectNode:
+		op := Op{Kind: OpScreenEffect, Parent: parent, ScreenEffectFn: v.Effect}
+		return t.addOp(op, depth)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
 
@@ -712,7 +725,7 @@ func (t *Template) compileRichText(v RichTextNode, parent int16, depth int, elem
 		}
 		op.SpanStrOffs = offs
 	} else if v.spanPtrs != nil {
-		// outside ForEach — store pointers directly as offsets won't work,
+		// outside ForEach: store pointers directly as offsets won't work,
 		// but we still need to re-read *string values at render time.
 		// Use a sentinel-free approach: store the raw pointer values.
 		noOffset := ^uintptr(0)
@@ -2115,8 +2128,9 @@ func (t *Template) compileInputC(v *InputC, parent int16, depth int) int16 {
 
 // Execute runs all three phases and renders to the buffer.
 func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
-	// Clear pending overlays from previous frame
+	// Clear pending from previous frame
 	t.pendingOverlays = t.pendingOverlays[:0]
+	t.pendingScreenEffects = t.pendingScreenEffects[:0]
 
 	// Phase 1: Width distribution (top → down)
 	t.distributeWidths(screenW, nil)
@@ -2385,8 +2399,8 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 			geom.W = availW
 		}
 
-	case OpOverlay:
-		// Overlays float above content, take zero space in layout
+	case OpOverlay, OpScreenEffect:
+		// Overlays and screen effects take zero space in layout
 		geom.W = 0
 
 	case OpIf:
@@ -2783,8 +2797,8 @@ func (t *Template) layout(_ int16) {
 				// TextInput is always 1 line
 				geom.H = 1
 
-			case OpOverlay:
-				// Overlays float above content, take zero space in layout
+			case OpOverlay, OpScreenEffect:
+				// Overlays and screen effects take zero space in layout
 				geom.H = 0
 
 			case OpLayout:
@@ -3486,7 +3500,7 @@ func (t *Template) effectiveStyle(s Style) Style {
 	if t.inheritedStyle == nil && t.inheritedFill.Mode == ColorDefault {
 		return s
 	}
-	// fully empty style inherits everything (except margin — margin never cascades)
+	// fully empty style inherits everything (except margin, which never cascades)
 	if s.Equal(Style{}) && t.inheritedStyle != nil {
 		result := *t.inheritedStyle
 		result.margin = [4]int16{}
@@ -3709,6 +3723,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		// Visibility is controlled by tui.If wrapping the overlay
 		t.pendingOverlays = append(t.pendingOverlays, pendingOverlay{op: op})
 
+	case OpScreenEffect:
+		if op.ScreenEffectFn != nil {
+			t.pendingScreenEffects = append(t.pendingScreenEffects, op.ScreenEffectFn)
+		}
+
 	case OpCustom:
 		// Custom renderer draws itself
 		if op.CustomRenderer != nil {
@@ -3853,17 +3872,20 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			op.ThenTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
 			op.ThenTmpl.clipMaxY = t.clipMaxY             // propagate vertical clip
 			op.ThenTmpl.pendingOverlays = op.ThenTmpl.pendingOverlays[:0]
+			op.ThenTmpl.pendingScreenEffects = op.ThenTmpl.pendingScreenEffects[:0]
 			op.ThenTmpl.render(buf, absX, absY, geom.W)
-			// Propagate overlays from sub-template to main template
 			t.pendingOverlays = append(t.pendingOverlays, op.ThenTmpl.pendingOverlays...)
+			t.pendingScreenEffects = append(t.pendingScreenEffects, op.ThenTmpl.pendingScreenEffects...)
 		} else if op.ElseTmpl != nil && !condTrue {
 			op.ElseTmpl.app = t.app
 			op.ElseTmpl.inheritedStyle = t.inheritedStyle // propagate inherited style
 			op.ElseTmpl.inheritedFill = t.inheritedFill   // propagate inherited fill
 			op.ElseTmpl.clipMaxY = t.clipMaxY             // propagate vertical clip
 			op.ElseTmpl.pendingOverlays = op.ElseTmpl.pendingOverlays[:0]
+			op.ElseTmpl.pendingScreenEffects = op.ElseTmpl.pendingScreenEffects[:0]
 			op.ElseTmpl.render(buf, absX, absY, geom.W)
 			t.pendingOverlays = append(t.pendingOverlays, op.ElseTmpl.pendingOverlays...)
+			t.pendingScreenEffects = append(t.pendingScreenEffects, op.ElseTmpl.pendingScreenEffects...)
 		}
 
 	case OpForEach:
@@ -4114,6 +4136,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		// Collect overlay for rendering after main content
 		// Visibility is controlled by tui.If wrapping the overlay
 		sub.pendingOverlays = append(sub.pendingOverlays, pendingOverlay{op: op})
+
+	case OpScreenEffect:
+		if op.ScreenEffectFn != nil {
+			sub.pendingScreenEffects = append(sub.pendingScreenEffects, op.ScreenEffectFn)
+		}
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -4707,6 +4734,12 @@ func (t *Template) renderTextInput(buf *Buffer, op *Op, geom *Geom, absX, absY i
 	if showCursor && cursorRune >= len(displayRunes) && cursorRune-scrollOffset < width {
 		buf.Set(int(absX)+cursorRune-scrollOffset, int(absY), Cell{Rune: ' ', Style: op.TextInputCursorStyle})
 	}
+}
+
+// ScreenEffects returns the post-processing passes collected from the tree
+// during the most recent Execute. The returned slice is reused between frames.
+func (t *Template) ScreenEffects() []PostProcess {
+	return t.pendingScreenEffects
 }
 
 // renderOverlays renders all collected overlays after main content.
@@ -5317,7 +5350,7 @@ func opKindName(k OpKind) string {
 	names := map[OpKind]string{
 		OpText: "Text", OpTextPtr: "TextPtr", OpProgress: "Progress",
 		OpContainer: "Container", OpIf: "If", OpForEach: "ForEach",
-		OpLayer: "Layer", OpOverlay: "Overlay", OpHRule: "HRule",
+		OpLayer: "Layer", OpOverlay: "Overlay", OpScreenEffect: "ScreenEffect", OpHRule: "HRule",
 		OpVRule: "VRule", OpSpacer: "Spacer", OpSelectionList: "SelectionList",
 	}
 	if name, ok := names[k]; ok {

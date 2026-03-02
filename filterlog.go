@@ -6,15 +6,6 @@ import (
 	"sync"
 )
 
-// FilterLogC is a filterable log viewer. It composes an input and a log
-// into a single component with fzf-style filtering.
-//
-// usage:
-//
-//	FilterLog(reader).
-//	    Placeholder("filter...").
-//	    MaxLines(10000).
-//	    BindVimNav()
 type FilterLogC struct {
 	input *InputC
 	log   *LogC
@@ -36,7 +27,13 @@ type FilterLogC struct {
 	manager *FocusManager
 }
 
-// FilterLog creates a filterable log viewer.
+// FilterLog creates a filterable log viewer that composes an input and a log
+// with fzf-style filtering. Type to filter log lines in real-time.
+//
+//	FilterLog(reader).
+//	    Placeholder("filter...").
+//	    MaxLines(10000).
+//	    BindVimNav()
 func FilterLog(r io.Reader) *FilterLogC {
 	fl := &FilterLogC{
 		input: Input(),

@@ -144,7 +144,7 @@ func TestFilterOriginalBounds(t *testing.T) {
 func TestFilterRanking(t *testing.T) {
 	items := []string{
 		"xyzabcxyz",  // abc scattered/embedded
-		"abc",        // exact match — should rank highest
+		"abc",        // exact match, should rank highest
 		"xxabcxxxxx", // abc present but longer
 	}
 	f := NewFilter(&items, func(s *string) string { return *s })
@@ -168,7 +168,7 @@ func TestFilterSourceChanges(t *testing.T) {
 	f.Reset()
 	if f.Len() != 2 {
 		// f.source still points to old slice header since items was reassigned
-		// this is expected — source is a *[]T so we need to update through the pointer
+		// this is expected, source is a *[]T so we need to update through the pointer
 	}
 
 	// proper way: mutate through pointer
@@ -195,7 +195,7 @@ func TestFilterListClampsSelectionOnSync(t *testing.T) {
 		t.Fatalf("expected index 7, got %d", fl.list.Index())
 	}
 
-	// simulate typing "o" — triggers onChange which calls sync()
+	// simulate typing "o", triggers onChange which calls sync()
 	fl.input.SetValue("o")
 	fl.sync()
 

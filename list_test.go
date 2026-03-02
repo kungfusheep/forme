@@ -130,7 +130,7 @@ func TestListCOnSelect(t *testing.T) {
 	buf := NewBuffer(40, 10)
 	tmpl.Execute(buf, 40, 10)
 
-	// move down — should fire OnSelect
+	// move down, should fire OnSelect
 	list.Down(nil)
 	if selected != "Second" {
 		t.Errorf("OnSelect should receive 'Second', got %q", selected)
@@ -145,7 +145,7 @@ func TestListCOnSelect(t *testing.T) {
 		t.Errorf("OnSelect should receive 'Third', got %q", selected)
 	}
 
-	// move down at end — should NOT fire (no change)
+	// move down at end, should NOT fire (no change)
 	callCount = 0
 	list.Down(nil)
 	if callCount != 0 {

@@ -4191,7 +4191,7 @@ func TestAutoTableColumnConfig(t *testing.T) {
 			t.Fatalf("could not find Value header, row0: %q", buf.GetLine(0))
 		}
 
-		// row 1 has "5" — right-aligned in a column wide enough for "12,345" (6 chars)
+		// row 1 has "5", right-aligned in a column wide enough for "12,345" (6 chars)
 		// the "5" should NOT be at valStart (that would be left-aligned)
 		cell := buf.Get(valStart, 1)
 		if cell.Rune == '5' {

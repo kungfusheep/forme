@@ -1,8 +1,6 @@
-<!-- ![logo](./logo.svg) -->
-
 # glyph
 
-Declarative terminal UI for Go.
+Declarative terminal UI framework for Go. **[useglyph.sh](https://useglyph.sh)**
 
 ![hero](./assets/hero.gif)
 
@@ -15,13 +13,17 @@ VBox.Border(BorderDouble).Title("SYS").FitContent()(
     Leader("CPU", &cpu),
     Leader("MEM", &mem),
     Sparkline(&history),
-),
+)
 ```
 
-- **Declarative** — describe your UI as a tree, not a sequence of draw calls
-- **Fast** — compiled templates, layered rendering, blitting for smooth scrolling
-- **Flexbox layout** — VBox/HBox with Grow, Gap, Width, borders, cascading styles
-- **Batteries included** — sparklines, tables, leaders, progress bars, lists, text input, vim-style jump labels
+- **Declarative.** UI is a tree of typed values; glyph compiles the layout and renders each frame.
+- **Flex layout.** VBox/HBox with grow, gap, borders, and cascading styles.
+- **Components.** Lists, tables, inputs, fuzzy filtering, sparklines, tabs, tree views, overlays, vim bindings, theming.
+- **Your data, directly.** Pass a pointer; glyph reads the current value every update.
+
+## Requirements
+
+Go 1.25 or later. macOS and Linux only; Windows support is on the roadmap.
 
 ## Install
 
@@ -29,259 +31,32 @@ VBox.Border(BorderDouble).Title("SYS").FitContent()(
 go get github.com/kungfusheep/glyph
 ```
 
-## Quick Start
-
-```go
-package main
-
-import . "github.com/kungfusheep/glyph"
-
-func main() {
-    app, _ := NewApp()
-    app.SetView(Text("Hello, terminal!")).Run()
-}
-```
-
----
-
-## Dynamic Content
-
-Pass a pointer to read the current value on each render:
-
-```go
-name := "world"
-Text(&name)  // reads *name each frame
-```
-
-## Layout
-
-```go
-VBox(                          // vertical stack
-    Text("Header"),
-    HBox(                      // horizontal stack
-        Text("Left"),
-        Space(),               // flexible spacer
-        Text("Right"),
-    ),
-    Text("Footer"),
-)
-
-VBox.Gap(2)(...)               // spacing between children
-VBox.Border(BorderRounded)(...)// bordered container
-HBox.Width(41)(...)            // fixed width
-```
-
-## Styling
-
-```go
-Text("hello").Bold().FG(Red).BG(Black)
-
-// Colors: Red, Green, Blue, Cyan, Magenta, Yellow, White, Black
-//         BrightRed, BrightGreen, ...
-//         PaletteColor(202)     // 256 palette
-//         RGB(255, 128, 64)     // true color
-//         Hex(0xFF8041)
-```
-
-### CascadeStyle
-
-Apply a style that cascades down to all children:
-
-```go
-green := Style{FG: Green}
-
-VBox.CascadeStyle(&green)(
-    Text("I'm green"),
-    Text("Me too"),
-    Text("Override").FG(Red),  // still works
-)
-```
-
-## Iteration
-
-```go
-items := []Item{{Name: "Apple"}, {Name: "Banana"}}
-
-ForEach(&items, func(item *Item) any {
-    return Text(&item.Name)
-})
-```
-
-## Conditionals
-
-```go
-If(&selected).Then(
-    Text("> active"),
-).Else(
-    Text("  inactive"),
-)
-```
-
-## AutoTable
-
-Struct slice to table:
-
-```go
-people := []Person{{"Alice", 30}, {"Bob", 25}}
-
-AutoTable(people)                    // all fields auto-detected
-AutoTable(people).Columns("Name")    // select columns
-```
-
-## Custom Widgets
-
-```go
-Widget(
-    func(availW int16) (w, h int16) { return availW, 1 },
-    func(buf *Buffer, x, y, w, h int16) {
-        // direct buffer access for custom rendering
-    },
-)
-```
-
-## Input Handling
-
-Key bindings can be declared on components or on the app/view:
-
-```go
-// declarative — on the component
-List(&items).BindVimNav().Handle("<Enter>", func(item *Item) { ... })
-
-// view-level
-app.View("main", myUI).
-    Handle("q", app.Stop).
-    Handle("<C-c>", app.Stop)
-```
-
-See [docs/input.md](docs/input.md) for full key pattern syntax.
-
-## Text Input
-
-```go
-Input().Placeholder("Search...").Bind()
-```
-
-`.Bind()` routes unmatched keys to the input. Arrow keys, backspace,
-Ctrl-a/e/k/u all work out of the box.
-
-## FilterList
-
-Drop-in fuzzy-filterable list:
-
-```go
-FilterList(&items, func(s *string) string { return *s }).
-    Placeholder("type to filter...").
-    Render(func(s *string) any { return Text(s) }).
-    Handle("<Enter>", func(s *string) { ... }).
-    HandleClear("<Esc>", app.Stop)
-```
-
-Supports fzf query syntax: `foo` (fuzzy), `'exact`, `^prefix`, `suffix$`,
-`!negation`, `a b` (AND), `a | b` (OR).
-
-## Components
-
-| Component | Description |
-|-----------|-------------|
-| `Text(s)` | Text (string or *string) |
-| `VBox` / `HBox` | Vertical / horizontal layout |
-| `Space()` | Flexible spacer |
-| `HRule()` / `VRule()` | Horizontal / vertical line |
-| `Leader` | Label with dot leader |
-| `Progress` | Progress bar |
-| `Sparkline` | Mini line chart |
-| `Spinner` | Animated spinner |
-| `ForEach` | Slice iteration |
-| `If().Then().Else()` | Conditional |
-| `Switch().Case()` | Multi-branch conditional |
-| `AutoTable` | Struct slice to table |
-| `List` | Navigable selection list |
-| `CheckList` | List with checkboxes |
-| `FilterList` | Fuzzy-filterable list with input |
-| `Input` | Text input with declarative binding |
-| `Radio` | Radio button group |
-| `Tabs` | Tab bar |
-| `Widget` | Custom render function |
-| `Overlay` | Modal / popup |
-| `Jump` | Vim-easymotion labels |
-
-## Full Example
-
-A simple todo app:
-
-```go
-package main
-
-import . "github.com/kungfusheep/glyph"
-
-type Todo struct {
-	Text string `glyph:"render"`
-	Done bool   `glyph:"checked"`
-}
-
-func main() {
-	todos := []Todo{{"Learn glyph", true}, {"Build something", false}}
-	var input Field
-
-	app, _ := NewApp()
-	app.SetView(
-		VBox.Border(BorderRounded).Title("Todo").FitContent().Gap(1)(
-			CheckList(&todos).
-				BindNav("<C-n>", "<C-p>").
-				BindToggle("<tab>").
-				BindDelete("<C-d>"),
-			HBox.Gap(1)(
-				Text("Add:"),
-				TextInput{Field: &input, Width: 30},
-			),
-		)).
-		Handle("<Enter>", func() {
-			if input.Value != "" {
-				todos = append(todos, Todo{Text: input.Value})
-				input.Clear()
-			}
-		}).
-		Handle("<C-c>", app.Stop).
-		BindField(&input).
-		Run()
-}
-```
-
-A fuzzy finder:
+## Quick start
 
 ```go
 package main
 
 import (
-	"fmt"
-	. "github.com/kungfusheep/glyph"
+    "log"
+    . "github.com/kungfusheep/glyph"
 )
 
 func main() {
-	languages := []string{"Go", "Rust", "Python", "JavaScript", "TypeScript"}
-	status := "type to filter"
-
-	app, _ := NewApp()
-	app.View("main",
-		VBox.Border(BorderRounded).Title("fuzzy finder")(
-			FilterList(&languages, func(s *string) string { return *s }).
-				Placeholder("type to filter...").
-				Render(func(s *string) any { return Text(s) }).
-				Handle("<Enter>", func(s *string) {
-					status = fmt.Sprintf("selected: %s", *s)
-				}).
-				HandleClear("<Esc>", app.Stop),
-			Space(),
-			HRule(),
-			Text(&status).Dim(),
-		),
-	).Handle("q", app.Stop)
-
-	app.RunFrom("main")
+    app, err := NewApp()
+    if err != nil {
+        log.Fatal(err)
+    }
+    app.SetView(Text("Hello, terminal!")).Run()
 }
 ```
 
+## State
+
+The core is stable and has been used to build real things. The API covers the full range of what a TUI framework needs. Pre-1.0 because the surface is still under evaluation; parts of it can be better still, and 1.0 means committing to it.
+
 ## Demos
+
+Run any of the included demos to see the framework in action:
 
 | Demo | Description |
 |------|-------------|
@@ -295,6 +70,10 @@ func main() {
 | `go run ./cmd/routing` | Multi-view navigation |
 | `go run ./cmd/minivim` | Full text editor |
 
+## Docs
+
+Full documentation, API reference, and getting started guide at **[useglyph.sh](https://useglyph.sh)**.
+
 ## License
 
-Apache-2.0 License. See [LICENSE](./LICENSE) for details.
+Apache-2.0. See [LICENSE](./LICENSE) for details.

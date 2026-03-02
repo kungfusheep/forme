@@ -140,14 +140,14 @@ func main() {
 
 	app.Handle("<Esc>", func() { app.Stop() })
 
-	// CWD refresh — slow, background, every 10s
+	// CWD refresh (slow, background, every 10s)
 	go func() {
 		for range time.NewTicker(10 * time.Second).C {
 			refreshCWDs()
 		}
 	}()
 
-	// process refresh + filter sync — every 2s
+	// process refresh + filter sync, every 2s
 	go func() {
 		for range time.NewTicker(2 * time.Second).C {
 			filter.Update(input.Value())
