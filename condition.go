@@ -130,9 +130,7 @@ func (e *ConditionEval[T]) Else(node any) *ConditionEval[T] {
 	return e
 }
 
-// evaluate checks the condition at runtime
-func (e *ConditionEval[T]) evaluate() bool {
-	v := *e.ptr
+func (e *ConditionEval[T]) compare(v T) bool {
 	switch e.op {
 	case condOpEq:
 		return v == e.val
@@ -142,6 +140,8 @@ func (e *ConditionEval[T]) evaluate() bool {
 		return false
 	}
 }
+
+func (e *ConditionEval[T]) evaluate() bool { return e.compare(*e.ptr) }
 
 func (e *ConditionEval[T]) getThen() any { return e.then }
 func (e *ConditionEval[T]) getElse() any { return e.els }
@@ -153,17 +153,9 @@ func (e *ConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.Poi
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
 func (e *ConditionEval[T]) evaluateWithBase(base unsafe.Pointer) bool {
 	if e.offset == 0 {
-		return e.evaluate() // not in ForEach context
+		return e.evaluate()
 	}
-	v := *(*T)(unsafe.Add(base, e.offset))
-	switch e.op {
-	case condOpEq:
-		return v == e.val
-	case condOpNe:
-		return v != e.val
-	default:
-		return false
-	}
+	return e.compare(*(*T)(unsafe.Add(base, e.offset)))
 }
 
 // OrdConditionEval holds a prepared ordered condition awaiting Then/Else branches.
@@ -188,9 +180,7 @@ func (e *OrdConditionEval[T]) Else(node any) *OrdConditionEval[T] {
 	return e
 }
 
-// evaluate checks the condition at runtime
-func (e *OrdConditionEval[T]) evaluate() bool {
-	v := *e.ptr
+func (e *OrdConditionEval[T]) compare(v T) bool {
 	switch e.op {
 	case condOpEq:
 		return v == e.val
@@ -209,6 +199,8 @@ func (e *OrdConditionEval[T]) evaluate() bool {
 	}
 }
 
+func (e *OrdConditionEval[T]) evaluate() bool { return e.compare(*e.ptr) }
+
 func (e *OrdConditionEval[T]) getThen() any { return e.then }
 func (e *OrdConditionEval[T]) getElse() any { return e.els }
 
@@ -219,25 +211,9 @@ func (e *OrdConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
 func (e *OrdConditionEval[T]) evaluateWithBase(base unsafe.Pointer) bool {
 	if e.offset == 0 {
-		return e.evaluate() // not in ForEach context
+		return e.evaluate()
 	}
-	v := *(*T)(unsafe.Add(base, e.offset))
-	switch e.op {
-	case condOpEq:
-		return v == e.val
-	case condOpNe:
-		return v != e.val
-	case condOpGt:
-		return v > e.val
-	case condOpLt:
-		return v < e.val
-	case condOpGte:
-		return v >= e.val
-	case condOpLte:
-		return v <= e.val
-	default:
-		return false
-	}
+	return e.compare(*(*T)(unsafe.Add(base, e.offset)))
 }
 
 // conditionNode interface for the compiler to detect condition nodes
@@ -306,17 +282,21 @@ func (s *SwitchBuilder[T]) End() *SwitchNode[T] {
 
 // SwitchNode is the compiled form of a Switch, ready for template evaluation.
 type SwitchNode[T comparable] struct {
-	ptr   *T
-	cases []switchCase[T]
-	def   any
+	ptr    *T
+	offset uintptr // offset from ForEach element base; 0 = use ptr directly
+	cases  []switchCase[T]
+	def    any
 }
 
 // switchNodeInterface for the compiler to detect switch nodes
 type switchNodeInterface interface {
-	evaluateSwitch() any // runtime: returns matching node
-	getCaseNodes() []any // compile-time: all case nodes
-	getDefaultNode() any // compile-time: default node
-	getMatchIndex() int  // runtime: returns matching case index, or -1 for default
+	evaluateSwitch() any                      // runtime: returns matching node
+	getCaseNodes() []any                      // compile-time: all case nodes
+	getDefaultNode() any                      // compile-time: default node
+	getPtrAddr() uintptr                      // compile-time: address of condition pointer
+	getMatchIndex() int                       // runtime: matching case index, or -1 for default
+	getMatchIndexWithBase(unsafe.Pointer) int // runtime: matching case index using ForEach element base
+	setPtrOffset(uintptr)                     // compile-time: record offset from element base
 }
 
 func (s *SwitchNode[T]) evaluateSwitch() any {
@@ -342,13 +322,31 @@ func (s *SwitchNode[T]) getDefaultNode() any {
 }
 
 func (s *SwitchNode[T]) getMatchIndex() int {
-	v := *s.ptr
+	return s.getMatchIndexWithBase(nil)
+}
+
+func (s *SwitchNode[T]) getMatchIndexWithBase(elemBase unsafe.Pointer) int {
+	var ptr *T
+	if elemBase != nil && s.offset != 0 {
+		ptr = (*T)(unsafe.Pointer(uintptr(elemBase) + s.offset))
+	} else {
+		ptr = s.ptr
+	}
+	v := *ptr
 	for i, c := range s.cases {
 		if v == c.val {
 			return i
 		}
 	}
-	return -1 // default
+	return -1
+}
+
+func (s *SwitchNode[T]) getPtrAddr() uintptr {
+	return uintptr(unsafe.Pointer(s.ptr))
+}
+
+func (s *SwitchNode[T]) setPtrOffset(off uintptr) {
+	s.offset = off
 }
 
 var _ switchNodeInterface = (*SwitchNode[int])(nil)

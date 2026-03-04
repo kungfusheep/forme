@@ -748,7 +748,7 @@ func (a *App) render() {
 
 	if a.inline {
 		// Inline mode: render at cursor position
-		a.linesUsed = a.screen.FlushInline(int(renderHeight))
+		a.linesUsed = a.screen.FlushInline(int(renderHeight), a.linesUsed)
 		a.pool.Swap() // Queue async clear
 	} else {
 		// Fullscreen mode

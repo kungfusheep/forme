@@ -262,6 +262,7 @@ type Filter[T any] struct {
 	query     FzfQuery
 	indices   []int    // indices[i] = index into *source for Items[i]
 	matches   []scored // reusable scratch for scoring
+	scored    int      // high-water mark: source items already processed
 }
 
 type scored struct {
@@ -326,6 +327,7 @@ func (f *Filter[T]) Update(query string) {
 		f.Items = append(f.Items, src[m.index])
 		f.indices = append(f.indices, m.index)
 	}
+	f.scored = len(src)
 }
 
 // Reset clears the filter, restoring all source items in original order.
@@ -345,6 +347,7 @@ func (f *Filter[T]) Reset() {
 	for i := range f.indices {
 		f.indices[i] = i
 	}
+	f.scored = len(src)
 }
 
 // Original maps a filtered index back to a pointer into the source slice.
@@ -378,6 +381,43 @@ func (f *Filter[T]) Active() bool {
 // Query returns the current raw query string.
 func (f *Filter[T]) Query() string {
 	return f.lastQuery
+}
+
+// appended processes only newly appended source items since the last
+// sync. O(k) where k = items added, regardless of total list size.
+func (f *Filter[T]) appended() {
+	src := *f.source
+	if f.scored >= len(src) {
+		return
+	}
+	if f.query.Empty() {
+		// no filter active: extend Items and indices with new items
+		for i := f.scored; i < len(src); i++ {
+			f.Items = append(f.Items, src[i])
+			f.indices = append(f.indices, i)
+		}
+	} else {
+		// filter active: score only new items, append matches
+		for i := f.scored; i < len(src); i++ {
+			if _, ok := f.query.Score(f.extract(&src[i])); ok {
+				f.Items = append(f.Items, src[i])
+				f.indices = append(f.indices, i)
+			}
+		}
+	}
+	f.scored = len(src)
+}
+
+// refresh forces a full re-evaluation of the current query against the
+// source slice. Used after replacing the source data entirely.
+func (f *Filter[T]) refresh() {
+	if f.query.Empty() {
+		f.Reset()
+		return
+	}
+	saved := f.lastQuery
+	f.lastQuery = ""
+	f.Update(saved)
 }
 
 // Len returns the number of currently visible (filtered) items.

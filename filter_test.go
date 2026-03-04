@@ -1,6 +1,7 @@
 package glyph
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -272,6 +273,104 @@ func TestFilterListSelectedMapsToOriginal(t *testing.T) {
 	}
 }
 
+func TestStreamWriterWrite(t *testing.T) {
+	var items []string
+	fl := FilterList(&items, func(s *string) string { return *s }).
+		Render(func(s *string) any { return Text(s) })
+
+	renders := 0
+	w := fl.Stream(func() { renders++ })
+
+	w.Write("alpha")
+	w.Write("bravo")
+	w.WriteAll([]string{"charlie", "delta"})
+	w.Close()
+
+	if fl.Filter().Len() != 4 {
+		t.Fatalf("expected 4 items, got %d", fl.Filter().Len())
+	}
+	if renders < 3 {
+		t.Errorf("expected at least 3 render calls, got %d", renders)
+	}
+}
+
+func TestStreamWriterWithFilter(t *testing.T) {
+	var items []string
+	fl := FilterList(&items, func(s *string) string { return *s }).
+		Render(func(s *string) any { return Text(s) })
+
+	// apply filter before streaming
+	fl.input.SetValue("o")
+	fl.sync()
+
+	w := fl.Stream(func() {})
+	w.Write("Go")     // matches "o"
+	w.Write("Rust")   // no match
+	w.Write("Python") // matches "o"
+	w.Write("Odin")   // matches "o"
+	w.Close()
+
+	if fl.Filter().Len() != 3 {
+		t.Fatalf("expected 3 filtered items, got %d", fl.Filter().Len())
+	}
+	if len(items) != 4 {
+		t.Fatalf("expected 4 total items in source, got %d", len(items))
+	}
+}
+
+func TestStreamLifecycle(t *testing.T) {
+	var items []string
+	fl := FilterList(&items, func(s *string) string { return *s }).
+		Render(func(s *string) any { return Text(s) })
+
+	if fl.streaming() {
+		t.Fatal("should not be streaming before Stream called")
+	}
+
+	w := fl.Stream(func() {})
+
+	if !fl.streaming() {
+		t.Fatal("expected streaming=true after Stream called")
+	}
+
+	w.Write("item")
+	w.Close()
+
+	if fl.streaming() {
+		t.Error("expected streaming=false after Close")
+	}
+
+	// Close is idempotent
+	w.Close()
+	if fl.streaming() {
+		t.Error("expected streaming=false after second Close")
+	}
+}
+
+func TestStreamCounterUpdates(t *testing.T) {
+	var items []string
+	fl := FilterList(&items, func(s *string) string { return *s }).
+		Render(func(s *string) any { return Text(s) })
+
+	fl.input.SetValue("a")
+	fl.sync()
+
+	w := fl.Stream(func() {})
+
+	w.Write("alpha") // matches "a"
+	w.Write("bravo") // matches "a"
+	w.Write("echo")  // no match
+
+	if fl.counterMatch != 2 {
+		t.Errorf("expected counterMatch=2, got %d", fl.counterMatch)
+	}
+	if fl.counterTotal != 3 {
+		t.Errorf("expected counterTotal=3, got %d", fl.counterTotal)
+	}
+
+	w.Close()
+}
+
 func BenchmarkFilterUpdate(b *testing.B) {
 	items := make([]string, 1000)
 	for i := range items {
@@ -283,5 +382,42 @@ func BenchmarkFilterUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		f.lastQuery = "" // force re-filter
 		f.Update("heap service")
+	}
+}
+
+func BenchmarkStreamWriter(b *testing.B) {
+	for _, size := range []int{100, 1000, 5000, 10000} {
+		prebuilt := make([]string, size)
+		for i := range prebuilt {
+			prebuilt[i] = fmt.Sprintf("item-%d-service-name", i)
+		}
+
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			var items []string
+			fl := FilterList(&items, func(s *string) string { return *s }).
+				Render(func(s *string) any { return Text(s) })
+
+			fl.input.SetValue("a")
+			fl.sync()
+
+			// warm internal slices to steady-state capacity
+			w := fl.Stream(func() {})
+			w.WriteAll(prebuilt)
+			w.Close()
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				// reset source to baseline
+				items = items[:0]
+				fl.refresh()
+
+				w := fl.Stream(func() {})
+				for j := 0; j < size; j++ {
+					w.Write(prebuilt[j])
+				}
+				w.Close()
+			}
+		})
 	}
 }

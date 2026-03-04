@@ -642,6 +642,11 @@ var borderEdgesArray = [128]uint8{
 	0x6E: 0b1100, // ╮ BoxRoundedTopRight (0x256E)
 	0x6F: 0b1001, // ╯ BoxRoundedBottomRight (0x256F)
 	0x70: 0b0011, // ╰ BoxRoundedBottomLeft (0x2570)
+	// single-direction stubs — allow merge to produce T/cross junctions
+	0x74: 0b1000, // ╴ left stub  (0x2574): merges │+╴ → ┤, ─+╴ → ─
+	0x75: 0b0001, // ╵ up stub    (0x2575): merges ─+╵ → ┴
+	0x76: 0b0010, // ╶ right stub (0x2576): merges │+╶ → ├, ─+╶ → ─
+	0x77: 0b0100, // ╷ down stub  (0x2577): merges ─+╷ → ┬
 }
 
 // edgesToBorderArray provides O(1) lookup from edge bits to border rune

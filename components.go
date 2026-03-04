@@ -507,6 +507,9 @@ func (t TextC) Strikethrough() TextC {
 	return t
 }
 
+// Align sets the text alignment within its available width.
+func (t TextC) Align(a Align) TextC { t.style.Align = a; return t }
+
 // Width sets a fixed width.
 func (t TextC) Width(w int16) TextC {
 	t.width = w
@@ -646,14 +649,18 @@ func (s SpacerC) MarginTRBL(a, b, c, d int16) SpacerC {
 // ============================================================================
 
 type HRuleC struct {
-	char  rune
-	style Style
+	char   rune
+	style  Style
+	extend bool
 }
 
 // HRule creates a horizontal rule.
 func HRule() HRuleC {
 	return HRuleC{char: '─'}
 }
+
+// Extend marks the rule to meet a sibling VRule, producing ┼ junctions.
+func (h HRuleC) Extend() HRuleC { h.extend = true; return h }
 
 // Char sets the display character.
 func (h HRuleC) Char(c rune) HRuleC {
@@ -693,6 +700,7 @@ type VRuleC struct {
 	char   rune
 	style  Style
 	height int16
+	extend bool
 }
 
 // VRule creates a vertical rule.
@@ -726,6 +734,9 @@ func (v VRuleC) Height(h int16) VRuleC {
 	v.height = h
 	return v
 }
+
+// Extend makes the VRule overdraw one row at each end to meet adjacent HRules or borders.
+func (v VRuleC) Extend() VRuleC { v.extend = true; return v }
 
 // Margin sets uniform margin on all sides.
 func (v VRuleC) Margin(all int16) VRuleC { v.style.margin = [4]int16{all, all, all, all}; return v }
@@ -892,6 +903,30 @@ func (l LeaderC) MarginTRBL(a, b, c, d int16) LeaderC {
 	l.style.margin = [4]int16{a, b, c, d}
 	return l
 }
+
+// ============================================================================
+// Counter - "current/total" display (alloc-free)
+// ============================================================================
+
+// counterC renders two int pointers as "current/total" with an optional
+// prefix. Formatting happens at render time using a stack-allocated scratch
+// buffer — zero heap allocations per frame.
+type counterC struct {
+	current   *int
+	total     *int
+	prefix    string
+	style     Style
+	streaming *bool  // when non-nil and true, show spinner
+	framePtr  *int32 // spinner frame, accessed atomically
+}
+
+func newCounter(current, total *int) counterC {
+	return counterC{current: current, total: total}
+}
+
+func (c counterC) Prefix(p string) counterC   { c.prefix = p; return c }
+func (c counterC) Dim() counterC              { c.style.Attr |= AttrDim; return c }
+func (c counterC) Streaming(s *bool) counterC { c.streaming = s; return c }
 
 // ============================================================================
 // Sparkline - Mini chart

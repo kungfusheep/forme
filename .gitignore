@@ -48,5 +48,8 @@ widgetdemo
 *.prof
 *.test
 
+*.local.*
+
 # OS
 .DS_Store
+CLAUDE.local.md
