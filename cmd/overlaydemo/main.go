@@ -1,11 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
-	"github.com/kungfusheep/riffkey"
 	. "github.com/kungfusheep/forme"
+	"github.com/kungfusheep/riffkey"
 )
 
 func main() {
@@ -41,13 +40,13 @@ func main() {
 				),
 			),
 
-			SpaceH(1),
+			Space(),
 			HRule().Style(Style{FG: BrightBlack}),
 			Text("Press 'm' to toggle modal | 'q' to quit").FG(BrightBlack),
 
-			// modal overlay
+			// modal overlay + screen effect — both reactive to same bool
 			If(&showModal).Then(OverlayNode{
-				Backdrop: true,
+				Backdrop: false,
 				Centered: true,
 				Child: VBox.Width(50).Border(BorderRounded).Fill(PaletteColor(236))(
 					Text("Modal Dialog  ").FG(Cyan).Bold(),
@@ -57,13 +56,14 @@ func main() {
 					Text("Press 'm' to close").FG(BrightBlack),
 				),
 			}),
+			If(&showModal).Then(ScreenEffect(PPVignette(1.0))),
 		),
 	)
 
 	app.Handle("m", func(_ riffkey.Match) {
 		showModal = !showModal
 		if showModal {
-			modalMessage = fmt.Sprintf("Modal opened! Press 'm' to close.")
+			modalMessage = "Modal opened! Press 'm' to close."
 		}
 	})
 	app.Handle("q", func(_ riffkey.Match) {

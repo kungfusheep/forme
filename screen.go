@@ -33,8 +33,10 @@ type Screen struct {
 	sigChan    chan os.Signal
 
 	// Rendering state
-	lastStyle Style        // Last style we emitted (for optimization)
-	buf       bytes.Buffer // Reusable buffer for building output
+	lastStyle  Style        // Last style we emitted (for optimization)
+	buf        bytes.Buffer // Reusable buffer for building output
+	forceRGB   bool         // emit all colours as true color RGB
+	syncOutput bool         // wrap frames with DEC sync output markers (\e[?2026h/l)
 
 	// Synchronization - protects buffer access during resize
 	mu sync.Mutex
@@ -150,6 +152,7 @@ func (s *Screen) EnterRawMode() error {
 	s.writeString("\x1b[H")      // Move cursor to home position
 	s.writeString("\x1b[?25l")   // Hide cursor
 	s.writeString("\x1b[?2004h") // Enable bracketed paste mode
+	s.syncOutput = true           // wrap frames with synchronized output (reduces tearing)
 
 	return nil
 }
@@ -331,6 +334,9 @@ func (s *Screen) Flush() {
 	defer s.mu.Unlock()
 
 	s.buf.Reset()
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026h") // begin synchronized update
+	}
 
 	dirtyCount := 0
 	changedCount := 0
@@ -444,6 +450,9 @@ func (s *Screen) FlushFull() {
 	defer s.mu.Unlock()
 
 	s.buf.Reset()
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026h")
+	}
 
 	// Clear screen and move to home
 	s.buf.WriteString("\x1b[2J\x1b[H")
@@ -463,6 +472,9 @@ func (s *Screen) FlushFull() {
 	s.buf.WriteString("\x1b[0m")
 	s.lastStyle = DefaultStyle()
 
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026l")
+	}
 	s.writer.Write(s.buf.Bytes())
 }
 
@@ -559,23 +571,25 @@ func (s *Screen) writeStyle(buf *bytes.Buffer, style Style) {
 }
 
 // writeColor writes the ANSI escape code for a color (allocation-free).
+// when forceRGB is set, Color16 and Color256 emit as true color using
+// their pre-populated RGB values.
 func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
+	if s.forceRGB && c.Mode != ColorDefault {
+		c.Mode = ColorRGB
+	}
 	switch c.Mode {
 	case ColorDefault:
-		// Use default color (39 for fg, 49 for bg)
 		if fg {
 			buf.WriteString(";39")
 		} else {
 			buf.WriteString(";49")
 		}
 	case Color16:
-		// Basic 16 colors
 		base := 30
 		if !fg {
 			base = 40
 		}
 		if c.Index >= 8 {
-			// Bright colors
 			base += 60
 			buf.WriteByte(';')
 			s.writeIntToBuf(base + int(c.Index-8))
@@ -584,7 +598,6 @@ func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
 			s.writeIntToBuf(base + int(c.Index))
 		}
 	case Color256:
-		// 256 color palette
 		if fg {
 			buf.WriteString(";38;5;")
 		} else {
@@ -687,6 +700,9 @@ func hexDigit(n uint8) byte {
 // FlushBuffer writes the accumulated buffer to the terminal in one syscall.
 func (s *Screen) FlushBuffer() {
 	if s.buf.Len() > 0 {
+		if s.syncOutput {
+			s.buf.WriteString("\x1b[?2026l") // end synchronized update
+		}
 		s.writer.Write(s.buf.Bytes())
 	}
 }
@@ -733,4 +749,184 @@ func appendInt(b []byte, n int) []byte {
 		n /= 10
 	}
 	return append(b, scratch[i:]...)
+}
+
+// QueryDefaultColors queries the terminal for its default foreground and
+// background colours using OSC 10 (FG) and OSC 11 (BG), and the basic-16
+// palette using OSC 4;N;?. Must be called after entering raw mode.
+// Returns zero-value Colors on failure (unsupported terminal, timeout, etc.)
+// — callers should check Mode != ColorDefault.
+func (s *Screen) QueryDefaultColors() (fg, bg Color) {
+	if !s.inRawMode {
+		return
+	}
+
+	// temporarily set non-blocking read with 100ms timeout
+	termios, err := unix.IoctlGetTermios(s.fd, ioctlGetTermios)
+	if err != nil {
+		return
+	}
+	saved := *termios
+	termios.Cc[unix.VMIN] = 0
+	termios.Cc[unix.VTIME] = 1 // 100ms in deciseconds
+	if err := unix.IoctlSetTermios(s.fd, ioctlSetTermios, termios); err != nil {
+		return
+	}
+	defer unix.IoctlSetTermios(s.fd, ioctlSetTermios, &saved)
+
+	// drain any pending input
+	var drain [256]byte
+	for {
+		n, _ := os.Stdin.Read(drain[:])
+		if n == 0 {
+			break
+		}
+	}
+
+	// query default FG/BG + all 16 palette colours in one write
+	var query []byte
+	query = append(query, "\x1b]10;?\x07\x1b]11;?\x07"...)
+	for i := range 16 {
+		query = append(query, "\x1b]4;"...)
+		if i >= 10 {
+			query = append(query, '1', byte('0'+i-10))
+		} else {
+			query = append(query, byte('0'+i))
+		}
+		query = append(query, ";?\x07"...)
+	}
+	s.writer.Write(query)
+
+	// read responses — larger buffer for 18 colour responses
+	var resp [1024]byte
+	total := 0
+	for total < len(resp) {
+		n, err := os.Stdin.Read(resp[total:])
+		total += n
+		if err != nil || n == 0 {
+			break
+		}
+	}
+
+	if total == 0 {
+		return
+	}
+
+	data := resp[:total]
+	fg = parseOSCColor(data, '0') // OSC 10
+	bg = parseOSCColor(data, '1') // OSC 11
+
+	// parse OSC 4 palette responses and update basic16RGB
+	for i := range 16 {
+		if c := parseOSC4Color(data, i); c.Mode == ColorRGB {
+			basic16RGB[i] = [3]uint8{c.R, c.G, c.B}
+		}
+	}
+	refreshBasic16Vars()
+
+	return
+}
+
+// parseOSC4Color extracts an RGB colour from an OSC 4 palette response.
+// response format: \x1b]4;N;rgb:rrrr/gggg/bbbb\x1b\\ or \x07
+func parseOSC4Color(data []byte, index int) Color {
+	// build marker: \x1b]4;N;rgb:  (N is 0-15)
+	var marker [16]byte
+	n := copy(marker[:], []byte{'\x1b', ']', '4', ';'})
+	if index >= 10 {
+		marker[n] = '1'
+		n++
+		marker[n] = byte('0' + index - 10)
+		n++
+	} else {
+		marker[n] = byte('0' + index)
+		n++
+	}
+	n += copy(marker[n:], []byte{';', 'r', 'g', 'b', ':'})
+
+	idx := bytes.Index(data, marker[:n])
+	if idx < 0 {
+		return Color{}
+	}
+	rest := data[idx+n:]
+
+	r, rest, ok := parseHexComponent(rest)
+	if !ok || len(rest) == 0 || rest[0] != '/' {
+		return Color{}
+	}
+	g, rest, ok := parseHexComponent(rest[1:])
+	if !ok || len(rest) == 0 || rest[0] != '/' {
+		return Color{}
+	}
+	b, _, ok := parseHexComponent(rest[1:])
+	if !ok {
+		return Color{}
+	}
+	return Color{Mode: ColorRGB, R: r, G: g, B: b}
+}
+
+// parseOSCColor extracts an RGB colour from an OSC 10/11 response.
+// digit is '0' for OSC 10 (FG) or '1' for OSC 11 (BG).
+// response format: \x1b]1X;rgb:rrrr/gggg/bbbb\x1b\\ or \x1b]1X;rgb:rrrr/gggg/bbbb\x07
+func parseOSCColor(data []byte, digit byte) Color {
+	// find the OSC marker: \x1b]1X;rgb:
+	marker := []byte{'\x1b', ']', '1', digit, ';', 'r', 'g', 'b', ':'}
+	idx := bytes.Index(data, marker)
+	if idx < 0 {
+		return Color{}
+	}
+	rest := data[idx+len(marker):]
+
+	// parse rrrr/gggg/bbbb — each component is 1-4 hex digits
+	r, rest, ok := parseHexComponent(rest)
+	if !ok || len(rest) == 0 || rest[0] != '/' {
+		return Color{}
+	}
+	g, rest, ok := parseHexComponent(rest[1:])
+	if !ok || len(rest) == 0 || rest[0] != '/' {
+		return Color{}
+	}
+	b, _, ok := parseHexComponent(rest[1:])
+	if !ok {
+		return Color{}
+	}
+
+	return Color{Mode: ColorRGB, R: r, G: g, B: b}
+}
+
+// parseHexComponent reads hex digits until a non-hex char, scales to 8-bit.
+// handles 1-digit (x), 2-digit (xx), and 4-digit (xxxx) formats.
+func parseHexComponent(data []byte) (uint8, []byte, bool) {
+	n := 0
+	var val uint32
+	for n < len(data) {
+		c := data[n]
+		var d uint32
+		switch {
+		case c >= '0' && c <= '9':
+			d = uint32(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = uint32(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = uint32(c-'A') + 10
+		default:
+			goto done
+		}
+		val = val*16 + d
+		n++
+	}
+done:
+	if n == 0 {
+		return 0, data, false
+	}
+	// scale to 8-bit: 1-digit (0-F) -> *17, 2-digit (00-FF) -> as-is, 4-digit (0000-FFFF) -> >>8
+	switch {
+	case n <= 2:
+		if n == 1 {
+			val *= 17 // 0xF -> 0xFF
+		}
+		return uint8(val), data[n:], true
+	default:
+		return uint8(val >> 8), data[n:], true
+	}
 }
