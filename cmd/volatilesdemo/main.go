@@ -4,7 +4,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -419,26 +418,3 @@ func joinWith(parts []string, sep string) string {
 	return result
 }
 
-// hueToRGB converts hue (0-1) to RGB
-func hueToRGB(h float64) Color {
-	h = math.Mod(h, 1.0)
-	if h < 0 {
-		h += 1
-	}
-	var r, g, b float64
-	switch {
-	case h < 1.0/6.0:
-		r, g, b = 1, h*6, 0
-	case h < 2.0/6.0:
-		r, g, b = 1-(h-1.0/6.0)*6, 1, 0
-	case h < 3.0/6.0:
-		r, g, b = 0, 1, (h-2.0/6.0)*6
-	case h < 4.0/6.0:
-		r, g, b = 0, 1-(h-3.0/6.0)*6, 1
-	case h < 5.0/6.0:
-		r, g, b = (h-4.0/6.0)*6, 0, 1
-	default:
-		r, g, b = 1, 0, 1-(h-5.0/6.0)*6
-	}
-	return RGB(uint8(r*255), uint8(g*255), uint8(b*255))
-}

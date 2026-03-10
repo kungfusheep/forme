@@ -3,7 +3,6 @@ package glyph
 import (
 	"bufio"
 	"io"
-	"sync"
 )
 
 type FilterLogC struct {
@@ -13,10 +12,6 @@ type FilterLogC struct {
 	placeholder string
 	query       FzfQuery
 	lastQuery   string
-
-	// filtered view
-	filteredLines []string
-	filterMu      sync.Mutex
 
 	// layout
 	grow   float32

@@ -2165,7 +2165,6 @@ func (ed *Editor) getNodeWidth(n *SplitNode) int {
 }
 
 // refresh does a full re-render - use for content changes or visual mode.
-// For simple cursor movement, use updateCursorHighlight() instead.
 func (ed *Editor) refresh() {
 	ed.updateDisplay()
 	ed.updateCursor()
@@ -3349,34 +3348,6 @@ func (ed *Editor) renderLineToLayer(lineIdx int) {
 	}
 
 	ed.win().contentLayer.SetLine(lineIdx, spans)
-}
-
-// updateLine efficiently updates just the changed lines (for cursor movement)
-func (ed *Editor) updateLine(lineIdx int) {
-	ed.renderLineToLayer(lineIdx)
-}
-
-// updateCursorHighlight efficiently updates highlight when cursor moves between lines
-// Returns the old cursor line index for callers that need it
-func (ed *Editor) updateCursorHighlight(oldLine int) {
-	if ed.win().contentLayer == nil {
-		return
-	}
-
-	// Ensure visible region is rendered (lazy render on scroll)
-	ed.ensureRendered()
-
-	// Only update if cursor actually moved to a different line
-	if oldLine != ed.win().Cursor && oldLine >= 0 && oldLine < len(ed.buf().Lines) {
-		ed.renderLineToLayer(oldLine) // Remove yellow from old line
-	}
-	ed.renderLineToLayer(ed.win().Cursor) // Add yellow to new line
-
-	// Sync layer scroll position
-	ed.win().contentLayer.ScrollTo(ed.win().topLine)
-
-	// Update status bar (needed for debug stats to refresh)
-	ed.updateStatusBar()
 }
 
 // getVisualSpans splits a line into styled spans for visual mode highlighting

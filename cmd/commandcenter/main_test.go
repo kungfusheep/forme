@@ -26,12 +26,12 @@ func TestCommandCenterLayout(t *testing.T) {
 	clock   := "12:00:00"
 
 	services := []service{
-		{Name: "api-gateway",      Status: "live", CPU: 12.0, CPUStr: " 12.0%", Mem: "240 MB"},
-		{Name: "postgres-primary", Status: "live", CPU:  4.2, CPUStr: "  4.2%", Mem: "1.2 GB"},
-		{Name: "redis-cluster",    Status: "warn", CPU: 28.1, CPUStr: " 28.1%", Mem: "380 MB"},
-		{Name: "worker-pool",      Status: "live", CPU:  8.7, CPUStr: "  8.7%", Mem: "190 MB"},
+		{Name: "api-gateway",      Status: "live", CPU:  7.2, CPUStr: "  7.2%", Mem: "240 MB"},
+		{Name: "postgres-primary", Status: "live", CPU:  3.8, CPUStr: "  3.8%", Mem: "1.2 GB"},
+		{Name: "redis-cluster",    Status: "warn", CPU:  6.1, CPUStr: "  6.1%", Mem: "380 MB"},
+		{Name: "worker-pool",      Status: "live", CPU:  4.9, CPUStr: "  4.9%", Mem: "190 MB"},
 		{Name: "cdn-edge",         Status: "live", CPU:  1.1, CPUStr: "  1.1%", Mem: " 42 MB"},
-		{Name: "auth-service",     Status: "live", CPU:  6.3, CPUStr: "  6.3%", Mem: "128 MB"},
+		{Name: "auth-service",     Status: "live", CPU:  5.4, CPUStr: "  5.4%", Mem: "128 MB"},
 	}
 	for i := range services {
 		services[i].CPUHistory = make([]float64, 20)
@@ -51,6 +51,13 @@ func TestCommandCenterLayout(t *testing.T) {
 	restarting  := false
 	spinnerFrame := 0
 
+	metricPanel := func(title string, data *[]float64, label *string, col Color) any {
+		return VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title(title)(
+			Sparkline(data).FG(col),
+			Text(label).FG(BrightBlack),
+		)
+	}
+
 	view := VBox(
 		HBox(
 			Text("● ").FG(Cyan),
@@ -62,47 +69,36 @@ func TestCommandCenterLayout(t *testing.T) {
 		HRule().FG(BrightBlack),
 
 		HBox.Gap(1)(
-			VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("requests/s")(
-				Sparkline(&reqData).FG(Cyan),
-				Text(&reqRate).FG(BrightBlack),
-			),
-			VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("p99 latency")(
-				Sparkline(&latData).FG(Green),
-				Text(&p99Lat).FG(BrightBlack),
-			),
-			VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("error rate")(
-				Sparkline(&errData).FG(Yellow),
-				Text(&errRate).FG(BrightBlack),
-			),
+			metricPanel("requests/s", &reqData, &reqRate, Cyan),
+			metricPanel("p99 latency", &latData, &p99Lat, Green),
+			metricPanel("error rate", &errData, &errRate, Yellow),
 		),
 
 		VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("services")(
-			HBox.Gap(1)(
-				Text("  ").FG(BrightBlack),
-				Text(fmt.Sprintf("%-18s", "SERVICE")).FG(BrightBlack),
-				Text("   CPU").FG(BrightBlack),
-				Text("       MEM").FG(BrightBlack),
+			HBox.Gap(2)(
+				Text("●").FG(BrightBlack),
+				Text("SERVICE").FG(BrightBlack),
 				Space(),
-				Text("STATUS").FG(BrightBlack),
+				Text("CPU").FG(BrightBlack).Width(6).Align(AlignRight),
+				Text("MEM").FG(BrightBlack).Width(8).Align(AlignRight),
+				Text("STATUS").FG(BrightBlack).Width(11),
 			),
 			HRule().FG(BrightBlack),
 			ForEach(&services, func(svc *service) any {
 				return Jump(
-					HBox.Gap(1)(
-						Switch(&svc.Status).
+					HBox.Gap(2)(
+						VBox.Width(1)(Switch(&svc.Status).
 							Case("warn", Text("○").FG(Yellow)).
-							Default(Text("●").FG(Green)),
-						Switch(&svc.Status).
-							Case("warn", Text(&svc.Name).FG(Yellow)).
-							Default(Text(&svc.Name).FG(Green)),
-						IfOrd(&svc.CPU).Gt(20.0).
-							Then(Text(&svc.CPUStr).FG(Yellow)).
-							Else(Text(&svc.CPUStr).FG(BrightBlack)),
-						Text(&svc.Mem).FG(BrightBlack),
+							Default(Text("●").FG(Green))),
+						Text(&svc.Name),
 						Space(),
-						Switch(&svc.Status).
+						IfOrd(&svc.CPU).Gt(20.0).
+							Then(Text(&svc.CPUStr).FG(Yellow).Width(6).Align(AlignRight)).
+							Else(Text(&svc.CPUStr).FG(BrightBlack).Width(6).Align(AlignRight)),
+						Text(&svc.Mem).FG(BrightBlack).Width(8).Align(AlignRight),
+						VBox.Width(11)(Switch(&svc.Status).
 							Case("warn", Text("⚠ degraded").FG(Yellow)).
-							Default(Text("  healthy").FG(BrightBlack)),
+							Default(Text("healthy").FG(BrightBlack))),
 					),
 					func() {},
 				)
@@ -121,12 +117,12 @@ func TestCommandCenterLayout(t *testing.T) {
 			Centered: true,
 			Child: VBox.Width(46).Border(BorderRounded).BorderFG(BrightBlack)(
 				HBox(
-					Switch(&selectedSvc.Status).
-						Case("warn", Text("○ ").FG(Yellow)).
-						Default(Text("● ").FG(Green)),
-					Switch(&selectedSvc.Status).
-						Case("warn", Text(&selectedSvc.Name).FG(Yellow).Bold()).
-						Default(Text(&selectedSvc.Name).FG(Green).Bold()),
+					If(&selectedSvc.Status).Eq("warn").
+						Then(Text("○ ").FG(Yellow)).
+						Else(Text("● ").FG(Green)),
+					If(&selectedSvc.Status).Eq("warn").
+						Then(Text(&selectedSvc.Name).FG(Yellow).Bold()).
+						Else(Text(&selectedSvc.Name).FG(Green).Bold()),
 					Space(),
 					Text("esc  close").FG(BrightBlack),
 				),

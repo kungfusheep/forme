@@ -1,4 +1,4 @@
-// commandcenter: twitter demo — dense live dashboard with service drill-down
+// commandcenter: dense live dashboard demo with service drill-down
 package main
 
 import (
@@ -32,17 +32,17 @@ func main() {
 	}
 
 	reqRate := "142 req/s"
-	p99Lat  := "24ms"
+	p99Lat := "24ms"
 	errRate := "0.4%"
-	clock   := time.Now().Format("15:04:05")
+	clock := time.Now().Format("15:04:05")
 
 	services := []service{
-		{Name: "api-gateway",      Status: "live", CPU: 12.0, CPUStr: " 12.0%", Mem: "240 MB"},
-		{Name: "postgres-primary", Status: "live", CPU:  4.2, CPUStr: "  4.2%", Mem: "1.2 GB"},
-		{Name: "redis-cluster",    Status: "warn", CPU: 28.1, CPUStr: " 28.1%", Mem: "380 MB"},
-		{Name: "worker-pool",      Status: "live", CPU:  8.7, CPUStr: "  8.7%", Mem: "190 MB"},
-		{Name: "cdn-edge",         Status: "live", CPU:  1.1, CPUStr: "  1.1%", Mem: " 42 MB"},
-		{Name: "auth-service",     Status: "live", CPU:  6.3, CPUStr: "  6.3%", Mem: "128 MB"},
+		{Name: "api-gateway", Status: "live", CPU: 7.2, CPUStr: "  7.2%", Mem: "240 MB"},
+		{Name: "postgres-primary", Status: "live", CPU: 3.8, CPUStr: "  3.8%", Mem: "1.2 GB"},
+		{Name: "redis-cluster", Status: "warn", CPU: 6.1, CPUStr: "  6.1%", Mem: "380 MB"},
+		{Name: "worker-pool", Status: "live", CPU: 4.9, CPUStr: "  4.9%", Mem: "190 MB"},
+		{Name: "cdn-edge", Status: "live", CPU: 1.1, CPUStr: "  1.1%", Mem: " 42 MB"},
+		{Name: "auth-service", Status: "live", CPU: 5.4, CPUStr: "  5.4%", Mem: "128 MB"},
 	}
 	for i := range services {
 		services[i].CPUHistory = make([]float64, 20)
@@ -59,98 +59,101 @@ func main() {
 
 	var selectedPtr *service
 	selectedSvc := services[0]
-	showModal    := false
-	restarting   := false
-	spinnerFrame := 0
+	showModal := false
+	restarting := false
+	restartPct := 0
 
+	pulseStyle := Style{}
+	var modalRouter *riffkey.Router
 	app, err := NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 	app.JumpKey("g")
 
-	app.SetView(
-		VBox(
-			HBox(
-				Text("● ").FG(Cyan),
-				Text("glyph control").FG(Cyan).Bold(),
+	// helper: metric panel with sparkline + label, grows equally in an HBox
+	metricPanel := func(title string, data *[]float64, label *string, col Color) any {
+		return VBox.Grow(1).Border(BorderRounded).BorderFG(BrightBlack).Title(title)(
+			Sparkline(data).FG(col),
+			Text(label).FG(BrightBlack),
+		)
+	}
+
+	svcList := FilterList(&services, func(s *service) string { return s.Name }).
+		Placeholder("filter...").
+		Render(func(svc *service) any {
+			return HBox.Gap(2)(
+				VBox.Width(1)(Switch(&svc.Status).
+					Case("warn", Text("○").FG(BrightBlack)).
+					Default(Text("●").FG(BrightBlack))),
+				Text(&svc.Name),
 				Space(),
-				Text("prod-us-east-1  ").FG(BrightBlack),
-				Text(&clock).FG(BrightBlack),
+				Text(&svc.CPUStr).FG(BrightBlack).Width(6).Align(AlignRight),
+				Text(&svc.Mem).FG(BrightBlack).Width(8).Align(AlignRight),
+				VBox.Width(11)(Switch(&svc.Status).
+					Case("warn", Text("degraded").FG(Yellow)).
+					Default(Text("healthy").FG(BrightBlack))),
+			)
+		}).
+		Handle("<Enter>", func(svc *service) {
+			selectedPtr = svc
+			selectedSvc = *svc
+			showModal = true
+			app.Push(modalRouter)
+			app.RequestRender()
+		}).
+		HandleClear("<Esc>", nil)
+
+	app.SetView(
+		VBox.MarginVH(1, 2)(
+			HBox.CascadeStyle(&Style{FG: BrightBlack})(
+				Text("● glyph control"),
+				Space(),
+				Text("prod-us-east-1  "),
+				Text(&clock),
 			),
-			HRule().FG(BrightBlack),
+			HRule().Char(BorderDouble.Horizontal).FG(BrightBlack),
 
 			HBox.Gap(1)(
-				VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("requests/s")(
-					Sparkline(&reqData).FG(Cyan),
-					Text(&reqRate).FG(BrightBlack),
+				metricPanel("requests/s", &reqData, &reqRate, Cyan),
+				metricPanel("p99 latency", &latData, &p99Lat, Green),
+				metricPanel("error rate", &errData, &errRate, Yellow),
+			),
+
+			HBox.Grow(1).Gap(1)(
+				VBox.Grow(1).Border(BorderRounded).BorderFG(BrightBlack).Title("services")(
+					HBox.Gap(2)(
+						Text("●").FG(BrightBlack),
+						Text("SERVICE").FG(BrightBlack),
+						Space(),
+						Text("CPU").FG(BrightBlack).Width(6).Align(AlignRight),
+						Text("MEM").FG(BrightBlack).Width(8).Align(AlignRight),
+						Text("STATUS").FG(BrightBlack).Width(11),
+					),
+					HRule().FG(BrightBlack).Extend(),
+					svcList,
 				),
-				VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("p99 latency")(
-					Sparkline(&latData).FG(Green),
-					Text(&p99Lat).FG(BrightBlack),
-				),
-				VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("error rate")(
-					Sparkline(&errData).FG(Yellow),
-					Text(&errRate).FG(BrightBlack),
+				VBox.Border(BorderRounded).BorderFG(BrightBlack).Title("log")(
+					ForEach(&logLines, func(l *string) any {
+						return Text(l).FG(BrightBlack)
+					}),
 				),
 			),
 
-			VBox.Grow(1).Border(BorderSingle).BorderFG(BrightBlack).Title("services")(
-				HBox.Gap(1)(
-					Text("  ").FG(BrightBlack),
-					Text(fmt.Sprintf("%-18s", "SERVICE")).FG(BrightBlack),
-					Text("   CPU").FG(BrightBlack),
-					Text("       MEM").FG(BrightBlack),
-					Space(),
-					Text("STATUS").FG(BrightBlack),
-				),
-				HRule().FG(BrightBlack),
-				ForEach(&services, func(svc *service) any {
-					return Jump(
-						HBox.Gap(1)(
-							Switch(&svc.Status).
-								Case("warn", Text("○").FG(Yellow)).
-								Default(Text("●").FG(Green)),
-							Switch(&svc.Status).
-								Case("warn", Text(&svc.Name).FG(Yellow)).
-								Default(Text(&svc.Name).FG(Green)),
-							IfOrd(&svc.CPU).Gt(20.0).
-								Then(Text(&svc.CPUStr).FG(Yellow)).
-								Else(Text(&svc.CPUStr).FG(BrightBlack)),
-							Text(&svc.Mem).FG(BrightBlack),
-							Space(),
-							Switch(&svc.Status).
-								Case("warn", Text("⚠ degraded").FG(Yellow)).
-								Default(Text("  healthy").FG(BrightBlack)),
-						),
-						func() {
-							selectedPtr = svc
-							selectedSvc = *svc
-							showModal = true
-							app.RequestRender()
-						},
-					)
-				}),
-				Space(),
-			),
-
-			VBox.Border(BorderSingle).BorderFG(BrightBlack).Title("log")(
-				ForEach(&logLines, func(l *string) any {
-					return Text(l).FG(BrightBlack)
-				}),
-			),
+			HRule().Char(BorderDouble.Horizontal).FG(BrightBlack),
+			Text("press [ctrl+c] to quit  [enter] to inspect  [r] restart (modal)").FG(BrightBlack),
 
 			If(&showModal).Then(OverlayNode{
 				Backdrop: true,
-				Centered: true,
-				Child: VBox.Width(46).Border(BorderRounded).BorderFG(BrightBlack)(
+				BG:       Black,
+				Child: VBox.Width(46).MarginVH(1, 2).Fill(Black)(
 					HBox(
-						Switch(&selectedSvc.Status).
-							Case("warn", Text("○ ").FG(Yellow)).
-							Default(Text("● ").FG(Green)),
-						Switch(&selectedSvc.Status).
-							Case("warn", Text(&selectedSvc.Name).FG(Yellow).Bold()).
-							Default(Text(&selectedSvc.Name).FG(Green).Bold()),
+						If(&selectedSvc.Status).Eq("warn").
+							Then(Text("○ ").FG(Yellow)).
+							Else(Text("● ").FG(Green)),
+						If(&selectedSvc.Status).Eq("warn").
+							Then(Text(&selectedSvc.Name).FG(Yellow).Bold()).
+							Else(Text(&selectedSvc.Name).FG(Green).Bold()),
 						Space(),
 						Text("esc  close").FG(BrightBlack),
 					),
@@ -166,45 +169,55 @@ func main() {
 						VBox(
 							IfOrd(&selectedSvc.CPU).Gt(20.0).
 								Then(Text(&selectedSvc.CPUStr).FG(Yellow)).
-								Else(Text(&selectedSvc.CPUStr).FG(Green)),
+								Else(Text(&selectedSvc.CPUStr).FG(White)),
 							Text(&selectedSvc.Mem).FG(White),
 						),
 					),
 					HRule().FG(BrightBlack),
 					If(&restarting).
-						Then(HBox(Spinner(&spinnerFrame).FG(Cyan), Text("  restarting...").FG(BrightBlack))).
+						Then(HBox.Gap(1)(Text("restarting").FG(BrightBlack), HBox.Grow(1).CascadeStyle(&pulseStyle)(Progress(&restartPct)))).
 						Else(Text("[r] restart service").FG(BrightBlack)),
 				),
 			}),
 		),
 	)
 
-	app.Handle("q", app.Stop)
+
+	app.Handle("<C-c>", func(_ riffkey.Match) { app.Stop() })
 
 	app.Handle("<Escape>", func(_ riffkey.Match) {
 		if showModal {
 			showModal = false
 			restarting = false
+			app.Pop()
 			app.RequestRender()
 		}
 	})
 
-	app.Handle("r", func(_ riffkey.Match) {
-		if !showModal || restarting {
+	modalRouter = riffkey.NewRouter()
+	modalRouter.Handle("r", func(_ riffkey.Match) {
+		if restarting {
 			return
 		}
 		restarting = true
+		restartPct = 0
 		go func() {
-			for i := 0; i < 10; i++ {
-				time.Sleep(200 * time.Millisecond)
-				spinnerFrame++
+			for i := 1; i <= 50; i++ {
+				time.Sleep(40 * time.Millisecond)
+				restartPct = i * 2
+				t := float64(restartPct) / 100.0
+				b := math.Pow(t, 1.5)
+				pulseStyle.FG = RGB(uint8(30+b*80), uint8(120+b*100), uint8(110+b*90))
 				app.RequestRender()
 			}
 			restarting = false
+			restartPct = 0
 			selectedSvc.Status = "live"
 			if selectedPtr != nil {
 				selectedPtr.Status = "live"
 			}
+			showModal = false
+			app.Pop()
 			app.RequestRender()
 		}()
 	})
@@ -217,7 +230,7 @@ func main() {
 
 			rps := 80 + rand.Float64()*60 + 30*math.Sin(t*0.2)
 			lat := 18 + rand.Float64()*12 + 6*math.Sin(t*0.15)
-			er  := rand.Float64() * 3
+			er := rand.Float64() * 3
 
 			copy(reqData, reqData[1:])
 			reqData[len(reqData)-1] = rps
@@ -227,9 +240,9 @@ func main() {
 			errData[len(errData)-1] = er
 
 			reqRate = fmt.Sprintf("%.0f req/s", rps)
-			p99Lat  = fmt.Sprintf("%.0fms", lat)
+			p99Lat = fmt.Sprintf("%.0fms", lat)
 			errRate = fmt.Sprintf("%.1f%%", er)
-			clock   = time.Now().Format("15:04:05")
+			clock = time.Now().Format("15:04:05")
 
 			for i := range services {
 				services[i].CPU = math.Max(0.5, services[i].CPU+rand.Float64()*2-1)
@@ -237,6 +250,7 @@ func main() {
 				copy(services[i].CPUHistory, services[i].CPUHistory[1:])
 				services[i].CPUHistory[len(services[i].CPUHistory)-1] = services[i].CPU
 			}
+			svcList.Refresh()
 
 			line := fmt.Sprintf("%s  %-6s %-22s %d  %dms",
 				clock,

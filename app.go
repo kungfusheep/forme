@@ -849,17 +849,21 @@ func (a *App) run(startView string) error {
 		defer a.screen.ExitRawMode()
 	}
 
-	// detect terminal's default colours for post-processing
-	a.defaultFG, a.defaultBG = a.screen.QueryDefaultColors()
-
 	// Handle resize
 	go a.handleResize()
 
 	// Handle async render requests (from timers, data updates, etc)
 	go a.handleRenderRequests()
 
-	// Initial render
+	// Render first so the screen is populated before we block on the color query.
+	// This eliminates the blank-screen flash between alternate buffer switch and first frame.
 	a.render()
+
+	// Detect terminal's default colours for post-processing.
+	// Runs after first render so the blank gap is gone; runs before input.Run so
+	// there's no race on stdin.
+	a.defaultFG, a.defaultBG = a.screen.QueryDefaultColors()
+	a.RequestRender()
 
 	// Run riffkey input loop
 	// afterDispatch is called after every key - perfect for rendering

@@ -28,8 +28,8 @@ func TestStart_firstApp(t *testing.T) {
 		),
 	)
 
-	app.Handle("up", func() { count++ })
-	app.Handle("down", func() { count-- })
+	app.Handle("<Up>", func() { count++ })
+	app.Handle("<Down>", func() { count-- })
 	app.Handle("q", app.Stop)
 	_ = app
 }

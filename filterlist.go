@@ -315,6 +315,53 @@ func (fl *FilterListC[T]) Active() bool {
 	return fl.filter.Active()
 }
 
+// SetQuery sets the filter query directly and syncs the list.
+func (fl *FilterListC[T]) SetQuery(q string) {
+	fl.input.SetValue(q)
+	fl.sync()
+}
+
+// Query returns the current filter query string.
+func (fl *FilterListC[T]) Query() string {
+	return fl.input.Value()
+}
+
+// DeleteCharBefore removes the last character from the filter query.
+func (fl *FilterListC[T]) DeleteCharBefore() {
+	v := fl.input.Value()
+	if len(v) > 0 {
+		runes := []rune(v)
+		fl.input.SetValue(string(runes[:len(runes)-1]))
+		fl.sync()
+	}
+}
+
+// SelectNext moves the list selection down by one.
+func (fl *FilterListC[T]) SelectNext() {
+	fl.list.Down(nil)
+}
+
+// SelectPrev moves the list selection up by one.
+func (fl *FilterListC[T]) SelectPrev() {
+	fl.list.Up(nil)
+}
+
+// PageDown moves the list selection down by a page.
+func (fl *FilterListC[T]) PageDown() {
+	fl.list.PageDown(nil)
+}
+
+// PageUp moves the list selection up by a page.
+func (fl *FilterListC[T]) PageUp() {
+	fl.list.PageUp(nil)
+}
+
+// Refresh re-evaluates the filter against the current source slice contents.
+// Call this after mutating source items in-place (e.g. live data updates).
+func (fl *FilterListC[T]) Refresh() {
+	fl.refresh()
+}
+
 // Filter returns the underlying Filter for direct access.
 func (fl *FilterListC[T]) Filter() *Filter[T] {
 	return fl.filter

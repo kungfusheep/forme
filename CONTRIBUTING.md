@@ -34,15 +34,14 @@ Given the performance focus of glyph, it's recommended you run benchmarks before
 ## Code style
 
 Standard Go.
-`gofmt` formatted.
-No new external dependencies without discussion. 
-We do use dot imports when declaring glyph views for readability, but otherwise avoid them.
-If in doubt, follow the style of existing code.
+`gofmt` formatted.  
+No new external dependencies without discussion.  
+We do use dot imports when declaring glyph views for readability, but otherwise avoid them.  
+If in doubt, follow the style of existing code.  
 
 ## Reporting issues
 
 Use [GitHub Issues](https://github.com/kungfusheep/glyph/issues). Include Go version, OS, terminal emulator, and a minimal reproduction.
 
-You can run `go run ./cmd/dr` to get an issue-friendly diagnostic report. 
+You can run `go run github.com/kungfusheep/glyph/cmd/dr@latest` to get an issue-friendly diagnostic report. 
 
-    

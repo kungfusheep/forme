@@ -147,7 +147,6 @@ func (e *ConditionEval[T]) getThen() any { return e.then }
 func (e *ConditionEval[T]) getElse() any { return e.els }
 
 func (e *ConditionEval[T]) setOffset(offset uintptr) { e.offset = offset }
-func (e *ConditionEval[T]) getOffset() uintptr       { return e.offset }
 func (e *ConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.Pointer(e.ptr)) }
 
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
@@ -205,7 +204,6 @@ func (e *OrdConditionEval[T]) getThen() any { return e.then }
 func (e *OrdConditionEval[T]) getElse() any { return e.els }
 
 func (e *OrdConditionEval[T]) setOffset(offset uintptr) { e.offset = offset }
-func (e *OrdConditionEval[T]) getOffset() uintptr       { return e.offset }
 func (e *OrdConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.Pointer(e.ptr)) }
 
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
@@ -221,8 +219,7 @@ type conditionNode interface {
 	evaluate() bool
 	evaluateWithBase(base unsafe.Pointer) bool // for ForEach
 	setOffset(offset uintptr)                  // set offset for ForEach
-	getOffset() uintptr
-	getPtrAddr() uintptr // get pointer address for offset calculation
+	getPtrAddr() uintptr                       // get pointer address for offset calculation
 	getThen() any
 	getElse() any
 }
