@@ -18,6 +18,11 @@ var (
 	lastLayoutTime  time.Duration
 	lastRenderTime  time.Duration
 	lastFlushTime   time.Duration
+
+	// fine-grained post-processing phase timings (only populated when DebugTiming=true)
+	lastEffectTime time.Duration // resolveColor16 + all Effect passes
+	lastDiffTime   time.Duration // Flush(): diff + escape-sequence building
+	lastWriteTime  time.Duration // FlushBuffer(): Write() syscall to terminal
 )
 
 func init() {
@@ -84,7 +89,7 @@ type App struct {
 	jumpStyle JumpStyle
 
 	// Post-processing pipeline
-	postProcess   []PostProcess
+	postProcess   []Effect
 	frameCount    uint64
 	startTime     time.Time
 	lastFrameTime time.Time
@@ -581,26 +586,26 @@ func (a *App) OnAfterRender(fn func()) {
 	a.onAfterRender = fn
 }
 
-// Template returns the current template for debugging.
-// Use with Template().DebugDump("") to inspect the op tree.
-func (a *App) Template() *Template {
-	return a.template
-}
-
-// AddPostProcess appends a post-processing pass to the pipeline.
+// AddEffect appends a post-processing pass to the pipeline.
 // Passes run in order after template rendering, before screen flush.
-// Closures captured by the pass act as shader uniforms. Mutate them to
+// Closures captured by the pass act as shader uniforms — mutate them to
 // change behaviour next frame.
-func (a *App) AddPostProcess(pp PostProcess) *App {
+func (a *App) AddEffect(pp Effect) *App {
 	a.postProcess = append(a.postProcess, pp)
 	return a
 }
 
-// SetPostProcess replaces the entire post-processing pipeline.
+// SetEffect replaces the entire post-processing pipeline.
 // Call with no arguments to clear all passes.
-func (a *App) SetPostProcess(passes ...PostProcess) *App {
+func (a *App) SetEffect(passes ...Effect) *App {
 	a.postProcess = passes
 	return a
+}
+
+// Template returns the current template for debugging.
+// Use with Template().DebugDump("") to inspect the op tree.
+func (a *App) Template() *Template {
+	return a.template
 }
 
 // RequestRender marks that a render is needed.
@@ -712,6 +717,11 @@ func (a *App) render() {
 	treeEffects := activeTmpl.ScreenEffects()
 	a.screen.forceRGB = len(treeEffects) > 0 || len(a.postProcess) > 0
 	if a.screen.forceRGB {
+		var tEffect time.Time
+		if DebugTiming {
+			tEffect = time.Now()
+		}
+
 		// resolve Color16 cells to detected palette RGB before effects run
 		resolveColor16(buf, size.Width, int(renderHeight))
 
@@ -735,12 +745,16 @@ func (a *App) render() {
 			DefaultBG: a.defaultBG,
 		}
 		for _, pp := range treeEffects {
-			pp(buf, ppCtx)
+			pp.Apply(buf, ppCtx)
 		}
 		for _, pp := range a.postProcess {
-			pp(buf, ppCtx)
+			pp.Apply(buf, ppCtx)
 		}
 		a.frameCount++
+
+		if DebugTiming {
+			lastEffectTime = time.Since(tEffect)
+		}
 	}
 
 	// Copy to screen's back buffer for flush
@@ -752,21 +766,34 @@ func (a *App) render() {
 		a.pool.Swap() // Queue async clear
 	} else {
 		// Fullscreen mode
+		var tDiff time.Time
+		if DebugTiming {
+			tDiff = time.Now()
+		}
 		if DebugFullRedraw {
-			// Full redraw mode - for debugging rendering issues
 			a.screen.FlushFull()
 		} else {
-			// Normal diff-based update
-			a.screen.Flush() // Builds buffer but doesn't write
+			a.screen.Flush() // diff + escape-sequence building
 		}
-		a.pool.Swap() // Queue async clear
+		if DebugTiming {
+			lastDiffTime = time.Since(tDiff)
+		}
+		a.pool.Swap()
 
 		// Add cursor ops to same buffer - one syscall for everything
 		if a.cursorColorSet {
 			a.screen.BufferCursorColor(a.cursorColor)
 		}
 		a.screen.BufferCursor(a.cursorX, a.cursorY, a.cursorVisible, a.cursorShape)
-		a.screen.FlushBuffer() // Single syscall for content + cursor
+
+		var tWrite time.Time
+		if DebugTiming {
+			tWrite = time.Now()
+		}
+		a.screen.FlushBuffer() // single Write() syscall to terminal
+		if DebugTiming {
+			lastWriteTime = time.Since(tWrite)
+		}
 	}
 
 	if DebugTiming {
@@ -782,11 +809,11 @@ func (a *App) copyToScreen(src *Buffer) {
 
 // TimingString returns a formatted timing string.
 func TimingString() string {
-	return fmt.Sprintf("build:%v layout:%v render:%v flush:%v",
-		lastBuildTime.Round(time.Microsecond),
-		lastLayoutTime.Round(time.Microsecond),
+	return fmt.Sprintf("render:%v effect:%v diff:%v write:%v",
 		lastRenderTime.Round(time.Microsecond),
-		lastFlushTime.Round(time.Microsecond))
+		lastEffectTime.Round(time.Microsecond),
+		lastDiffTime.Round(time.Microsecond),
+		lastWriteTime.Round(time.Microsecond))
 }
 
 // Timings holds timing data for the last frame.
@@ -795,6 +822,11 @@ type Timings struct {
 	LayoutUs float64 // Layout time in microseconds
 	RenderUs float64 // Render time in microseconds
 	FlushUs  float64 // Flush time in microseconds
+
+	// fine-grained post-processing breakdown (only valid when effects are active)
+	EffectUs float64 // resolveColor16 + all Effect passes (pure Go)
+	DiffUs   float64 // Flush(): diff comparison + escape-sequence building (pure Go)
+	WriteUs  float64 // FlushBuffer(): Write() syscall — time spent waiting on terminal
 }
 
 // GetTimings returns the timing data for the last frame.
@@ -804,6 +836,9 @@ func GetTimings() Timings {
 		LayoutUs: float64(lastLayoutTime.Microseconds()),
 		RenderUs: float64(lastRenderTime.Microseconds()),
 		FlushUs:  float64(lastFlushTime.Microseconds()),
+		EffectUs: float64(lastEffectTime.Microseconds()),
+		DiffUs:   float64(lastDiffTime.Microseconds()),
+		WriteUs:  float64(lastWriteTime.Microseconds()),
 	}
 }
 

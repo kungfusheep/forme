@@ -71,6 +71,11 @@ type Rect struct {
 	X, Y, W, H int
 }
 
+// NodeRef holds a node's rendered screen bounds, populated each frame after layout.
+// Declare one, attach it to a node with .NodeRef(), then read it in effects or
+// anywhere that needs to know where something actually rendered.
+type NodeRef = Rect
+
 // Box is a container with a custom layout function.
 // Use this when HBox/VBox don't fit your needs.
 type Box struct {
@@ -108,7 +113,7 @@ type Template struct {
 	pendingOverlays []pendingOverlay
 
 	// Pending screen effects collected from tree (cleared each frame)
-	pendingScreenEffects []PostProcess
+	pendingScreenEffects []Effect
 
 	// scratch buffers for per-frame reuse (avoid nil-slice allocs in hot paths)
 	flexScratchIdx  []int16   // flex child indices (shared by VBox + HBox phases)
@@ -205,6 +210,7 @@ type Op struct {
 	CascadeStyle *Style      // style inherited by children (pointer for dynamic themes)
 	Fill         Color       // container fill color (fills entire area)
 	Margin       [4]int16    // outer margin: top, right, bottom, left
+	NodeRef      *NodeRef    // if set, populated with rendered screen bounds each frame
 
 	// Control flow
 	CondPtr  *bool         // for If (simple bool pointer)
@@ -361,7 +367,7 @@ type Op struct {
 	OverlayChildTmpl   *Template // compiled child content
 
 	// ScreenEffect
-	ScreenEffectFn PostProcess // full-screen post-process function
+	ScreenEffectFns []Effect // full-screen post-process functions
 }
 
 // margin helpers (avoid repeating [0]/[1]/[2]/[3] everywhere)
@@ -531,7 +537,7 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case OverlayNode:
 		return t.compileOverlay(v, parent, depth)
 	case ScreenEffectNode:
-		op := Op{Kind: OpScreenEffect, Parent: parent, ScreenEffectFn: v.Effect}
+		op := Op{Kind: OpScreenEffect, Parent: parent, ScreenEffectFns: v.Effects}
 		return t.addOp(op, depth)
 	case Component:
 		return t.compile(v.Build(), parent, depth, elemBase, elemSize)
@@ -1473,7 +1479,7 @@ func (t *Template) compileForEach(v ForEachNode, parent int16, depth int) int16 
 // ============================================================================
 
 func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	return t.compileContainer(
+	idx := t.compileContainer(
 		v.children,
 		v.gap,
 		false, // isRow
@@ -1490,10 +1496,14 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 		elemBase,
 		elemSize,
 	)
+	if v.nodeRef != nil {
+		t.ops[idx].NodeRef = v.nodeRef
+	}
+	return idx
 }
 
 func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
-	return t.compileContainer(
+	idx := t.compileContainer(
 		v.children,
 		v.gap,
 		true, // isRow
@@ -1510,6 +1520,10 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 		elemBase,
 		elemSize,
 	)
+	if v.nodeRef != nil {
+		t.ops[idx].NodeRef = v.nodeRef
+	}
+	return idx
 }
 
 func (t *Template) compileTextC(v TextC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
@@ -4172,9 +4186,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		t.pendingOverlays = append(t.pendingOverlays, pendingOverlay{op: op})
 
 	case OpScreenEffect:
-		if op.ScreenEffectFn != nil {
-			t.pendingScreenEffects = append(t.pendingScreenEffects, op.ScreenEffectFn)
-		}
+		t.pendingScreenEffects = append(t.pendingScreenEffects, op.ScreenEffectFns...)
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -4218,10 +4230,19 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		boxW := geom.W - op.marginH()
 		boxH := geom.H - op.marginV()
 
+		if op.NodeRef != nil {
+			op.NodeRef.X = int(boxX)
+			op.NodeRef.Y = int(boxY)
+			op.NodeRef.W = int(boxW)
+			op.NodeRef.H = int(boxH)
+		}
+
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := t.inheritedFill
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
 			t.inheritedFill = op.CascadeStyle.Fill
+		} else if op.Fill.Mode != ColorDefault {
+			t.inheritedFill = op.Fill
 		}
 
 		// Update inherited style if this container sets one (before title rendering)
@@ -4233,7 +4254,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := t.inheritedFill
 		if op.Fill.Mode != ColorDefault {
-			fillColor = op.Fill // direct fill doesn't cascade, just fills this container
+			fillColor = op.Fill
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
@@ -4613,9 +4634,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		sub.pendingOverlays = append(sub.pendingOverlays, pendingOverlay{op: op})
 
 	case OpScreenEffect:
-		if op.ScreenEffectFn != nil {
-			sub.pendingScreenEffects = append(sub.pendingScreenEffects, op.ScreenEffectFn)
-		}
+		sub.pendingScreenEffects = append(sub.pendingScreenEffects, op.ScreenEffectFns...)
 
 	case OpCustom:
 		// Custom renderer draws itself
@@ -4663,6 +4682,8 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		oldInheritedFill := sub.inheritedFill
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
 			sub.inheritedFill = op.CascadeStyle.Fill
+		} else if op.Fill.Mode != ColorDefault {
+			sub.inheritedFill = op.Fill
 		}
 
 		// Update inherited style if this container sets one (before title rendering)
@@ -4674,7 +4695,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := sub.inheritedFill
 		if op.Fill.Mode != ColorDefault {
-			fillColor = op.Fill // direct fill doesn't cascade, just fills this container
+			fillColor = op.Fill
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
@@ -5216,7 +5237,7 @@ func (t *Template) renderTextInput(buf *Buffer, op *Op, geom *Geom, absX, absY i
 
 // ScreenEffects returns the post-processing passes collected from the tree
 // during the most recent Execute. The returned slice is reused between frames.
-func (t *Template) ScreenEffects() []PostProcess {
+func (t *Template) ScreenEffects() []Effect {
 	return t.pendingScreenEffects
 }
 
@@ -5309,10 +5330,15 @@ func (t *Template) renderOverlay(buf *Buffer, op *Op, screenW, screenH int16) {
 
 	// Render the overlay content
 	// Re-layout with actual available space
+	childTmpl.pendingScreenEffects = childTmpl.pendingScreenEffects[:0]
 	childTmpl.distributeWidths(overlayW, nil)
 	childTmpl.layout(overlayH)
 	childTmpl.distributeFlexGrow(overlayH)
 	childTmpl.render(buf, posX, posY, overlayW)
+
+	// bubble screen effects declared inside overlay up to the parent so they
+	// run as full-screen passes after all content (including this overlay) is rendered
+	t.pendingScreenEffects = append(t.pendingScreenEffects, childTmpl.pendingScreenEffects...)
 }
 
 func (t *Template) renderTabs(buf *Buffer, op *Op, geom *Geom, absX, absY int16) {

@@ -67,6 +67,7 @@ type VBoxC struct {
 	flexGrow     float32
 	fitContent   bool
 	margin       [4]int16 // top, right, bottom, left
+	nodeRef      *NodeRef
 	children     []any
 }
 
@@ -217,6 +218,17 @@ func (f VBoxFn) MarginTRBL(top, right, bottom, left int16) VBoxFn {
 	}
 }
 
+// NodeRef attaches a reference that is populated with this node's rendered
+// screen bounds each frame. Use it in effects or anywhere that needs to know
+// where a node actually rendered.
+func (f VBoxFn) NodeRef(ref *NodeRef) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.nodeRef = ref
+		return v
+	}
+}
+
 // VBox arranges children in a vertical stack.
 // Use method chaining to configure before calling with children:
 //
@@ -243,6 +255,7 @@ type HBoxC struct {
 	flexGrow     float32
 	fitContent   bool
 	margin       [4]int16 // top, right, bottom, left
+	nodeRef      *NodeRef
 	children     []any
 }
 
@@ -389,6 +402,17 @@ func (f HBoxFn) MarginTRBL(top, right, bottom, left int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
 		h.margin = [4]int16{top, right, bottom, left}
+		return h
+	}
+}
+
+// NodeRef attaches a reference that is populated with this node's rendered
+// screen bounds each frame. Use it in effects or anywhere that needs to know
+// where a node actually rendered.
+func (f HBoxFn) NodeRef(ref *NodeRef) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.nodeRef = ref
 		return h
 	}
 }

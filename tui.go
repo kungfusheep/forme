@@ -126,7 +126,7 @@ func rgbToBasic16(r, g, b uint8) (uint8, bool) {
 	return 0, false
 }
 
-// xterm 256-colour palette: [0..15] basic, [16..231] 6x6x6 cube, [232..255] greyscale
+// xterm 256-colour palette: [0..15] basic, [16..231] 6×6×6 cube, [232..255] greyscale
 var palette256RGB [256][3]uint8
 
 func init() {
@@ -134,7 +134,7 @@ func init() {
 	for i := range 16 {
 		palette256RGB[i] = basic16RGB[i]
 	}
-	// 6x6x6 colour cube (indices 16-231)
+	// 6×6×6 colour cube (indices 16-231)
 	levels := [6]uint8{0, 95, 135, 175, 215, 255}
 	for r := range 6 {
 		for g := range 6 {

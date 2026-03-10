@@ -796,3 +796,209 @@ func ExampleFormFn_mixedControls() {
 		Field("Role", Radio(&role, "Viewer", "Editor", "Admin")),
 	)
 }
+
+// ---------------------------------------------------------------------------
+// Screen effects
+// ---------------------------------------------------------------------------
+
+// Single post-processing effect.
+// Place ScreenEffect anywhere in the view tree — it applies to the whole screen.
+func ExampleScreenEffect() {
+	ScreenEffect(SEVignette())
+}
+
+// Stacked effects.
+// Effects apply in order, left to right — each sees the output of the previous.
+func ExampleScreenEffect_multiple() {
+	ScreenEffect(
+		SEDesaturate().Strength(0.5),
+		SETint(Hex(0xFF6600)).Strength(0.1),
+	)
+}
+
+// Conditional effect.
+// Wrap in If() to toggle reactively based on state.
+func ExampleScreenEffect_conditional() {
+	dimmed := false
+	If(&dimmed).Then(ScreenEffect(SEDimAll()))
+}
+
+// Per-cell transform.
+// The fragment shader equivalent — define per-cell logic, iteration is handled.
+func ExampleEachCell() {
+	EachCell(func(x, y int, c Cell, ctx PostContext) Cell {
+		if y%2 == 0 {
+			c.Style.Attr = c.Style.Attr.With(AttrDim)
+		}
+		return c
+	})
+}
+
+// Blend mode wrapper.
+// Snapshots the buffer, runs the effect, then blends the result back using a Photoshop-style mode.
+func ExampleWithBlend() {
+	ScreenEffect(WithBlend(BlendScreen, SEFire()))
+}
+
+// Plasma through overlay blend.
+// Combine blend modes with quantization for efficient animated effects.
+func ExampleWithBlend_quantized() {
+	ScreenEffect(WithQuantize(32, WithBlend(BlendOverlay, SEPlasma())))
+}
+
+// Quantize wrapper.
+// Snap colours to step-size buckets after an effect runs. Use step=32 to cut animation bytes ~40%.
+func ExampleWithQuantize() {
+	ScreenEffect(WithQuantize(32, SEPlasma()))
+}
+
+// Manual colour blend.
+// BlendColor combines two colours with a Photoshop-style mode — useful inside custom effects.
+func ExampleBlendColor() {
+	base := RGB(100, 150, 200)
+	top := RGB(255, 100, 50)
+	_ = BlendColor(base, top, BlendScreen)
+}
+
+// Dim entire screen uniformly.
+func ExampleSEDimAll() {
+	ScreenEffect(SEDimAll())
+}
+
+// Warm colour grade.
+func ExampleSETint() {
+	ScreenEffect(SETint(Hex(0xFF6600)).Strength(0.15))
+}
+
+// Tint that spares a focused panel.
+func ExampleSETint_dodge() {
+	var panel NodeRef
+	ScreenEffect(SETint(Hex(0x0066FF)).Strength(0.3).Dodge(&panel))
+}
+
+// Cinematic edge darkening.
+func ExampleSEVignette() {
+	ScreenEffect(SEVignette().Strength(0.7))
+}
+
+// Vignette centred on a panel.
+func ExampleSEVignette_focus() {
+	var panel NodeRef
+	ScreenEffect(SEVignette().Focus(&panel))
+}
+
+// Vignette that skips a panel.
+func ExampleSEVignette_dodge() {
+	var panel NodeRef
+	ScreenEffect(SEVignette().Dodge(&panel))
+}
+
+// Smooth vignette without quantization.
+func ExampleSEVignette_smooth() {
+	ScreenEffect(SEVignette().Smooth().Strength(0.6))
+}
+
+// Wash out colour.
+func ExampleSEDesaturate() {
+	ScreenEffect(SEDesaturate().Strength(0.8))
+}
+
+// Colour spotlight — grey world, one panel in colour.
+func ExampleSEDesaturate_dodge() {
+	var panel NodeRef
+	ScreenEffect(SEDesaturate().Dodge(&panel))
+}
+
+// Punch up contrast.
+func ExampleSEContrast() {
+	ScreenEffect(SEContrast().Strength(2.0))
+}
+
+// Contrast that spares a panel.
+func ExampleSEContrast_dodge() {
+	var panel NodeRef
+	ScreenEffect(SEContrast().Dodge(&panel))
+}
+
+// Dim everything outside a node.
+func ExampleSEFocusDim() {
+	var panel NodeRef
+	ScreenEffect(SEFocusDim(&panel))
+}
+
+// Frosted glass behind a modal.
+func ExampleSEFrost() {
+	var modal NodeRef
+	ScreenEffect(SEFrost().Dodge(&modal))
+}
+
+// Frost only a specific region.
+func ExampleSEFrost_focus() {
+	var sidebar NodeRef
+	ScreenEffect(SEFrost().Focus(&sidebar))
+}
+
+// Remap colours through a three-stop gradient.
+func ExampleSEGradientMap() {
+	ScreenEffect(SEGradientMap(
+		RGB(0, 0, 50),      // shadows → deep blue
+		RGB(0, 128, 128),   // midtones → teal
+		RGB(200, 255, 200), // highlights → mint
+	))
+}
+
+// Directional drop shadow behind a panel.
+func ExampleSEDropShadow() {
+	var panel NodeRef
+	ScreenEffect(SEDropShadow().Focus(&panel))
+}
+
+// Symmetric glow — offset(0,0) centres the shadow source on the panel.
+func ExampleSEDropShadow_glow() {
+	var panel NodeRef
+	ScreenEffect(SEDropShadow().Focus(&panel).Offset(0, 0).Strength(0.4).Radius(12))
+}
+
+// Colour-sampling glow that reads the panel's edge colours and spills them outward.
+func ExampleSEGlow() {
+	var panel NodeRef
+	ScreenEffect(SEGlow().Focus(&panel))
+}
+
+// Bloom around bright cells.
+func ExampleSEBloom() {
+	ScreenEffect(SEBloom().Threshold(0.6).Strength(0.3))
+}
+
+// Bloom constrained to a panel.
+func ExampleSEBloom_focus() {
+	var panel NodeRef
+	ScreenEffect(SEBloom().Focus(&panel))
+}
+
+// CRT scanlines + vignette + phosphor warmth.
+func ExampleSECRT() {
+	ScreenEffect(SECRT())
+}
+
+// Green phosphor monochrome.
+func ExampleSEMonochrome() {
+	ScreenEffect(SEMonochrome(RGB(0, 255, 80)))
+}
+
+// Monochrome with a colour spotlight.
+func ExampleSEMonochrome_dodge() {
+	var panel NodeRef
+	ScreenEffect(SEMonochrome(RGB(0, 255, 80)).Dodge(&panel))
+}
+
+// Fade top and bottom rows toward black.
+func ExampleSEFadeRows() {
+	ScreenEffect(SEFadeRows(5, 5, Color{Mode: ColorRGB}))
+}
+
+// Snap colours to 32-level steps.
+// Reduces escape output for animated effects with negligible visible banding.
+func ExampleSEQuantize() {
+	ScreenEffect(SEQuantize(32))
+}

@@ -33,9 +33,10 @@ type Screen struct {
 	sigChan    chan os.Signal
 
 	// Rendering state
-	lastStyle Style        // Last style we emitted (for optimization)
-	buf       bytes.Buffer // Reusable buffer for building output
-	forceRGB  bool         // when set, emit all colours as true color RGB
+	lastStyle  Style        // Last style we emitted (for optimization)
+	buf        bytes.Buffer // Reusable buffer for building output
+	forceRGB   bool         // emit all colours as true color RGB
+	syncOutput bool         // wrap frames with DEC sync output markers (\e[?2026h/l)
 
 	// Synchronization - protects buffer access during resize
 	mu sync.Mutex
@@ -151,6 +152,7 @@ func (s *Screen) EnterRawMode() error {
 	s.writeString("\x1b[H")      // Move cursor to home position
 	s.writeString("\x1b[?25l")   // Hide cursor
 	s.writeString("\x1b[?2004h") // Enable bracketed paste mode
+	s.syncOutput = true           // wrap frames with synchronized output (reduces tearing)
 
 	return nil
 }
@@ -332,6 +334,9 @@ func (s *Screen) Flush() {
 	defer s.mu.Unlock()
 
 	s.buf.Reset()
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026h") // begin synchronized update
+	}
 
 	dirtyCount := 0
 	changedCount := 0
@@ -429,6 +434,9 @@ func (s *Screen) FlushFull() {
 	defer s.mu.Unlock()
 
 	s.buf.Reset()
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026h")
+	}
 
 	// Clear screen and move to home
 	s.buf.WriteString("\x1b[2J\x1b[H")
@@ -448,6 +456,9 @@ func (s *Screen) FlushFull() {
 	s.buf.WriteString("\x1b[0m")
 	s.lastStyle = DefaultStyle()
 
+	if s.syncOutput {
+		s.buf.WriteString("\x1b[?2026l")
+	}
 	s.writer.Write(s.buf.Bytes())
 }
 
@@ -565,20 +576,17 @@ func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
 	}
 	switch c.Mode {
 	case ColorDefault:
-		// Use default color (39 for fg, 49 for bg)
 		if fg {
 			buf.WriteString(";39")
 		} else {
 			buf.WriteString(";49")
 		}
 	case Color16:
-		// Basic 16 colors
 		base := 30
 		if !fg {
 			base = 40
 		}
 		if c.Index >= 8 {
-			// Bright colors
 			base += 60
 			buf.WriteByte(';')
 			s.writeIntToBuf(base + int(c.Index-8))
@@ -587,7 +595,6 @@ func (s *Screen) writeColor(buf *bytes.Buffer, c Color, fg bool) {
 			s.writeIntToBuf(base + int(c.Index))
 		}
 	case Color256:
-		// 256 color palette
 		if fg {
 			buf.WriteString(";38;5;")
 		} else {
@@ -690,6 +697,9 @@ func hexDigit(n uint8) byte {
 // FlushBuffer writes the accumulated buffer to the terminal in one syscall.
 func (s *Screen) FlushBuffer() {
 	if s.buf.Len() > 0 {
+		if s.syncOutput {
+			s.buf.WriteString("\x1b[?2026l") // end synchronized update
+		}
 		s.writer.Write(s.buf.Bytes())
 	}
 }
