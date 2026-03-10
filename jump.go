@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 // JumpStyle configures the appearance of jump labels.
 type JumpStyle struct {

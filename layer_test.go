@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"testing"
@@ -206,6 +206,53 @@ func TestLayerBlit(t *testing.T) {
 			t.Errorf("line 3: got %q, want %q", got, "After")
 		}
 	})
+
+	t.Run("layer inside bordered container", func(t *testing.T) {
+		layer := NewLayer()
+		layerBuf := NewBuffer(30, 5)
+		for y := 0; y < 5; y++ {
+			layerBuf.WriteStringFast(0, y, string(rune('A'+y))+"----line", Style{}, 30)
+		}
+		layer.SetBuffer(layerBuf)
+
+		screen := NewBuffer(40, 10)
+
+		view := VBoxNode{Children: []any{
+			VBoxNode{
+				Title: "Content",
+				Children: []any{
+					LayerViewNode{Layer: layer, ViewHeight: 3},
+				},
+			}.Border(BorderSingle),
+		}}
+
+		tmpl := Build(view)
+		tmpl.Execute(screen, 40, 10)
+
+		line0 := screen.GetLine(0)
+		if !contains(line0, "Content") {
+			t.Errorf("line 0 should have title: got %q", line0)
+		}
+
+		line1 := screen.GetLine(1)
+		if !contains(line1, "A----line") {
+			t.Errorf("line 1 should contain layer content: got %q", line1)
+		}
+
+		line4 := screen.GetLine(4)
+		if !contains(line4, "└") && !contains(line4, "─") {
+			t.Errorf("line 4 should have bottom border: got %q", line4)
+		}
+	})
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLayerScrollBounds(t *testing.T) {

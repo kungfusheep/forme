@@ -1,5 +1,5 @@
-// Package forme provides a high-performance terminal UI framework.
-package forme
+// Package glyph provides a terminal UI framework for Go.
+package glyph
 
 import "unsafe"
 
@@ -221,7 +221,7 @@ type Style struct {
 	Attr      Attribute
 	Transform TextTransform // text case transformation (uppercase, lowercase, etc.)
 	Align     Align         // text alignment within allocated width
-	margin    [4]int16      // top, right, bottom, left — non-cascading
+	margin    [4]int16      // top, right, bottom, left (non-cascading)
 }
 
 // DefaultStyle returns a style with default colours and no attributes.
@@ -304,8 +304,13 @@ func (s Style) Capitalize() Style {
 	return s
 }
 
-func (s Style) Margin(all int16) Style            { s.margin = [4]int16{all, all, all, all}; return s }
-func (s Style) MarginVH(v, h int16) Style         { s.margin = [4]int16{v, h, v, h}; return s }
+// Margin sets uniform margin on all sides.
+func (s Style) Margin(all int16) Style { s.margin = [4]int16{all, all, all, all}; return s }
+
+// MarginVH sets vertical and horizontal margin.
+func (s Style) MarginVH(v, h int16) Style { s.margin = [4]int16{v, h, v, h}; return s }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (s Style) MarginTRBL(t, r, b, l int16) Style { s.margin = [4]int16{t, r, b, l}; return s }
 
 // Equal returns true if two styles are equal.
@@ -537,7 +542,7 @@ type JumpNode struct {
 // ProgressNode displays a progress bar.
 type ProgressNode struct {
 	Flex
-	Value    any   // int or *int (0-100)
+	Value    any   // *int (0-100)
 	BarWidth int16 // width of the bar in characters (distinct from Flex.Width layout width)
 }
 
@@ -712,6 +717,7 @@ type SelectionList struct {
 	SelectedStyle Style  // style for selected row (e.g., background color)
 	len           int    // cached length for bounds checking
 	offset        int    // scroll offset for windowing
+	onMove        func() // called after selection index changes
 }
 
 // ensureVisible adjusts scroll offset so selected item is visible.
@@ -733,22 +739,31 @@ func (s *SelectionList) ensureVisible() {
 // Up moves selection up by one. Safe to use directly with app.Handle.
 func (s *SelectionList) Up(m any) {
 	if s.Selected != nil && *s.Selected > 0 {
+		old := *s.Selected
 		*s.Selected--
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
 // Down moves selection down by one. Safe to use directly with app.Handle.
 func (s *SelectionList) Down(m any) {
 	if s.Selected != nil && s.len > 0 && *s.Selected < s.len-1 {
+		old := *s.Selected
 		*s.Selected++
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
 // PageUp moves selection up by page size (MaxVisible or 10).
 func (s *SelectionList) PageUp(m any) {
 	if s.Selected != nil {
+		old := *s.Selected
 		pageSize := 10
 		if s.MaxVisible > 0 {
 			pageSize = s.MaxVisible
@@ -758,12 +773,16 @@ func (s *SelectionList) PageUp(m any) {
 			*s.Selected = 0
 		}
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
 // PageDown moves selection down by page size (MaxVisible or 10).
 func (s *SelectionList) PageDown(m any) {
 	if s.Selected != nil && s.len > 0 {
+		old := *s.Selected
 		pageSize := 10
 		if s.MaxVisible > 0 {
 			pageSize = s.MaxVisible
@@ -773,22 +792,33 @@ func (s *SelectionList) PageDown(m any) {
 			*s.Selected = s.len - 1
 		}
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
 // First moves selection to the first item.
 func (s *SelectionList) First(m any) {
 	if s.Selected != nil {
+		old := *s.Selected
 		*s.Selected = 0
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
 // Last moves selection to the last item.
 func (s *SelectionList) Last(m any) {
 	if s.Selected != nil && s.len > 0 {
+		old := *s.Selected
 		*s.Selected = s.len - 1
 		s.ensureVisible()
+		if *s.Selected != old && s.onMove != nil {
+			s.onMove()
+		}
 	}
 }
 
@@ -802,7 +832,8 @@ type Span struct {
 // Spans can be []Span (static) or *[]Span (dynamic binding).
 type RichTextNode struct {
 	Flex
-	Spans any // []Span or *[]Span
+	Spans    any       // []Span or *[]Span
+	spanPtrs []*string // per-span *string pointers for Textf (nil = static text)
 }
 
 // Rich creates a RichText from a mix of strings and Spans.
@@ -825,43 +856,55 @@ func Rich(parts ...any) RichTextNode {
 }
 
 // Styled creates a span with the given style.
-func Styled(text string, style Style) Span {
-	return Span{Text: text, Style: style}
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Styled(text any, style Style) any {
+	if ptr, ok := text.(*string); ok {
+		return Text(ptr).Style(style)
+	}
+	s, _ := text.(string)
+	return Span{Text: s, Style: style}
 }
 
-// Bold creates a bold text span.
-func Bold(text string) Span {
-	return Span{Text: text, Style: Style{Attr: AttrBold}}
+// Bold creates a bold styled part.
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Bold(text any) any {
+	return Styled(text, Style{Attr: AttrBold})
 }
 
-// Dim creates a dim text span.
-func Dim(text string) Span {
-	return Span{Text: text, Style: Style{Attr: AttrDim}}
+// Dim creates a dim styled part.
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Dim(text any) any {
+	return Styled(text, Style{Attr: AttrDim})
 }
 
-// Italic creates an italic text span.
-func Italic(text string) Span {
-	return Span{Text: text, Style: Style{Attr: AttrItalic}}
+// Italic creates an italic styled part.
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Italic(text any) any {
+	return Styled(text, Style{Attr: AttrItalic})
 }
 
-// Underline creates an underlined text span.
-func Underline(text string) Span {
-	return Span{Text: text, Style: Style{Attr: AttrUnderline}}
+// Underline creates an underlined styled part.
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Underline(text any) any {
+	return Styled(text, Style{Attr: AttrUnderline})
 }
 
-// Inverse creates an inverse text span.
-func Inverse(text string) Span {
-	return Span{Text: text, Style: Style{Attr: AttrInverse}}
+// Inverse creates an inverse styled part.
+// Accepts string or *string. Returns Span for string, TextC for *string.
+func Inverse(text any) any {
+	return Styled(text, Style{Attr: AttrInverse})
 }
 
-// FG creates a span with foreground color.
-func FG(text string, color Color) Span {
-	return Span{Text: text, Style: Style{FG: color}}
+// FG creates a foreground-colored styled part.
+// Accepts string or *string as text. Returns Span for string, TextC for *string.
+func FG(text any, color Color) any {
+	return Styled(text, Style{FG: color})
 }
 
-// BG creates a span with background color.
-func BG(text string, color Color) Span {
-	return Span{Text: text, Style: Style{BG: color}}
+// BG creates a background-colored styled part.
+// Accepts string or *string as text. Returns Span for string, TextC for *string.
+func BG(text any, color Color) any {
+	return Styled(text, Style{BG: color})
 }
 
 // InputState bundles the state for a text input field.
@@ -917,9 +960,9 @@ type TextInput struct {
 
 // OverlayNode displays content floating above the main view.
 // Use for modals, dialogs, and floating windows.
-// Control visibility with forme.If:
+// Control visibility with glyph.If:
 //
-//	forme.If(&showModal).Eq(true).Then(forme.Overlay{Child: ...})
+//	glyph.If(&showModal).Eq(true).Then(glyph.Overlay{Child: ...})
 type OverlayNode struct {
 	Centered   bool  // true = center on screen (default behavior if X/Y not set)
 	X, Y       int   // explicit position (used if Centered is false)
@@ -945,4 +988,43 @@ func isWithinRange(ptr, base unsafe.Pointer, size uintptr) bool {
 	p := uintptr(ptr)
 	b := uintptr(base)
 	return p >= b && p < b+size
+}
+
+// ThemeEx provides a set of styles for consistent UI appearance.
+// Use CascadeStyle on containers to apply theme styles to children.
+type ThemeEx struct {
+	Base   Style // default text style
+	Muted  Style // de-emphasized text
+	Accent Style // highlighted/important text
+	Error  Style // error messages
+	Border Style // border/divider style
+}
+
+// Pre-defined themes
+
+// ThemeDark is a dark theme with light text on dark background.
+var ThemeDark = ThemeEx{
+	Base:   Style{FG: White},
+	Muted:  Style{FG: BrightBlack},
+	Accent: Style{FG: BrightCyan},
+	Error:  Style{FG: BrightRed},
+	Border: Style{FG: BrightBlack},
+}
+
+// ThemeLight is a light theme with dark text on light background.
+var ThemeLight = ThemeEx{
+	Base:   Style{FG: Black},
+	Muted:  Style{FG: BrightBlack},
+	Accent: Style{FG: Blue},
+	Error:  Style{FG: Red},
+	Border: Style{FG: White},
+}
+
+// ThemeMonochrome is a minimal theme using only attributes.
+var ThemeMonochrome = ThemeEx{
+	Base:   Style{},
+	Muted:  Style{Attr: AttrDim},
+	Accent: Style{Attr: AttrBold},
+	Error:  Style{Attr: AttrBold | AttrUnderline},
+	Border: Style{Attr: AttrDim},
 }

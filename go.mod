@@ -1,10 +1,10 @@
-module github.com/kungfusheep/forme
+module github.com/kungfusheep/glyph
 
 go 1.25.1
 
 require (
 	github.com/junegunn/fzf v0.67.0
-	github.com/kungfusheep/riffkey v0.0.0-20260125233642-f8be0ea70b65
+	github.com/kungfusheep/riffkey v0.0.0-20260216102013-df19649e3a0d
 	github.com/mattn/go-runewidth v0.0.19
 	golang.org/x/sys v0.40.0
 )

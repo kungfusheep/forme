@@ -1,20 +1,22 @@
-package forme
+package glyph
 
 import (
 	"cmp"
 	"unsafe"
 )
 
-// Condition builder for type-safe conditionals.
-// The generic *T parameter enforces pointer-passing at compile time.
+// Condition provides type-safe conditional rendering.
+// T must be comparable; use IfOrd for ordered comparisons (Gt, Lt, etc).
 type Condition[T comparable] struct {
 	ptr *T
 }
 
-// If starts a conditional chain. Compile-time enforces pointer:
+// If conditionally renders content based on a pointer value.
+// Requires a pointer, compile-time enforced via generics.
 //
-//	If(&state.Count).Eq(0)    // works
-//	If(state.Count).Eq(0)     // compile error: int is not *int
+//	If(&visible).Then(content)              // show when true
+//	If(&mode).Eq("edit").Then(editor)       // show when equal
+//	If(&count).Ne(0).Then(badge).Else(Text("empty"))
 func If[T comparable](ptr *T) *Condition[T] {
 	return &Condition[T]{ptr: ptr}
 }
@@ -51,12 +53,16 @@ func (c *Condition[T]) Then(node any) *ConditionEval[T] {
 	}
 }
 
-// OrdCondition extends Condition for ordered types (int, float, string).
+// OrdCondition extends Condition with ordering comparisons (Gt, Lt, Gte, Lte).
+// Use IfOrd instead of If when you need numeric/string range checks.
 type OrdCondition[T cmp.Ordered] struct {
 	ptr *T
 }
 
-// IfOrd starts a conditional chain for ordered types (supports Gt, Lt, etc).
+// IfOrd conditionally renders content with ordering comparisons (Gt, Lt, Gte, Lte).
+// T must satisfy cmp.Ordered (int, float64, string, etc).
+//
+//	IfOrd(&cpu).Gt(90.0).Then(Text("HOT").FG(Red))
 func IfOrd[T cmp.Ordered](ptr *T) *OrdCondition[T] {
 	return &OrdCondition[T]{ptr: ptr}
 }
@@ -102,7 +108,7 @@ const (
 	condOpLte
 )
 
-// ConditionEval holds a comparable condition ready for Then/Else
+// ConditionEval holds a prepared condition awaiting Then/Else branches.
 type ConditionEval[T comparable] struct {
 	ptr    *T
 	offset uintptr // offset from element base (for ForEach)
@@ -124,9 +130,7 @@ func (e *ConditionEval[T]) Else(node any) *ConditionEval[T] {
 	return e
 }
 
-// evaluate checks the condition at runtime
-func (e *ConditionEval[T]) evaluate() bool {
-	v := *e.ptr
+func (e *ConditionEval[T]) compare(v T) bool {
 	switch e.op {
 	case condOpEq:
 		return v == e.val
@@ -136,6 +140,8 @@ func (e *ConditionEval[T]) evaluate() bool {
 		return false
 	}
 }
+
+func (e *ConditionEval[T]) evaluate() bool { return e.compare(*e.ptr) }
 
 func (e *ConditionEval[T]) getThen() any { return e.then }
 func (e *ConditionEval[T]) getElse() any { return e.els }
@@ -147,20 +153,12 @@ func (e *ConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.Poi
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
 func (e *ConditionEval[T]) evaluateWithBase(base unsafe.Pointer) bool {
 	if e.offset == 0 {
-		return e.evaluate() // not in ForEach context
+		return e.evaluate()
 	}
-	v := *(*T)(unsafe.Add(base, e.offset))
-	switch e.op {
-	case condOpEq:
-		return v == e.val
-	case condOpNe:
-		return v != e.val
-	default:
-		return false
-	}
+	return e.compare(*(*T)(unsafe.Add(base, e.offset)))
 }
 
-// OrdConditionEval holds an ordered condition ready for Then/Else
+// OrdConditionEval holds a prepared ordered condition awaiting Then/Else branches.
 type OrdConditionEval[T cmp.Ordered] struct {
 	ptr    *T
 	offset uintptr // offset from element base (for ForEach)
@@ -182,9 +180,7 @@ func (e *OrdConditionEval[T]) Else(node any) *OrdConditionEval[T] {
 	return e
 }
 
-// evaluate checks the condition at runtime
-func (e *OrdConditionEval[T]) evaluate() bool {
-	v := *e.ptr
+func (e *OrdConditionEval[T]) compare(v T) bool {
 	switch e.op {
 	case condOpEq:
 		return v == e.val
@@ -203,6 +199,8 @@ func (e *OrdConditionEval[T]) evaluate() bool {
 	}
 }
 
+func (e *OrdConditionEval[T]) evaluate() bool { return e.compare(*e.ptr) }
+
 func (e *OrdConditionEval[T]) getThen() any { return e.then }
 func (e *OrdConditionEval[T]) getElse() any { return e.els }
 
@@ -213,25 +211,9 @@ func (e *OrdConditionEval[T]) getPtrAddr() uintptr      { return uintptr(unsafe.
 // evaluateWithBase evaluates the condition using an adjusted pointer (for ForEach)
 func (e *OrdConditionEval[T]) evaluateWithBase(base unsafe.Pointer) bool {
 	if e.offset == 0 {
-		return e.evaluate() // not in ForEach context
+		return e.evaluate()
 	}
-	v := *(*T)(unsafe.Add(base, e.offset))
-	switch e.op {
-	case condOpEq:
-		return v == e.val
-	case condOpNe:
-		return v != e.val
-	case condOpGt:
-		return v > e.val
-	case condOpLt:
-		return v < e.val
-	case condOpGte:
-		return v >= e.val
-	case condOpLte:
-		return v <= e.val
-	default:
-		return false
-	}
+	return e.compare(*(*T)(unsafe.Add(base, e.offset)))
 }
 
 // conditionNode interface for the compiler to detect condition nodes
@@ -249,7 +231,8 @@ type conditionNode interface {
 var _ conditionNode = (*ConditionEval[int])(nil)
 var _ conditionNode = (*OrdConditionEval[int])(nil)
 
-// SwitchBuilder for type-safe multi-way branching.
+// SwitchBuilder constructs a type-safe multi-way branch.
+// Use Switch(&ptr) to start, .Case() for branches, .Default() or .End() to finalise.
 type SwitchBuilder[T comparable] struct {
 	ptr   *T
 	cases []switchCase[T]
@@ -297,19 +280,23 @@ func (s *SwitchBuilder[T]) End() *SwitchNode[T] {
 	}
 }
 
-// SwitchNode is the final compiled switch statement
+// SwitchNode is the compiled form of a Switch, ready for template evaluation.
 type SwitchNode[T comparable] struct {
-	ptr   *T
-	cases []switchCase[T]
-	def   any
+	ptr    *T
+	offset uintptr // offset from ForEach element base; 0 = use ptr directly
+	cases  []switchCase[T]
+	def    any
 }
 
 // switchNodeInterface for the compiler to detect switch nodes
 type switchNodeInterface interface {
-	evaluateSwitch() any // runtime: returns matching node
-	getCaseNodes() []any // compile-time: all case nodes
-	getDefaultNode() any // compile-time: default node
-	getMatchIndex() int  // runtime: returns matching case index, or -1 for default
+	evaluateSwitch() any                      // runtime: returns matching node
+	getCaseNodes() []any                      // compile-time: all case nodes
+	getDefaultNode() any                      // compile-time: default node
+	getPtrAddr() uintptr                      // compile-time: address of condition pointer
+	getMatchIndex() int                       // runtime: matching case index, or -1 for default
+	getMatchIndexWithBase(unsafe.Pointer) int // runtime: matching case index using ForEach element base
+	setPtrOffset(uintptr)                     // compile-time: record offset from element base
 }
 
 func (s *SwitchNode[T]) evaluateSwitch() any {
@@ -335,13 +322,31 @@ func (s *SwitchNode[T]) getDefaultNode() any {
 }
 
 func (s *SwitchNode[T]) getMatchIndex() int {
-	v := *s.ptr
+	return s.getMatchIndexWithBase(nil)
+}
+
+func (s *SwitchNode[T]) getMatchIndexWithBase(elemBase unsafe.Pointer) int {
+	var ptr *T
+	if elemBase != nil && s.offset != 0 {
+		ptr = (*T)(unsafe.Pointer(uintptr(elemBase) + s.offset))
+	} else {
+		ptr = s.ptr
+	}
+	v := *ptr
 	for i, c := range s.cases {
 		if v == c.val {
 			return i
 		}
 	}
-	return -1 // default
+	return -1
+}
+
+func (s *SwitchNode[T]) getPtrAddr() uintptr {
+	return uintptr(unsafe.Pointer(s.ptr))
+}
+
+func (s *SwitchNode[T]) setPtrOffset(off uintptr) {
+	s.offset = off
 }
 
 var _ switchNodeInterface = (*SwitchNode[int])(nil)

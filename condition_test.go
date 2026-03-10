@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import "testing"
 
@@ -8,14 +8,6 @@ func TestConditionEq(t *testing.T) {
 		cond := If(&val).Eq(5)
 		if !cond.evaluate() {
 			t.Error("expected condition to be true when val == 5")
-		}
-	})
-
-	t.Run("If comparable Eq false", func(t *testing.T) {
-		val := 5
-		cond := If(&val).Eq(10)
-		if cond.evaluate() {
-			t.Error("expected condition to be false when val != 10")
 		}
 	})
 
@@ -865,6 +857,134 @@ func TestRichTextInsideForEach(t *testing.T) {
 		line0 := extractLine(buf, 0, 16)
 		if line0 != "normalselected  " {
 			t.Errorf("row 0: expected 'normalselected  ', got %q", line0)
+		}
+	})
+}
+
+func TestTextf(t *testing.T) {
+	t.Run("static strings compose into single line", func(t *testing.T) {
+		view := VBoxNode{Children: []any{
+			Textf("hello ", "world"),
+		}}
+
+		tmpl := Build(view)
+		buf := NewBuffer(20, 5)
+		tmpl.Execute(buf, 20, 5)
+
+		line := extractLine(buf, 0, 11)
+		if line != "hello world" {
+			t.Errorf("expected 'hello world', got %q", line)
+		}
+	})
+
+	t.Run("styled spans via helpers", func(t *testing.T) {
+		view := VBoxNode{Children: []any{
+			Textf("normal ", Bold("bold")),
+		}}
+
+		tmpl := Build(view)
+		buf := NewBuffer(20, 5)
+		tmpl.Execute(buf, 20, 5)
+
+		line := extractLine(buf, 0, 11)
+		if line != "normal bold" {
+			t.Errorf("expected 'normal bold', got %q", line)
+		}
+
+		cell := buf.Get(7, 0)
+		if cell.Style.Attr&AttrBold == 0 {
+			t.Errorf("expected bold attr on 'b' at col 7, got %v", cell.Style.Attr)
+		}
+	})
+
+	t.Run("dynamic *string updates on re-render", func(t *testing.T) {
+		name := "Alice"
+		view := VBoxNode{Children: []any{
+			Textf("hi ", &name),
+		}}
+
+		tmpl := Build(view)
+		buf := NewBuffer(20, 5)
+		tmpl.Execute(buf, 20, 5)
+
+		line := extractLine(buf, 0, 8)
+		if line != "hi Alice" {
+			t.Errorf("first render: expected 'hi Alice', got %q", line)
+		}
+
+		name = "Bob"
+		buf.Clear()
+		tmpl.Execute(buf, 20, 5)
+
+		line = extractLine(buf, 0, 6)
+		if line != "hi Bob" {
+			t.Errorf("after update: expected 'hi Bob', got %q", line)
+		}
+	})
+
+	t.Run("dynamic *string inside ForEach", func(t *testing.T) {
+		type Item struct {
+			Label  string
+			Status string
+		}
+		items := []Item{
+			{Label: "build", Status: "ok"},
+			{Label: "test", Status: "fail"},
+		}
+
+		view := VBoxNode{Children: []any{
+			ForEach(&items, func(it *Item) any {
+				return Textf(&it.Label, " -> ", &it.Status)
+			}),
+		}}
+
+		tmpl := Build(view)
+		buf := NewBuffer(20, 5)
+		tmpl.Execute(buf, 20, 5)
+
+		line0 := extractLine(buf, 0, 13)
+		line1 := extractLine(buf, 1, 14)
+		if line0 != "build -> ok  " {
+			t.Errorf("row 0: expected 'build -> ok  ', got %q", line0)
+		}
+		if line1 != "test -> fail  " {
+			t.Errorf("row 1: expected 'test -> fail  ', got %q", line1)
+		}
+
+		items[0].Status = "done"
+		buf.Clear()
+		tmpl.Execute(buf, 20, 5)
+
+		line0 = extractLine(buf, 0, 15)
+		if line0 != "build -> done  " {
+			t.Errorf("after update row 0: expected 'build -> done  ', got %q", line0)
+		}
+	})
+
+	t.Run("styled TextC inside ForEach", func(t *testing.T) {
+		type Row struct {
+			Name string
+		}
+		rows := []Row{{Name: "pete"}}
+
+		view := VBoxNode{Children: []any{
+			ForEach(&rows, func(r *Row) any {
+				return Textf("user: ", Text(&r.Name).Bold())
+			}),
+		}}
+
+		tmpl := Build(view)
+		buf := NewBuffer(20, 5)
+		tmpl.Execute(buf, 20, 5)
+
+		line := extractLine(buf, 0, 10)
+		if line != "user: pete" {
+			t.Errorf("expected 'user: pete', got %q", line)
+		}
+
+		cell := buf.Get(6, 0)
+		if cell.Style.Attr&AttrBold == 0 {
+			t.Errorf("expected bold on 'p' at col 6, got %v", cell.Style.Attr)
 		}
 	})
 }

@@ -6,8 +6,8 @@ github.com/clipperhouse/uax29/v2 v2.4.0 h1:RXqE/l5EiAbA4u97giimKNlmpvkmz+GrBVTel
 github.com/clipperhouse/uax29/v2 v2.4.0/go.mod h1:Wn1g7MK6OoeDT0vL+Q0SQLDz/KpfsVRgg6W7ihQeh4g=
 github.com/junegunn/fzf v0.67.0 h1:naiOdIkV5/ZCfHgKQIV/f5YDWowl95G6yyOQqW8FeSo=
 github.com/junegunn/fzf v0.67.0/go.mod h1:xlXX2/rmsccKQUnr9QOXPDi5DyV9cM0UjKy/huScBeE=
-github.com/kungfusheep/riffkey v0.0.0-20260125233642-f8be0ea70b65 h1:rw8yagyP3kSxDzfx0dDoI5kckZ+5opSuho0u4cJwoYE=
-github.com/kungfusheep/riffkey v0.0.0-20260125233642-f8be0ea70b65/go.mod h1:s+DoFavosJjxGBTgWlhrDKwpsDk0iL7lg3919Fmh6Ys=
+github.com/kungfusheep/riffkey v0.0.0-20260216102013-df19649e3a0d h1:ff9WvfadD7BXE1fFl42eeJ4+Gn8gZolx4zFdzoIZvXk=
+github.com/kungfusheep/riffkey v0.0.0-20260216102013-df19649e3a0d/go.mod h1:s+DoFavosJjxGBTgWlhrDKwpsDk0iL7lg3919Fmh6Ys=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mattn/go-runewidth v0.0.19 h1:v++JhqYnZuu5jSKrk9RbgF5v4CGUjqRfBm05byFGLdw=

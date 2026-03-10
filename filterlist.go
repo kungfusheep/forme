@@ -1,7 +1,14 @@
-package forme
+package glyph
+
+import (
+	"sync/atomic"
+	"time"
+)
 
 // FilterListC is a drop-in filterable list. it composes an input, a
-// filter and a list into a single template node.
+// filter and a list into a single template node. the caller owns the
+// source slice; mutations happen through a [StreamWriter] obtained
+// from [FilterListC.Stream].
 //
 // usage:
 //
@@ -10,6 +17,16 @@ package forme
 //	    Render(func(p *Profile) any { return Text(p.Name) }).
 //	    MaxVisible(20).
 //	    Handle("<Enter>", func(p *Profile) { ... })
+//
+// streaming:
+//
+//	w := fl.Stream(app.RequestRender)
+//	go func() {
+//	    defer w.Close()
+//	    for p := range produce() {
+//	        w.Write(p)
+//	    }
+//	}()
 type FilterListC[T any] struct {
 	input  *InputC
 	list   *ListC[T]
@@ -20,10 +37,14 @@ type FilterListC[T any] struct {
 	border      BorderStyle
 	title       string
 	margin      [4]int16
+
+	counterMatch int // filtered count, read by counter at render time
+	counterTotal int // total count, read by counter at render time
+	isStreaming  bool
+	spinnerFrame int32 // accessed atomically by spinner goroutine and render path
 }
 
-// FilterList creates a filterable list.
-// extract returns the searchable text for each item.
+// FilterList creates a filterable list backed by the caller's source slice.
 func FilterList[T any](source *[]T, extract func(*T) string) *FilterListC[T] {
 	f := NewFilter(source, extract)
 	fl := &FilterListC[T]{
@@ -42,6 +63,7 @@ func FilterList[T any](source *[]T, extract func(*T) string) *FilterListC[T] {
 	// default nav keys that don't conflict with text input
 	fl.list.BindNav("<C-n>", "<C-p>").
 		BindPageNav("<C-d>", "<C-u>")
+	fl.updateCounter()
 	return fl
 }
 
@@ -52,13 +74,17 @@ func (fl *FilterListC[T]) toTemplate() any {
 		fl.list.maxVisible = fl.maxVisible
 	}
 
-	children := []any{
-		HBox(
-			Text("> ").Bold(),
-			fl.input,
-		),
-		fl.list,
-	}
+	inputRow := HBox(
+		Text("> ").Bold(),
+		fl.input,
+	)
+
+	counter := newCounter(&fl.counterMatch, &fl.counterTotal).
+		Prefix("  ").Dim().
+		Streaming(&fl.isStreaming)
+	counter.framePtr = &fl.spinnerFrame
+
+	children := []any{inputRow, counter, fl.list}
 
 	box := VBox
 	if fl.border.Horizontal != 0 {
@@ -83,6 +109,101 @@ func (fl *FilterListC[T]) textBinding() *textInputBinding {
 func (fl *FilterListC[T]) sync() {
 	fl.filter.Update(fl.input.Value())
 	fl.list.ClampSelection()
+	fl.updateCounter()
+}
+
+func (fl *FilterListC[T]) appended() {
+	fl.filter.appended()
+	fl.list.ClampSelection()
+	fl.updateCounter()
+}
+
+func (fl *FilterListC[T]) refresh() {
+	fl.filter.refresh()
+	fl.list.ClampSelection()
+	fl.updateCounter()
+}
+
+func (fl *FilterListC[T]) updateCounter() {
+	fl.counterMatch = fl.filter.Len()
+	fl.counterTotal = len(*fl.filter.source)
+}
+
+// streaming reports whether a stream is currently active.
+func (fl *FilterListC[T]) streaming() bool {
+	return fl.isStreaming
+}
+
+// ============================================================================
+// StreamWriter — managed streaming
+// ============================================================================
+
+// StreamWriter provides a write interface for streaming items into a
+// FilterList. Obtained from [FilterListC.Stream]. Each write appends
+// to the source slice, updates the filter index, and signals a render.
+// Call [StreamWriter.Close] when done to stop the spinner.
+type StreamWriter[T any] struct {
+	fl     *FilterListC[T]
+	render func()
+	done   chan struct{}
+}
+
+// Write appends a single item and triggers a filter + render update.
+func (w *StreamWriter[T]) Write(item T) {
+	*w.fl.filter.source = append(*w.fl.filter.source, item)
+	w.fl.appended()
+	w.render()
+}
+
+// WriteAll appends multiple items in one batch and triggers a single
+// filter + render update.
+func (w *StreamWriter[T]) WriteAll(items []T) {
+	*w.fl.filter.source = append(*w.fl.filter.source, items...)
+	w.fl.appended()
+	w.render()
+}
+
+// Close ends the stream. The spinner disappears and a final render is
+// signaled. Safe to call multiple times.
+func (w *StreamWriter[T]) Close() {
+	if !w.fl.isStreaming {
+		return
+	}
+	close(w.done)
+	w.fl.isStreaming = false
+	w.render()
+}
+
+// Stream begins a streaming session: a spinner appears next to the
+// counter and the returned [StreamWriter] can be used to append items.
+// Call [StreamWriter.Close] when all items have been written.
+//
+// requestRender is called after each write and spinner tick to signal
+// that the UI should redraw (typically app.RequestRender).
+func (fl *FilterListC[T]) Stream(requestRender func()) *StreamWriter[T] {
+	fl.isStreaming = true
+	w := &StreamWriter[T]{
+		fl:     fl,
+		render: requestRender,
+		done:   make(chan struct{}),
+	}
+
+	// spinner animation ticker — stops when Close is called
+	go func() {
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-w.done:
+				return
+			case <-ticker.C:
+				atomic.AddInt32(&fl.spinnerFrame, 1)
+				requestRender()
+			}
+		}
+	}()
+
+	return w
 }
 
 // Placeholder sets the input placeholder text.
@@ -91,7 +212,8 @@ func (fl *FilterListC[T]) Placeholder(p string) *FilterListC[T] {
 	return fl
 }
 
-// Render sets the render function for each list item.
+// Render customises how each item appears in the list.
+// fn: func(item *T) any. return a component tree for the item row.
 func (fl *FilterListC[T]) Render(fn func(*T) any) *FilterListC[T] {
 	fl.list.Render(fn)
 	return fl
@@ -115,23 +237,26 @@ func (fl *FilterListC[T]) Title(t string) *FilterListC[T] {
 	return fl
 }
 
+// Margin sets uniform margin on all sides.
 func (fl *FilterListC[T]) Margin(all int16) *FilterListC[T] {
 	fl.margin = [4]int16{all, all, all, all}
 	return fl
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (fl *FilterListC[T]) MarginVH(v, h int16) *FilterListC[T] {
 	fl.margin = [4]int16{v, h, v, h}
 	return fl
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (fl *FilterListC[T]) MarginTRBL(t, r, b, l int16) *FilterListC[T] {
 	fl.margin = [4]int16{t, r, b, l}
 	return fl
 }
 
-// Handle registers a key binding that passes the currently selected
-// original source item to the callback.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected source item (skipped if empty).
 func (fl *FilterListC[T]) Handle(key string, fn func(*T)) *FilterListC[T] {
 	fl.list.declaredBindings = append(fl.list.declaredBindings,
 		binding{pattern: key, handler: func() {
@@ -165,14 +290,14 @@ func (fl *FilterListC[T]) BindNav(down, up string) *FilterListC[T] {
 }
 
 // Selected returns a pointer to the original source item corresponding
-// to the current list selection. returns nil if nothing is selected.
+// to the current list selection. Returns nil if nothing is selected.
 func (fl *FilterListC[T]) Selected() *T {
 	idx := fl.list.Index()
 	return fl.filter.Original(idx)
 }
 
 // SelectedIndex returns the index into the original source slice.
-// returns -1 if nothing is selected.
+// Returns -1 if nothing is selected.
 func (fl *FilterListC[T]) SelectedIndex() int {
 	return fl.filter.OriginalIndex(fl.list.Index())
 }
@@ -182,6 +307,7 @@ func (fl *FilterListC[T]) Clear() {
 	fl.input.Clear()
 	fl.filter.Reset()
 	fl.list.ClampSelection()
+	fl.updateCounter()
 }
 
 // Active reports whether a filter query is currently applied.

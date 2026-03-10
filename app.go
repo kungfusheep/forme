@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ var (
 	lastFlushTime   time.Duration
 
 	// fine-grained post-processing phase timings (only populated when DebugTiming=true)
-	lastEffectTime time.Duration // resolveColor16 + all PostProcess passes
+	lastEffectTime time.Duration // resolveColor16 + all Effect passes
 	lastDiffTime   time.Duration // Flush(): diff + escape-sequence building
 	lastWriteTime  time.Duration // FlushBuffer(): Write() syscall to terminal
 )
@@ -89,7 +89,7 @@ type App struct {
 	jumpStyle JumpStyle
 
 	// Post-processing pipeline
-	postProcess   []PostProcess
+	postProcess   []Effect
 	frameCount    uint64
 	startTime     time.Time
 	lastFrameTime time.Time
@@ -110,7 +110,7 @@ func NewApp() (*App, error) {
 
 	router := riffkey.NewRouter()
 	input := riffkey.NewInput(router)
-	reader := riffkey.NewReader(os.Stdin)
+	reader := riffkey.NewReader(os.Stdin).SetUTF8(true)
 
 	app := &App{
 		screen:     screen,
@@ -137,6 +137,7 @@ func NewInlineApp() (*App, error) {
 	return app, nil
 }
 
+// Ref provides access to the component for external references.
 func (a *App) Ref(f func(*App)) *App { f(a); return a }
 
 // ClearOnExit sets whether the inline app should clear its content on exit.
@@ -262,17 +263,66 @@ func (a *App) wireBindings(tmpl *Template, router *riffkey.Router) {
 		}
 	}
 	// focus manager takes precedence over single pendingTIB
-	if tmpl.pendingFocusManager != nil {
-		// wire focus manager bindings (Tab/Shift-Tab)
-		for _, b := range tmpl.pendingFocusManager.bindings() {
+	if fm := tmpl.pendingFocusManager; fm != nil {
+		// wire focus manager bindings (Tab/Shift-Tab) on the base router
+		for _, b := range fm.bindings() {
 			if h, ok := b.handler.(func(riffkey.Match)); ok {
 				pattern := b.pattern
 				router.Handle(pattern, func(m riffkey.Match) { h(m); a.RequestRender() })
 			}
 		}
-		// route unmatched keys to focused component
-		router.HandleUnmatched(tmpl.pendingFocusManager.HandleKey)
-		router.NoCounts()
+
+		// build a sub-router per focusable item.
+		// each gets pushed on focus and popped on blur.
+		fm.push = func(r *riffkey.Router) { a.Push(r) }
+		fm.pop = func() { a.Pop() }
+		fm.routers = make([]*riffkey.Router, len(fm.items))
+
+		for i, item := range fm.items {
+			sub := riffkey.NewRouter()
+
+			// common: Tab/Shift-Tab to cycle, Escape to blur
+			sub.Handle(fm.nextKey, func(_ riffkey.Match) { fm.Next(); a.RequestRender() })
+			if fm.prevKey != "" {
+				sub.Handle(fm.prevKey, func(_ riffkey.Match) { fm.Prev(); a.RequestRender() })
+			}
+			sub.Handle("<Escape>", func(_ riffkey.Match) { fm.BlurCurrent(); a.RequestRender() })
+
+			// sub-bindings (e.g., Enter for form submit)
+			for _, sb := range fm.subBindings {
+				switch h := sb.handler.(type) {
+				case func():
+					pattern := sb.pattern
+					sub.Handle(pattern, func(_ riffkey.Match) { h(); a.RequestRender() })
+				case func(riffkey.Match):
+					pattern := sb.pattern
+					sub.Handle(pattern, func(m riffkey.Match) { h(m); a.RequestRender() })
+				}
+			}
+
+			// per-item bindings (e.g., j/k for Radio, Space for Checkbox)
+			for _, cb := range item.bindings {
+				switch h := cb.handler.(type) {
+				case func():
+					pattern := cb.pattern
+					sub.Handle(pattern, func(_ riffkey.Match) { h(); a.RequestRender() })
+				case func(riffkey.Match):
+					pattern := cb.pattern
+					sub.Handle(pattern, func(m riffkey.Match) { h(m); a.RequestRender() })
+				}
+			}
+
+			if item.tib != nil {
+				// text input: route unmatched keys to TextHandler
+				th := fm.handlers[i]
+				sub.HandleUnmatched(th.HandleKey)
+				sub.NoCounts()
+			}
+
+			fm.routers[i] = sub
+		}
+
+		fm.initialPush()
 	} else if tmpl.pendingTIB != nil {
 		th := riffkey.NewTextHandler(tmpl.pendingTIB.value, tmpl.pendingTIB.cursor)
 		th.OnChange = tmpl.pendingTIB.onChange
@@ -330,6 +380,7 @@ func (a *App) View(name string, view any) *ViewBuilder {
 	}
 }
 
+// Ref provides access to the component for external references.
 func (vb *ViewBuilder) Ref(f func(*ViewBuilder)) *ViewBuilder { f(vb); return vb }
 
 // NoCounts disables vim-style count prefixes (e.g., 5j) for this view.
@@ -380,7 +431,7 @@ func (a *App) Go(name string) {
 }
 
 // Back returns to the previous view.
-// Currently an alias for Pop() - may add history later.
+// Currently an alias for Pop().
 func (a *App) Back() {
 	a.input.Pop()
 	a.RequestRender()
@@ -535,18 +586,18 @@ func (a *App) OnAfterRender(fn func()) {
 	a.onAfterRender = fn
 }
 
-// AddPostProcess appends a post-processing pass to the pipeline.
+// AddEffect appends a post-processing pass to the pipeline.
 // Passes run in order after template rendering, before screen flush.
 // Closures captured by the pass act as shader uniforms — mutate them to
 // change behaviour next frame.
-func (a *App) AddPostProcess(pp PostProcess) *App {
+func (a *App) AddEffect(pp Effect) *App {
 	a.postProcess = append(a.postProcess, pp)
 	return a
 }
 
-// SetPostProcess replaces the entire post-processing pipeline.
+// SetEffect replaces the entire post-processing pipeline.
 // Call with no arguments to clear all passes.
-func (a *App) SetPostProcess(passes ...PostProcess) *App {
+func (a *App) SetEffect(passes ...Effect) *App {
 	a.postProcess = passes
 	return a
 }
@@ -694,10 +745,10 @@ func (a *App) render() {
 			DefaultBG: a.defaultBG,
 		}
 		for _, pp := range treeEffects {
-			pp(buf, ppCtx)
+			pp.Apply(buf, ppCtx)
 		}
 		for _, pp := range a.postProcess {
-			pp(buf, ppCtx)
+			pp.Apply(buf, ppCtx)
 		}
 		a.frameCount++
 
@@ -711,7 +762,7 @@ func (a *App) render() {
 
 	if a.inline {
 		// Inline mode: render at cursor position
-		a.linesUsed = a.screen.FlushInline(int(renderHeight))
+		a.linesUsed = a.screen.FlushInline(int(renderHeight), a.linesUsed)
 		a.pool.Swap() // Queue async clear
 	} else {
 		// Fullscreen mode
@@ -773,7 +824,7 @@ type Timings struct {
 	FlushUs  float64 // Flush time in microseconds
 
 	// fine-grained post-processing breakdown (only valid when effects are active)
-	EffectUs float64 // resolveColor16 + all PostProcess passes (pure Go)
+	EffectUs float64 // resolveColor16 + all Effect passes (pure Go)
 	DiffUs   float64 // Flush(): diff comparison + escape-sequence building (pure Go)
 	WriteUs  float64 // FlushBuffer(): Write() syscall — time spent waiting on terminal
 }

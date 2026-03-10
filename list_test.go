@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"strings"
@@ -105,6 +105,75 @@ func TestListCRendersText(t *testing.T) {
 	}
 	if !strings.Contains(line1, "Banana") {
 		t.Errorf("Line 1 should contain 'Banana', got: %q", line1)
+	}
+}
+
+func TestListCOnSelect(t *testing.T) {
+	items := []TestItem{
+		{Name: "First"},
+		{Name: "Second"},
+		{Name: "Third"},
+	}
+
+	var list *ListC[TestItem]
+	var selected string
+	callCount := 0
+
+	listComp := List(&items).Render(func(item *TestItem) any {
+		return Text(&item.Name)
+	}).OnSelect(func(item *TestItem) {
+		selected = item.Name
+		callCount++
+	}).Ref(func(l *ListC[TestItem]) { list = l })
+
+	tmpl := Build(VBox(listComp))
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+
+	// move down, should fire OnSelect
+	list.Down(nil)
+	if selected != "Second" {
+		t.Errorf("OnSelect should receive 'Second', got %q", selected)
+	}
+	if callCount != 1 {
+		t.Errorf("OnSelect should fire once, fired %d times", callCount)
+	}
+
+	// move down again
+	list.Down(nil)
+	if selected != "Third" {
+		t.Errorf("OnSelect should receive 'Third', got %q", selected)
+	}
+
+	// move down at end, should NOT fire (no change)
+	callCount = 0
+	list.Down(nil)
+	if callCount != 0 {
+		t.Errorf("OnSelect should not fire when selection doesn't change, fired %d", callCount)
+	}
+
+	// move up
+	callCount = 0
+	list.Up(nil)
+	if selected != "Second" {
+		t.Errorf("OnSelect should receive 'Second', got %q", selected)
+	}
+	if callCount != 1 {
+		t.Errorf("OnSelect should fire once on Up, fired %d", callCount)
+	}
+
+	// First/Last
+	callCount = 0
+	list.Last(nil)
+	if selected != "Third" {
+		t.Errorf("OnSelect should receive 'Third' after Last, got %q", selected)
+	}
+	list.First(nil)
+	if selected != "First" {
+		t.Errorf("OnSelect should receive 'First' after First, got %q", selected)
+	}
+	if callCount != 2 {
+		t.Errorf("Expected 2 calls (Last+First), got %d", callCount)
 	}
 }
 

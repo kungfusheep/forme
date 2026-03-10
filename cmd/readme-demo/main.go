@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 func main() {
@@ -31,10 +31,14 @@ func main() {
 			),
 			HRule(),
 
+			Textf("This is some ", Styled("bold", Style{Attr: AttrInverse | AttrBold, FG: Green}), " text, with ", Italic("italic"), " and ", Underline("underline"), " styles."),
+
 			Leader("ALT", &alt),
 			Leader("SPD", &spd),
 			Leader("HDG", &hdg),
 			SpaceH(1),
+
+			FilterList(&[]string{"FUEL", "THROT"}, func(s *string) string { return *s }),
 
 			Define(func() any {
 				pgres := func(label string, val *int) any {

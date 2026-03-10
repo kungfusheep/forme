@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import "github.com/kungfusheep/riffkey"
 
@@ -28,11 +28,23 @@ type FocusManager struct {
 	nextKey  string
 	prevKey  string
 	onChange func(index int) // called when focus changes
+	onBlur   func()          // called when all items lose focus
+
+	// per-item sub-router management, set by wireBindings
+	routers []*riffkey.Router // one sub-router per item (nil until wired)
+	push    func(r *riffkey.Router)
+	pop     func()
+	pushed  bool // whether a sub-router is currently pushed
+
+	// bindings that should be available on every sub-router
+	// (e.g., Enter for form submit)
+	subBindings []binding
 }
 
 type focusItem struct {
 	focusable focusable
 	tib       *textInputBinding
+	bindings  []binding // per-item bindings for this item's sub-router
 }
 
 // NewFocusManager creates a new focus manager with default Tab/Shift-Tab bindings.
@@ -69,6 +81,14 @@ func (fm *FocusManager) Register(f focusable) *FocusManager {
 	return fm
 }
 
+// ItemBindings adds bindings to the most recently registered item's sub-router.
+func (fm *FocusManager) ItemBindings(binds ...binding) {
+	if len(fm.items) > 0 {
+		item := fm.items[len(fm.items)-1]
+		item.bindings = append(item.bindings, binds...)
+	}
+}
+
 // NextKey sets the key binding for moving to the next focusable (default: Tab).
 func (fm *FocusManager) NextKey(key string) *FocusManager {
 	fm.nextKey = key
@@ -87,6 +107,24 @@ func (fm *FocusManager) OnChange(fn func(index int)) *FocusManager {
 	return fm
 }
 
+// OnBlur sets a callback that fires when all items lose focus (via BlurCurrent).
+func (fm *FocusManager) OnBlur(fn func()) *FocusManager {
+	fm.onBlur = fn
+	return fm
+}
+
+// BlurCurrent unfocuses the current item and pops its sub-router.
+func (fm *FocusManager) BlurCurrent() {
+	if fm.pushed && fm.pop != nil {
+		fm.pop()
+		fm.pushed = false
+	}
+	fm.items[fm.current].focusable.setFocused(false)
+	if fm.onBlur != nil {
+		fm.onBlur()
+	}
+}
+
 // Next moves focus to the next component.
 func (fm *FocusManager) Next() {
 	fm.moveFocus(1)
@@ -101,9 +139,20 @@ func (fm *FocusManager) moveFocus(delta int) {
 	if len(fm.items) <= 1 {
 		return
 	}
+
+	// pop current sub-router
+	if fm.pushed && fm.pop != nil {
+		fm.pop()
+		fm.pushed = false
+	}
+
 	fm.items[fm.current].focusable.setFocused(false)
 	fm.current = (fm.current + len(fm.items) + delta) % len(fm.items)
 	fm.items[fm.current].focusable.setFocused(true)
+
+	// push new sub-router
+	fm.pushCurrent()
+
 	if fm.onChange != nil {
 		fm.onChange(fm.current)
 	}
@@ -117,12 +166,35 @@ func (fm *FocusManager) Focus(index int) {
 	if fm.current == index {
 		return
 	}
+
+	if fm.pushed && fm.pop != nil {
+		fm.pop()
+		fm.pushed = false
+	}
+
 	fm.items[fm.current].focusable.setFocused(false)
 	fm.current = index
 	fm.items[fm.current].focusable.setFocused(true)
+
+	fm.pushCurrent()
+
 	if fm.onChange != nil {
 		fm.onChange(fm.current)
 	}
+}
+
+// pushCurrent pushes the sub-router for the currently focused item.
+func (fm *FocusManager) pushCurrent() {
+	if fm.push != nil && fm.current < len(fm.routers) && fm.routers[fm.current] != nil {
+		fm.push(fm.routers[fm.current])
+		fm.pushed = true
+	}
+}
+
+// initialPush pushes the sub-router for the initially focused item.
+// Called by wireBindings after routers are built.
+func (fm *FocusManager) initialPush() {
+	fm.pushCurrent()
 }
 
 // Current returns the currently focused index.

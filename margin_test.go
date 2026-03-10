@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"testing"
@@ -190,7 +190,7 @@ func TestMarginVBoxMultiChild(t *testing.T) {
 
 func TestMarginNestedContainers(t *testing.T) {
 	// Outer VBox has margin=1, inner VBox has margin=1
-	// Content should be at (2, 2) — double offset
+	// Content should be at (2, 2), double offset
 	tmpl := Build(VBox.Margin(1)(
 		VBox.Margin(1)(
 			Text("Deep"),
@@ -274,7 +274,7 @@ func TestMarginAsymmetric(t *testing.T) {
 }
 
 func TestMarginIntrinsicWidth(t *testing.T) {
-	// FitContent with margin — intrinsic width should include margin
+	// FitContent with margin, intrinsic width should include margin
 	tmpl := Build(VBox.FitContent().Margin(1)(
 		Text("ABC"),
 	))
@@ -346,7 +346,7 @@ func TestMarginTextAsymmetric(t *testing.T) {
 }
 
 func TestMarginTextXY(t *testing.T) {
-	// vertical=2, horizontal=0 — text pushed down by 2 rows
+	// vertical=2, horizontal=0. text pushed down by 2 rows
 	tmpl := Build(VBox(
 		Text("Go").MarginVH(2, 0),
 	))
@@ -390,7 +390,7 @@ func TestMarginHRule(t *testing.T) {
 }
 
 func TestMarginMultipleTextsInVBox(t *testing.T) {
-	// Two texts, second one has margin — should push it down and indent it
+	// Two texts, second one has margin. should push it down and indent it
 	tmpl := Build(VBox(
 		Text("One"),
 		Text("Two").MarginTRBL(1, 0, 0, 2),
@@ -413,7 +413,7 @@ func TestMarginMultipleTextsInVBox(t *testing.T) {
 }
 
 func TestMarginTextInHBox(t *testing.T) {
-	// Text with left margin inside HBox — should offset horizontally
+	// Text with left margin inside HBox, should offset horizontally
 	tmpl := Build(HBox(
 		Text("A"),
 		Text("B").MarginTRBL(0, 0, 0, 2),
@@ -467,6 +467,6 @@ func TestMarginLeaderWidth(t *testing.T) {
 	// MEM rendered content: 1 (left margin space) + 28 (content) = 29 chars total
 	// CPU rendered content: 30 chars
 	if memLen > cpuLen {
-		t.Errorf("MEM line length (%d) > CPU line length (%d) — overflow!", memLen, cpuLen)
+		t.Errorf("MEM line length (%d) > CPU line length (%d), overflow!", memLen, cpuLen)
 	}
 }

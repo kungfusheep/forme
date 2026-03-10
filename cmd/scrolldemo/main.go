@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/kungfusheep/riffkey"
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 func main() {

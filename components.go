@@ -1,7 +1,6 @@
-package forme
+package glyph
 
 import (
-	"fmt"
 	"reflect"
 )
 
@@ -68,11 +67,13 @@ type VBoxC struct {
 	flexGrow     float32
 	fitContent   bool
 	margin       [4]int16 // top, right, bottom, left
+	nodeRef      *NodeRef
 	children     []any
 }
 
 type VBoxFn func(children ...any) VBoxC
 
+// Fill sets the background fill color.
 func (f VBoxFn) Fill(c Color) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -81,6 +82,7 @@ func (f VBoxFn) Fill(c Color) VBoxFn {
 	}
 }
 
+// CascadeStyle sets a style pointer that children inherit.
 func (f VBoxFn) CascadeStyle(s *Style) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -89,6 +91,7 @@ func (f VBoxFn) CascadeStyle(s *Style) VBoxFn {
 	}
 }
 
+// Gap sets the spacing between children.
 func (f VBoxFn) Gap(g int8) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -97,6 +100,7 @@ func (f VBoxFn) Gap(g int8) VBoxFn {
 	}
 }
 
+// Border sets the border style.
 func (f VBoxFn) Border(b BorderStyle) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -105,6 +109,7 @@ func (f VBoxFn) Border(b BorderStyle) VBoxFn {
 	}
 }
 
+// BorderFG sets the border foreground color.
 func (f VBoxFn) BorderFG(c Color) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -113,6 +118,7 @@ func (f VBoxFn) BorderFG(c Color) VBoxFn {
 	}
 }
 
+// BorderBG sets the border background color.
 func (f VBoxFn) BorderBG(c Color) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -121,6 +127,7 @@ func (f VBoxFn) BorderBG(c Color) VBoxFn {
 	}
 }
 
+// Title sets the border title text.
 func (f VBoxFn) Title(t string) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -129,6 +136,7 @@ func (f VBoxFn) Title(t string) VBoxFn {
 	}
 }
 
+// Width sets a fixed width.
 func (f VBoxFn) Width(w int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -137,6 +145,7 @@ func (f VBoxFn) Width(w int16) VBoxFn {
 	}
 }
 
+// Height sets a fixed height.
 func (f VBoxFn) Height(h int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -145,6 +154,7 @@ func (f VBoxFn) Height(h int16) VBoxFn {
 	}
 }
 
+// Size sets a fixed width and height.
 func (f VBoxFn) Size(w, h int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -154,6 +164,7 @@ func (f VBoxFn) Size(w, h int16) VBoxFn {
 	}
 }
 
+// WidthPct sets width as a percentage of the parent (0.0-1.0).
 func (f VBoxFn) WidthPct(pct float32) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -162,6 +173,7 @@ func (f VBoxFn) WidthPct(pct float32) VBoxFn {
 	}
 }
 
+// Grow sets the flex grow factor.
 func (f VBoxFn) Grow(g float32) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -170,6 +182,7 @@ func (f VBoxFn) Grow(g float32) VBoxFn {
 	}
 }
 
+// FitContent sizes the container to fit its content.
 func (f VBoxFn) FitContent() VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -178,6 +191,7 @@ func (f VBoxFn) FitContent() VBoxFn {
 	}
 }
 
+// Margin sets uniform margin on all sides.
 func (f VBoxFn) Margin(all int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -186,6 +200,7 @@ func (f VBoxFn) Margin(all int16) VBoxFn {
 	}
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (f VBoxFn) MarginVH(vertical, horizontal int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -194,6 +209,7 @@ func (f VBoxFn) MarginVH(vertical, horizontal int16) VBoxFn {
 	}
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (f VBoxFn) MarginTRBL(top, right, bottom, left int16) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
@@ -202,7 +218,21 @@ func (f VBoxFn) MarginTRBL(top, right, bottom, left int16) VBoxFn {
 	}
 }
 
-// VBox is the vertical container constructor
+// NodeRef attaches a reference that is populated with this node's rendered
+// screen bounds each frame. Use it in effects or anywhere that needs to know
+// where a node actually rendered.
+func (f VBoxFn) NodeRef(ref *NodeRef) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		v.nodeRef = ref
+		return v
+	}
+}
+
+// VBox arranges children in a vertical stack.
+// Use method chaining to configure before calling with children:
+//
+//	VBox.Gap(1).Border(BorderRounded)("Title")(child1, child2)
 var VBox VBoxFn = func(children ...any) VBoxC {
 	return VBoxC{children: children}
 }
@@ -225,11 +255,13 @@ type HBoxC struct {
 	flexGrow     float32
 	fitContent   bool
 	margin       [4]int16 // top, right, bottom, left
+	nodeRef      *NodeRef
 	children     []any
 }
 
 type HBoxFn func(children ...any) HBoxC
 
+// Fill sets the background fill color.
 func (f HBoxFn) Fill(c Color) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -238,6 +270,7 @@ func (f HBoxFn) Fill(c Color) HBoxFn {
 	}
 }
 
+// CascadeStyle sets a style pointer that children inherit.
 func (f HBoxFn) CascadeStyle(s *Style) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -246,6 +279,7 @@ func (f HBoxFn) CascadeStyle(s *Style) HBoxFn {
 	}
 }
 
+// Gap sets the spacing between children.
 func (f HBoxFn) Gap(g int8) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -254,6 +288,7 @@ func (f HBoxFn) Gap(g int8) HBoxFn {
 	}
 }
 
+// Border sets the border style.
 func (f HBoxFn) Border(b BorderStyle) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -262,6 +297,7 @@ func (f HBoxFn) Border(b BorderStyle) HBoxFn {
 	}
 }
 
+// BorderFG sets the border foreground color.
 func (f HBoxFn) BorderFG(c Color) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -270,6 +306,7 @@ func (f HBoxFn) BorderFG(c Color) HBoxFn {
 	}
 }
 
+// BorderBG sets the border background color.
 func (f HBoxFn) BorderBG(c Color) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -278,6 +315,7 @@ func (f HBoxFn) BorderBG(c Color) HBoxFn {
 	}
 }
 
+// Title sets the border title text.
 func (f HBoxFn) Title(t string) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -286,6 +324,7 @@ func (f HBoxFn) Title(t string) HBoxFn {
 	}
 }
 
+// Width sets a fixed width.
 func (f HBoxFn) Width(w int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -294,6 +333,7 @@ func (f HBoxFn) Width(w int16) HBoxFn {
 	}
 }
 
+// Height sets a fixed height.
 func (f HBoxFn) Height(h int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		c := f(children...)
@@ -302,6 +342,7 @@ func (f HBoxFn) Height(h int16) HBoxFn {
 	}
 }
 
+// Size sets a fixed width and height.
 func (f HBoxFn) Size(w, h int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		c := f(children...)
@@ -311,6 +352,7 @@ func (f HBoxFn) Size(w, h int16) HBoxFn {
 	}
 }
 
+// WidthPct sets width as a percentage of the parent (0.0-1.0).
 func (f HBoxFn) WidthPct(pct float32) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -319,6 +361,7 @@ func (f HBoxFn) WidthPct(pct float32) HBoxFn {
 	}
 }
 
+// Grow sets the flex grow factor.
 func (f HBoxFn) Grow(g float32) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -327,6 +370,7 @@ func (f HBoxFn) Grow(g float32) HBoxFn {
 	}
 }
 
+// FitContent sizes the container to fit its content.
 func (f HBoxFn) FitContent() HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -335,6 +379,7 @@ func (f HBoxFn) FitContent() HBoxFn {
 	}
 }
 
+// Margin sets uniform margin on all sides.
 func (f HBoxFn) Margin(all int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -343,6 +388,7 @@ func (f HBoxFn) Margin(all int16) HBoxFn {
 	}
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (f HBoxFn) MarginVH(vertical, horizontal int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -351,6 +397,7 @@ func (f HBoxFn) MarginVH(vertical, horizontal int16) HBoxFn {
 	}
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (f HBoxFn) MarginTRBL(top, right, bottom, left int16) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
@@ -359,7 +406,21 @@ func (f HBoxFn) MarginTRBL(top, right, bottom, left int16) HBoxFn {
 	}
 }
 
-// HBox is the horizontal container constructor
+// NodeRef attaches a reference that is populated with this node's rendered
+// screen bounds each frame. Use it in effects or anywhere that needs to know
+// where a node actually rendered.
+func (f HBoxFn) NodeRef(ref *NodeRef) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		h.nodeRef = ref
+		return h
+	}
+}
+
+// HBox arranges children in a horizontal row.
+// Use method chaining to configure before calling with children:
+//
+//	HBox.Gap(2)(Text("left"), Space(), Text("right"))
 var HBox HBoxFn = func(children ...any) HBoxC {
 	return HBoxC{children: children}
 }
@@ -411,63 +472,132 @@ type TextC struct {
 	width   int16 // explicit width (0 = content-sized)
 }
 
+// Text creates a text display component.
 func Text(content any) TextC {
 	return TextC{content: content}
 }
 
+// Style sets the component style.
 func (t TextC) Style(s Style) TextC {
 	t.style = s
 	return t
 }
 
+// FG sets the foreground color.
 func (t TextC) FG(c Color) TextC {
 	t.style.FG = c
 	return t
 }
 
+// BG sets the background color.
 func (t TextC) BG(c Color) TextC {
 	t.style.BG = c
 	return t
 }
 
+// Bold enables bold text.
 func (t TextC) Bold() TextC {
 	t.style.Attr |= AttrBold
 	return t
 }
 
+// Dim enables dim text.
 func (t TextC) Dim() TextC {
 	t.style.Attr |= AttrDim
 	return t
 }
 
+// Italic enables italic text.
 func (t TextC) Italic() TextC {
 	t.style.Attr |= AttrItalic
 	return t
 }
 
+// Underline enables underline text.
 func (t TextC) Underline() TextC {
 	t.style.Attr |= AttrUnderline
 	return t
 }
 
+// Inverse enables inverse (reverse video) text.
 func (t TextC) Inverse() TextC {
 	t.style.Attr |= AttrInverse
 	return t
 }
 
+// Strikethrough enables strikethrough text.
 func (t TextC) Strikethrough() TextC {
 	t.style.Attr |= AttrStrikethrough
 	return t
 }
 
+// Align sets the text alignment within its available width.
+func (t TextC) Align(a Align) TextC { t.style.Align = a; return t }
+
+// Width sets a fixed width.
 func (t TextC) Width(w int16) TextC {
 	t.width = w
 	return t
 }
 
-func (t TextC) Margin(all int16) TextC            { t.style.margin = [4]int16{all, all, all, all}; return t }
-func (t TextC) MarginVH(v, h int16) TextC         { t.style.margin = [4]int16{v, h, v, h}; return t }
+// Margin sets uniform margin on all sides.
+func (t TextC) Margin(all int16) TextC { t.style.margin = [4]int16{all, all, all, all}; return t }
+
+// MarginVH sets vertical and horizontal margin.
+func (t TextC) MarginVH(v, h int16) TextC { t.style.margin = [4]int16{v, h, v, h}; return t }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (t TextC) MarginTRBL(a, b, c, d int16) TextC { t.style.margin = [4]int16{a, b, c, d}; return t }
+
+// Textf composes inline formatted text from mixed parts.
+// Accepts string, *string, Span, TextC (from Bold/Italic with *string), and styled helpers.
+// Works with ForEach via per-span pointer offset rewriting.
+//
+// usage:
+//
+//	Textf("Hello ", Bold("world"), "!")
+//	Textf("Name: ", Bold(&it.Name), " Status: ", &it.Status)  // ForEach compatible
+func Textf(parts ...any) RichTextNode {
+	spans := make([]Span, 0, len(parts))
+	ptrs := make([]*string, 0, len(parts))
+	hasPtrs := false
+
+	for _, p := range parts {
+		switch v := p.(type) {
+		case string:
+			spans = append(spans, Span{Text: v})
+			ptrs = append(ptrs, nil)
+		case *string:
+			spans = append(spans, Span{Text: *v})
+			ptrs = append(ptrs, v)
+			hasPtrs = true
+		case Span:
+			spans = append(spans, v)
+			ptrs = append(ptrs, nil)
+		case TextC:
+			// extract the content and style from a TextC (e.g. from Bold(&ptr))
+			var sp Span
+			sp.Style = v.style
+			switch c := v.content.(type) {
+			case string:
+				sp.Text = c
+				spans = append(spans, sp)
+				ptrs = append(ptrs, nil)
+			case *string:
+				sp.Text = *c
+				spans = append(spans, sp)
+				ptrs = append(ptrs, c)
+				hasPtrs = true
+			}
+		}
+	}
+
+	node := RichTextNode{Spans: spans}
+	if hasPtrs {
+		node.spanPtrs = ptrs
+	}
+	return node
+}
 
 // ============================================================================
 // Spacer - Empty space
@@ -481,45 +611,58 @@ type SpacerC struct {
 	flexGrow float32
 }
 
+// Space creates a flexible empty spacer.
 func Space() SpacerC {
 	return SpacerC{}
 }
 
+// SpaceH creates a vertical spacer with a fixed height.
 func SpaceH(h int16) SpacerC {
 	return SpacerC{height: h}
 }
 
+// SpaceW creates a horizontal spacer with a fixed width.
 func SpaceW(w int16) SpacerC {
 	return SpacerC{width: w}
 }
 
+// Width sets a fixed width.
 func (s SpacerC) Width(w int16) SpacerC {
 	s.width = w
 	return s
 }
 
+// Height sets a fixed height.
 func (s SpacerC) Height(h int16) SpacerC {
 	s.height = h
 	return s
 }
 
+// Char sets the display character.
 func (s SpacerC) Char(c rune) SpacerC {
 	s.char = c
 	return s
 }
 
+// Style sets the component style.
 func (s SpacerC) Style(st Style) SpacerC {
 	s.style = st
 	return s
 }
 
+// Grow sets the flex grow factor.
 func (s SpacerC) Grow(g float32) SpacerC {
 	s.flexGrow = g
 	return s
 }
 
-func (s SpacerC) Margin(all int16) SpacerC    { s.style.margin = [4]int16{all, all, all, all}; return s }
+// Margin sets uniform margin on all sides.
+func (s SpacerC) Margin(all int16) SpacerC { s.style.margin = [4]int16{all, all, all, all}; return s }
+
+// MarginVH sets vertical and horizontal margin.
 func (s SpacerC) MarginVH(v, h int16) SpacerC { s.style.margin = [4]int16{v, h, v, h}; return s }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (s SpacerC) MarginTRBL(a, b, c, d int16) SpacerC {
 	s.style.margin = [4]int16{a, b, c, d}
 	return s
@@ -530,30 +673,47 @@ func (s SpacerC) MarginTRBL(a, b, c, d int16) SpacerC {
 // ============================================================================
 
 type HRuleC struct {
-	char  rune
-	style Style
+	char   rune
+	style  Style
+	extend bool
 }
 
+// HRule creates a horizontal rule.
 func HRule() HRuleC {
 	return HRuleC{char: '─'}
 }
 
+// Extend marks the rule to meet a sibling VRule, producing ┼ junctions.
+func (h HRuleC) Extend() HRuleC { h.extend = true; return h }
+
+// Char sets the display character.
 func (h HRuleC) Char(c rune) HRuleC {
 	h.char = c
 	return h
 }
 
+// Style sets the component style.
 func (h HRuleC) Style(s Style) HRuleC {
 	h.style = s
 	return h
 }
 
+// FG sets the foreground color.
 func (h HRuleC) FG(c Color) HRuleC { h.style.FG = c; return h }
-func (h HRuleC) BG(c Color) HRuleC { h.style.BG = c; return h }
-func (h HRuleC) Bold() HRuleC      { h.style.Attr |= AttrBold; return h }
 
-func (h HRuleC) Margin(all int16) HRuleC            { h.style.margin = [4]int16{all, all, all, all}; return h }
-func (h HRuleC) MarginVH(v, hz int16) HRuleC        { h.style.margin = [4]int16{v, hz, v, hz}; return h }
+// BG sets the background color.
+func (h HRuleC) BG(c Color) HRuleC { h.style.BG = c; return h }
+
+// Bold enables bold text.
+func (h HRuleC) Bold() HRuleC { h.style.Attr |= AttrBold; return h }
+
+// Margin sets uniform margin on all sides.
+func (h HRuleC) Margin(all int16) HRuleC { h.style.margin = [4]int16{all, all, all, all}; return h }
+
+// MarginVH sets vertical and horizontal margin.
+func (h HRuleC) MarginVH(v, hz int16) HRuleC { h.style.margin = [4]int16{v, hz, v, hz}; return h }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (h HRuleC) MarginTRBL(a, b, c, d int16) HRuleC { h.style.margin = [4]int16{a, b, c, d}; return h }
 
 // ============================================================================
@@ -564,33 +724,51 @@ type VRuleC struct {
 	char   rune
 	style  Style
 	height int16
+	extend bool
 }
 
+// VRule creates a vertical rule.
 func VRule() VRuleC {
 	return VRuleC{char: '│'}
 }
 
+// Char sets the display character.
 func (v VRuleC) Char(c rune) VRuleC {
 	v.char = c
 	return v
 }
 
+// Style sets the component style.
 func (v VRuleC) Style(s Style) VRuleC {
 	v.style = s
 	return v
 }
 
+// FG sets the foreground color.
 func (v VRuleC) FG(c Color) VRuleC { v.style.FG = c; return v }
-func (v VRuleC) BG(c Color) VRuleC { v.style.BG = c; return v }
-func (v VRuleC) Bold() VRuleC      { v.style.Attr |= AttrBold; return v }
 
+// BG sets the background color.
+func (v VRuleC) BG(c Color) VRuleC { v.style.BG = c; return v }
+
+// Bold enables bold text.
+func (v VRuleC) Bold() VRuleC { v.style.Attr |= AttrBold; return v }
+
+// Height sets a fixed height.
 func (v VRuleC) Height(h int16) VRuleC {
 	v.height = h
 	return v
 }
 
-func (v VRuleC) Margin(all int16) VRuleC            { v.style.margin = [4]int16{all, all, all, all}; return v }
-func (v VRuleC) MarginVH(vt, hz int16) VRuleC       { v.style.margin = [4]int16{vt, hz, vt, hz}; return v }
+// Extend makes the VRule overdraw one row at each end to meet adjacent HRules or borders.
+func (v VRuleC) Extend() VRuleC { v.extend = true; return v }
+
+// Margin sets uniform margin on all sides.
+func (v VRuleC) Margin(all int16) VRuleC { v.style.margin = [4]int16{all, all, all, all}; return v }
+
+// MarginVH sets vertical and horizontal margin.
+func (v VRuleC) MarginVH(vt, hz int16) VRuleC { v.style.margin = [4]int16{vt, hz, vt, hz}; return v }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (v VRuleC) MarginTRBL(a, b, c, d int16) VRuleC { v.style.margin = [4]int16{a, b, c, d}; return v }
 
 // ============================================================================
@@ -598,34 +776,47 @@ func (v VRuleC) MarginTRBL(a, b, c, d int16) VRuleC { v.style.margin = [4]int16{
 // ============================================================================
 
 type ProgressC struct {
-	value any // int (0-100) or *int
+	value any // *int (0-100)
 	width int16
 	style Style
 }
 
+// Progress creates a progress bar bound to an int pointer (0-100).
 func Progress(value any) ProgressC {
 	return ProgressC{value: value}
 }
 
+// Width sets a fixed width.
 func (p ProgressC) Width(w int16) ProgressC {
 	p.width = w
 	return p
 }
 
+// Style sets the component style.
 func (p ProgressC) Style(s Style) ProgressC {
 	p.style = s
 	return p
 }
 
+// FG sets the foreground color.
 func (p ProgressC) FG(c Color) ProgressC { p.style.FG = c; return p }
-func (p ProgressC) BG(c Color) ProgressC { p.style.BG = c; return p }
-func (p ProgressC) Bold() ProgressC      { p.style.Attr |= AttrBold; return p }
 
+// BG sets the background color.
+func (p ProgressC) BG(c Color) ProgressC { p.style.BG = c; return p }
+
+// Bold enables bold text.
+func (p ProgressC) Bold() ProgressC { p.style.Attr |= AttrBold; return p }
+
+// Margin sets uniform margin on all sides.
 func (p ProgressC) Margin(all int16) ProgressC {
 	p.style.margin = [4]int16{all, all, all, all}
 	return p
 }
+
+// MarginVH sets vertical and horizontal margin.
 func (p ProgressC) MarginVH(v, h int16) ProgressC { p.style.margin = [4]int16{v, h, v, h}; return p }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (p ProgressC) MarginTRBL(a, b, c, d int16) ProgressC {
 	p.style.margin = [4]int16{a, b, c, d}
 	return p
@@ -641,26 +832,40 @@ type SpinnerC struct {
 	style  Style
 }
 
+// Spinner creates an animated spinner bound to a frame counter.
+// Increment *frame and re-render to advance the animation.
 func Spinner(frame *int) SpinnerC {
 	return SpinnerC{frame: frame, frames: SpinnerBraille}
 }
 
+// Frames sets the animation frames.
 func (s SpinnerC) Frames(f []string) SpinnerC {
 	s.frames = f
 	return s
 }
 
+// Style sets the component style.
 func (s SpinnerC) Style(st Style) SpinnerC {
 	s.style = st
 	return s
 }
 
+// FG sets the foreground color.
 func (s SpinnerC) FG(c Color) SpinnerC { s.style.FG = c; return s }
-func (s SpinnerC) BG(c Color) SpinnerC { s.style.BG = c; return s }
-func (s SpinnerC) Bold() SpinnerC      { s.style.Attr |= AttrBold; return s }
 
-func (s SpinnerC) Margin(all int16) SpinnerC    { s.style.margin = [4]int16{all, all, all, all}; return s }
+// BG sets the background color.
+func (s SpinnerC) BG(c Color) SpinnerC { s.style.BG = c; return s }
+
+// Bold enables bold text.
+func (s SpinnerC) Bold() SpinnerC { s.style.Attr |= AttrBold; return s }
+
+// Margin sets uniform margin on all sides.
+func (s SpinnerC) Margin(all int16) SpinnerC { s.style.margin = [4]int16{all, all, all, all}; return s }
+
+// MarginVH sets vertical and horizontal margin.
 func (s SpinnerC) MarginVH(v, h int16) SpinnerC { s.style.margin = [4]int16{v, h, v, h}; return s }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (s SpinnerC) MarginTRBL(a, b, c, d int16) SpinnerC {
 	s.style.margin = [4]int16{a, b, c, d}
 	return s
@@ -678,35 +883,74 @@ type LeaderC struct {
 	style Style
 }
 
+// Leader creates a label.....value display with fill characters.
+// Accepts string or *string for reactive updates.
 func Leader(label, value any) LeaderC {
 	return LeaderC{label: label, value: value, fill: '.'}
 }
 
+// Width sets a fixed width.
 func (l LeaderC) Width(w int16) LeaderC {
 	l.width = w
 	return l
 }
 
+// Fill sets the fill character.
 func (l LeaderC) Fill(r rune) LeaderC {
 	l.fill = r
 	return l
 }
 
+// Style sets the component style.
 func (l LeaderC) Style(s Style) LeaderC {
 	l.style = s
 	return l
 }
 
+// FG sets the foreground color.
 func (l LeaderC) FG(c Color) LeaderC { l.style.FG = c; return l }
-func (l LeaderC) BG(c Color) LeaderC { l.style.BG = c; return l }
-func (l LeaderC) Bold() LeaderC      { l.style.Attr |= AttrBold; return l }
 
-func (l LeaderC) Margin(all int16) LeaderC    { l.style.margin = [4]int16{all, all, all, all}; return l }
+// BG sets the background color.
+func (l LeaderC) BG(c Color) LeaderC { l.style.BG = c; return l }
+
+// Bold enables bold text.
+func (l LeaderC) Bold() LeaderC { l.style.Attr |= AttrBold; return l }
+
+// Margin sets uniform margin on all sides.
+func (l LeaderC) Margin(all int16) LeaderC { l.style.margin = [4]int16{all, all, all, all}; return l }
+
+// MarginVH sets vertical and horizontal margin.
 func (l LeaderC) MarginVH(v, h int16) LeaderC { l.style.margin = [4]int16{v, h, v, h}; return l }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (l LeaderC) MarginTRBL(a, b, c, d int16) LeaderC {
 	l.style.margin = [4]int16{a, b, c, d}
 	return l
 }
+
+// ============================================================================
+// Counter - "current/total" display (alloc-free)
+// ============================================================================
+
+// counterC renders two int pointers as "current/total" with an optional
+// prefix. Formatting happens at render time using a stack-allocated scratch
+// buffer — zero heap allocations per frame.
+type counterC struct {
+	current   *int
+	total     *int
+	prefix    string
+	style     Style
+	streaming *bool  // when non-nil and true, show spinner
+	framePtr  *int32 // spinner frame, accessed atomically
+}
+
+func newCounter(current, total *int) counterC {
+	return counterC{current: current, total: total}
+}
+
+func (c counterC) Prefix(p string) counterC   { c.prefix = p; return c }
+func (c counterC) Dim() counterC              { c.style.Attr |= AttrDim; return c }
+func (c counterC) Streaming(s *bool) counterC { c.streaming = s; return c }
 
 // ============================================================================
 // Sparkline - Mini chart
@@ -720,35 +964,50 @@ type SparklineC struct {
 	style  Style
 }
 
+// Sparkline creates a mini bar chart using Unicode block characters (▁▂▃▄▅▆▇█).
+// Pass []float64 or *[]float64 for reactive updates.
 func Sparkline(values any) SparklineC {
 	return SparklineC{values: values}
 }
 
+// Width sets a fixed width.
 func (s SparklineC) Width(w int16) SparklineC {
 	s.width = w
 	return s
 }
 
+// Range sets the min and max value range for the chart.
 func (s SparklineC) Range(min, max float64) SparklineC {
 	s.min = min
 	s.max = max
 	return s
 }
 
+// Style sets the component style.
 func (s SparklineC) Style(st Style) SparklineC {
 	s.style = st
 	return s
 }
 
+// FG sets the foreground color.
 func (s SparklineC) FG(c Color) SparklineC { s.style.FG = c; return s }
-func (s SparklineC) BG(c Color) SparklineC { s.style.BG = c; return s }
-func (s SparklineC) Bold() SparklineC      { s.style.Attr |= AttrBold; return s }
 
+// BG sets the background color.
+func (s SparklineC) BG(c Color) SparklineC { s.style.BG = c; return s }
+
+// Bold enables bold text.
+func (s SparklineC) Bold() SparklineC { s.style.Attr |= AttrBold; return s }
+
+// Margin sets uniform margin on all sides.
 func (s SparklineC) Margin(all int16) SparklineC {
 	s.style.margin = [4]int16{all, all, all, all}
 	return s
 }
+
+// MarginVH sets vertical and horizontal margin.
 func (s SparklineC) MarginVH(v, h int16) SparklineC { s.style.margin = [4]int16{v, h, v, h}; return s }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (s SparklineC) MarginTRBL(a, b, c, d int16) SparklineC {
 	s.style.margin = [4]int16{a, b, c, d}
 	return s
@@ -765,17 +1024,25 @@ type JumpC struct {
 	margin   [4]int16
 }
 
+// Jump wraps a child component as a jump target.
+// When jump mode is active, a label appears at this position; typing it calls onSelect.
 func Jump(child any, onSelect func()) JumpC {
 	return JumpC{child: child, onSelect: onSelect}
 }
 
+// Style sets the component style.
 func (j JumpC) Style(s Style) JumpC {
 	j.style = s
 	return j
 }
 
-func (j JumpC) Margin(all int16) JumpC            { j.margin = [4]int16{all, all, all, all}; return j }
-func (j JumpC) MarginVH(v, h int16) JumpC         { j.margin = [4]int16{v, h, v, h}; return j }
+// Margin sets uniform margin on all sides.
+func (j JumpC) Margin(all int16) JumpC { j.margin = [4]int16{all, all, all, all}; return j }
+
+// MarginVH sets vertical and horizontal margin.
+func (j JumpC) MarginVH(v, h int16) JumpC { j.margin = [4]int16{v, h, v, h}; return j }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (j JumpC) MarginTRBL(a, b, c, d int16) JumpC { j.margin = [4]int16{a, b, c, d}; return j }
 
 // ============================================================================
@@ -790,27 +1057,37 @@ type LayerViewC struct {
 	margin     [4]int16
 }
 
+// LayerView displays a scrollable, pre-rendered layer within the view tree.
+// Use for large content that should scroll independently of the main layout.
 func LayerView(layer *Layer) LayerViewC {
 	return LayerViewC{layer: layer}
 }
 
+// Height sets a fixed height.
 func (l LayerViewC) ViewHeight(h int16) LayerViewC {
 	l.viewHeight = h
 	return l
 }
 
+// Width sets a fixed width.
 func (l LayerViewC) ViewWidth(w int16) LayerViewC {
 	l.viewWidth = w
 	return l
 }
 
+// Grow sets the flex grow factor.
 func (l LayerViewC) Grow(g float32) LayerViewC {
 	l.flexGrow = g
 	return l
 }
 
-func (l LayerViewC) Margin(all int16) LayerViewC    { l.margin = [4]int16{all, all, all, all}; return l }
+// Margin sets uniform margin on all sides.
+func (l LayerViewC) Margin(all int16) LayerViewC { l.margin = [4]int16{all, all, all, all}; return l }
+
+// MarginVH sets vertical and horizontal margin.
 func (l LayerViewC) MarginVH(v, h int16) LayerViewC { l.margin = [4]int16{v, h, v, h}; return l }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (l LayerViewC) MarginTRBL(a, b, c, d int16) LayerViewC {
 	l.margin = [4]int16{a, b, c, d}
 	return l
@@ -833,6 +1110,7 @@ type OverlayC struct {
 
 type OverlayFn func(children ...any) OverlayC
 
+// Centered centers the overlay content within the parent bounds.
 func (f OverlayFn) Centered() OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -841,6 +1119,7 @@ func (f OverlayFn) Centered() OverlayFn {
 	}
 }
 
+// Backdrop renders a backdrop behind the top-most layer that fills the parent.
 func (f OverlayFn) Backdrop() OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -849,6 +1128,7 @@ func (f OverlayFn) Backdrop() OverlayFn {
 	}
 }
 
+// At positions the overlay at fixed coordinates.
 func (f OverlayFn) At(x, y int) OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -858,6 +1138,7 @@ func (f OverlayFn) At(x, y int) OverlayFn {
 	}
 }
 
+// Size sets a fixed width and height.
 func (f OverlayFn) Size(w, h int) OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -867,6 +1148,7 @@ func (f OverlayFn) Size(w, h int) OverlayFn {
 	}
 }
 
+// BG sets the background color.
 func (f OverlayFn) BG(c Color) OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -875,6 +1157,7 @@ func (f OverlayFn) BG(c Color) OverlayFn {
 	}
 }
 
+// BackdropFG sets the backdrop foreground color.
 func (f OverlayFn) BackdropFG(c Color) OverlayFn {
 	return func(children ...any) OverlayC {
 		o := f(children...)
@@ -883,6 +1166,9 @@ func (f OverlayFn) BackdropFG(c Color) OverlayFn {
 	}
 }
 
+// Overlay displays content floating above the main view.
+// Use for modals, dialogs, and floating windows.
+// Control visibility with If: If(&showModal).Then(Overlay.Backdrop()(content))
 var Overlay OverlayFn = func(children ...any) OverlayC {
 	return OverlayC{children: children}
 }
@@ -896,6 +1182,13 @@ type ForEachC[T any] struct {
 	template func(item *T) any
 }
 
+// ForEach renders a template for each item in a slice.
+// template: func(item *T) any. return a component tree for each item.
+// Pointer fields inside *T are reactive; mutate and re-render to update.
+//
+//	ForEach(&todos, func(t *Todo) any {
+//	    return HBox(Text(&t.Name), Text(&t.Status))
+//	})
 func ForEach[T any](items *[]T, template func(item *T) any) ForEachC[T] {
 	return ForEachC[T]{items: items, template: template}
 }
@@ -914,6 +1207,7 @@ type ListC[T any] struct {
 	selected         *int
 	internalSel      int // used when no external selection provided
 	render           func(*T) any
+	onSelect         func(*T)
 	marker           string
 	markerStyle      Style
 	maxVisible       int
@@ -923,8 +1217,10 @@ type ListC[T any] struct {
 	declaredBindings []binding
 }
 
-// List creates a selectable list with internal selection management.
-// Use .Render() to provide custom item rendering.
+// List creates a navigable list from a bound slice.
+// Use .Render(func(*T) any) to customize how items appear,
+// .Handle(key, func(*T)) for per-item key actions,
+// and .BindNav("j","k") or .BindVimNav() for keyboard navigation.
 func List[T any](items *[]T) *ListC[T] {
 	l := &ListC[T]{
 		items:  items,
@@ -934,6 +1230,7 @@ func List[T any](items *[]T) *ListC[T] {
 	return l
 }
 
+// Ref provides access to the component for external references.
 func (l *ListC[T]) Ref(f func(*ListC[T])) *ListC[T] { f(l); return l }
 
 // Selection binds the selection index to an external pointer.
@@ -994,9 +1291,17 @@ func (l *ListC[T]) Delete() {
 	}
 }
 
-// Render sets a custom render function for each item.
+// Render customises how each item appears in the list.
+// fn: func(item *T) any. return a component tree for the item.
 func (l *ListC[T]) Render(fn func(*T) any) *ListC[T] {
 	l.render = fn
+	return l
+}
+
+// OnSelect fires when the user moves to a different item.
+// fn: func(item *T). receives a pointer to the newly selected item.
+func (l *ListC[T]) OnSelect(fn func(*T)) *ListC[T] {
+	l.onSelect = fn
 	return l
 }
 
@@ -1030,16 +1335,19 @@ func (l *ListC[T]) SelectedStyle(s Style) *ListC[T] {
 	return l
 }
 
+// Margin sets uniform margin on all sides.
 func (l *ListC[T]) Margin(all int16) *ListC[T] {
 	l.style.margin = [4]int16{all, all, all, all}
 	return l
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (l *ListC[T]) MarginVH(v, h int16) *ListC[T] {
 	l.style.margin = [4]int16{v, h, v, h}
 	return l
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (l *ListC[T]) MarginTRBL(t, r, b, li int16) *ListC[T] {
 	l.style.margin = [4]int16{t, r, b, li}
 	return l
@@ -1049,16 +1357,29 @@ func (l *ListC[T]) MarginTRBL(t, r, b, li int16) *ListC[T] {
 // Same instance is returned for both template compilation and method calls.
 func (l *ListC[T]) toSelectionList() *SelectionList {
 	if l.cached == nil {
-		l.cached = &SelectionList{
+		sl := &SelectionList{
 			Items:         l.items,
 			Selected:      l.selected,
-			Render:        l.render,
 			Marker:        l.marker,
 			MarkerStyle:   l.markerStyle,
 			MaxVisible:    l.maxVisible,
 			Style:         l.style,
 			SelectedStyle: l.selectedStyle,
 		}
+		if l.render != nil {
+			sl.Render = l.render
+		} else {
+			sl.Render = func(item *T) any { return Text(item) }
+		}
+		if l.onSelect != nil {
+			fn := l.onSelect
+			sl.onMove = func() {
+				if item := l.Selected(); item != nil {
+					fn(item)
+				}
+			}
+		}
+		l.cached = sl
 	}
 	return l.cached
 }
@@ -1081,6 +1402,7 @@ func (l *ListC[T]) First(m any) { l.toSelectionList().First(m) }
 // Last moves selection to last item.
 func (l *ListC[T]) Last(m any) { l.toSelectionList().Last(m) }
 
+// BindNav registers key bindings for moving selection down and up.
 func (l *ListC[T]) BindNav(down, up string) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: down, handler: l.Down},
@@ -1089,6 +1411,7 @@ func (l *ListC[T]) BindNav(down, up string) *ListC[T] {
 	return l
 }
 
+// BindPageNav registers key bindings for page-sized movement.
 func (l *ListC[T]) BindPageNav(pageDown, pageUp string) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: pageDown, handler: l.PageDown},
@@ -1097,6 +1420,7 @@ func (l *ListC[T]) BindPageNav(pageDown, pageUp string) *ListC[T] {
 	return l
 }
 
+// BindFirstLast registers key bindings for jumping to first/last item.
 func (l *ListC[T]) BindFirstLast(first, last string) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: first, handler: l.First},
@@ -1111,6 +1435,7 @@ func (l *ListC[T]) BindVimNav() *ListC[T] {
 	return l.BindNav("j", "k").BindPageNav("<C-d>", "<C-u>").BindFirstLast("g", "G")
 }
 
+// BindDelete registers a key binding to delete the selected item.
 func (l *ListC[T]) BindDelete(key string) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: key, handler: l.Delete},
@@ -1118,8 +1443,8 @@ func (l *ListC[T]) BindDelete(key string) *ListC[T] {
 	return l
 }
 
-// Handle registers a key binding that passes the currently selected item
-// to the callback. If nothing is selected, the callback is not called.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected item (skipped if empty).
 func (l *ListC[T]) Handle(key string, fn func(*T)) *ListC[T] {
 	l.declaredBindings = append(l.declaredBindings,
 		binding{pattern: key, handler: func() {
@@ -1147,32 +1472,43 @@ type TabsC struct {
 	margin        [4]int16
 }
 
+// Tabs creates a row of selectable tab headers.
+// Pair with Switch(&selected) to show the corresponding tab content.
 func Tabs(labels []string, selected *int) TabsC {
 	return TabsC{labels: labels, selected: selected, gap: 2}
 }
 
+// Kind sets the tab rendering style.
 func (t TabsC) Kind(s TabsStyle) TabsC {
 	t.tabStyle = s
 	return t
 }
 
+// Gap sets the spacing between children.
 func (t TabsC) Gap(g int8) TabsC {
 	t.gap = g
 	return t
 }
 
+// ActiveStyle sets the style for the active tab.
 func (t TabsC) ActiveStyle(s Style) TabsC {
 	t.activeStyle = s
 	return t
 }
 
+// InactiveStyle sets the style for inactive tabs.
 func (t TabsC) InactiveStyle(s Style) TabsC {
 	t.inactiveStyle = s
 	return t
 }
 
-func (t TabsC) Margin(all int16) TabsC            { t.margin = [4]int16{all, all, all, all}; return t }
-func (t TabsC) MarginVH(v, h int16) TabsC         { t.margin = [4]int16{v, h, v, h}; return t }
+// Margin sets uniform margin on all sides.
+func (t TabsC) Margin(all int16) TabsC { t.margin = [4]int16{all, all, all, all}; return t }
+
+// MarginVH sets vertical and horizontal margin.
+func (t TabsC) MarginVH(v, h int16) TabsC { t.margin = [4]int16{v, h, v, h}; return t }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (t TabsC) MarginTRBL(a, b, c, d int16) TabsC { t.margin = [4]int16{a, b, c, d}; return t }
 
 // ============================================================================
@@ -1192,6 +1528,7 @@ type ScrollbarC struct {
 	margin      [4]int16
 }
 
+// Scroll creates a scrollbar for tracking position in scrollable content.
 func Scroll(contentSize, viewSize int, position *int) ScrollbarC {
 	return ScrollbarC{
 		contentSize: contentSize,
@@ -1202,374 +1539,53 @@ func Scroll(contentSize, viewSize int, position *int) ScrollbarC {
 	}
 }
 
+// Length sets the scrollbar track length.
 func (s ScrollbarC) Length(l int16) ScrollbarC {
 	s.length = l
 	return s
 }
 
+// Horizontal renders the scrollbar horizontally instead of vertically.
 func (s ScrollbarC) Horizontal() ScrollbarC {
 	s.horizontal = true
 	s.trackChar = '─'
 	return s
 }
 
+// TrackChar sets the track display character.
 func (s ScrollbarC) TrackChar(c rune) ScrollbarC {
 	s.trackChar = c
 	return s
 }
 
+// ThumbChar sets the thumb display character.
 func (s ScrollbarC) ThumbChar(c rune) ScrollbarC {
 	s.thumbChar = c
 	return s
 }
 
+// TrackStyle sets the style for the track.
 func (s ScrollbarC) TrackStyle(st Style) ScrollbarC {
 	s.trackStyle = st
 	return s
 }
 
+// ThumbStyle sets the style for the thumb.
 func (s ScrollbarC) ThumbStyle(st Style) ScrollbarC {
 	s.thumbStyle = st
 	return s
 }
 
-func (s ScrollbarC) Margin(all int16) ScrollbarC    { s.margin = [4]int16{all, all, all, all}; return s }
+// Margin sets uniform margin on all sides.
+func (s ScrollbarC) Margin(all int16) ScrollbarC { s.margin = [4]int16{all, all, all, all}; return s }
+
+// MarginVH sets vertical and horizontal margin.
 func (s ScrollbarC) MarginVH(v, h int16) ScrollbarC { s.margin = [4]int16{v, h, v, h}; return s }
+
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (s ScrollbarC) MarginTRBL(a, b, c, d int16) ScrollbarC {
 	s.margin = [4]int16{a, b, c, d}
 	return s
-}
-
-// ============================================================================
-// AutoTable - Automatic table from slice of structs
-// ============================================================================
-
-// autoTableSortState tracks the current sort column and direction.
-// allocated once by Sortable, shared via pointer through value copies.
-type autoTableSortState struct {
-	col int  // -1 = unsorted, 0..n-1 = column index
-	asc bool // true = ascending
-}
-
-// autoTableScroll manages viewport scrolling for AutoTable.
-// renders all rows to an internal buffer, blits the visible window to screen.
-type autoTableScroll struct {
-	offset     int     // first visible data row
-	maxVisible int     // viewport height in data rows (excludes header)
-	buf        *Buffer // internal buffer for all data rows (nil until first render)
-	bufW       int     // width of internal buffer (for resize detection)
-}
-
-func (s *autoTableScroll) scrollDown(n int, total int) {
-	s.offset += n
-	if max := total - s.maxVisible; max > 0 {
-		if s.offset > max {
-			s.offset = max
-		}
-	} else {
-		s.offset = 0
-	}
-}
-
-func (s *autoTableScroll) scrollUp(n int) {
-	s.offset -= n
-	if s.offset < 0 {
-		s.offset = 0
-	}
-}
-
-func (s *autoTableScroll) pageDown(total int) { s.scrollDown(s.maxVisible, total) }
-func (s *autoTableScroll) pageUp()            { s.scrollUp(s.maxVisible) }
-
-func (s *autoTableScroll) clamp(total int) {
-	if max := total - s.maxVisible; max > 0 {
-		if s.offset > max {
-			s.offset = max
-		}
-	} else {
-		s.offset = 0
-	}
-	if s.offset < 0 {
-		s.offset = 0
-	}
-}
-
-type AutoTableC struct {
-	data        any      // slice of structs
-	columns     []string // field names to display (nil = all exported)
-	headers     []string // custom header names (parallel to columns)
-	headerStyle Style
-	rowStyle    Style
-	altRowStyle *Style
-	gap         int8
-	border      BorderStyle
-	margin      [4]int16
-
-	columnConfigs map[string]ColumnOption // per-column config keyed by field name
-
-	sortState        *autoTableSortState // nil unless Sortable called
-	scroll           *autoTableScroll    // nil unless Scrollable called
-	declaredBindings []binding
-}
-
-// AutoTable creates a table from a slice of structs.
-// Pass a slice like []MyStruct or []*MyStruct.
-func AutoTable(data any) AutoTableC {
-	return AutoTableC{
-		data:        data,
-		headerStyle: Style{Attr: AttrBold},
-		gap:         1,
-	}
-}
-
-// Columns selects which struct fields to display and in what order.
-// Field names are case-sensitive and must match exported struct fields.
-func (t AutoTableC) Columns(names ...string) AutoTableC {
-	t.columns = names
-	return t
-}
-
-// Headers sets custom header labels for the columns.
-// Must be called after Columns() and have the same number of entries.
-func (t AutoTableC) Headers(names ...string) AutoTableC {
-	t.headers = names
-	return t
-}
-
-// Column configures rendering for a specific column by struct field name.
-// The option can be a canned preset or a custom function:
-//
-//	AutoTable(&data).
-//	    Column("Price", Currency("$", 2)).
-//	    Column("Change", PercentChange(1)).
-//	    Column("Active", func(c *ColumnConfig) {
-//	        c.Align(AlignCenter)
-//	        c.Format(func(v any) string { ... })
-//	    })
-func (t AutoTableC) Column(name string, opt ColumnOption) AutoTableC {
-	if t.columnConfigs == nil {
-		t.columnConfigs = make(map[string]ColumnOption)
-	}
-	t.columnConfigs[name] = opt
-	return t
-}
-
-func (t AutoTableC) HeaderStyle(s Style) AutoTableC {
-	t.headerStyle = s
-	return t
-}
-
-func (t AutoTableC) RowStyle(s Style) AutoTableC {
-	t.rowStyle = s
-	return t
-}
-
-func (t AutoTableC) AltRowStyle(s Style) AutoTableC {
-	t.altRowStyle = &s
-	return t
-}
-
-func (t AutoTableC) Gap(g int8) AutoTableC {
-	t.gap = g
-	return t
-}
-
-func (t AutoTableC) Border(b BorderStyle) AutoTableC {
-	t.border = b
-	return t
-}
-
-func (t AutoTableC) Margin(all int16) AutoTableC    { t.margin = [4]int16{all, all, all, all}; return t }
-func (t AutoTableC) MarginVH(v, h int16) AutoTableC { t.margin = [4]int16{v, h, v, h}; return t }
-func (t AutoTableC) MarginTRBL(a, b, c, d int16) AutoTableC {
-	t.margin = [4]int16{a, b, c, d}
-	return t
-}
-
-// Sortable enables column sorting via jump labels.
-// when the app's jump key is pressed, each column header becomes a jump target.
-// selecting a column sorts ascending; selecting the same column again toggles direction.
-func (t AutoTableC) Sortable() AutoTableC {
-	if t.sortState == nil {
-		t.sortState = &autoTableSortState{col: -1}
-	}
-	return t
-}
-
-// Scrollable enables viewport scrolling with the given maximum visible rows.
-// renders all data rows to an internal buffer, blits only the visible window.
-func (t AutoTableC) Scrollable(maxVisible int) AutoTableC {
-	if t.scroll == nil {
-		t.scroll = &autoTableScroll{maxVisible: maxVisible}
-	} else {
-		t.scroll.maxVisible = maxVisible
-	}
-	return t
-}
-
-// BindNav registers key bindings for scrolling down/up by one row.
-// the closures capture the scroll pointer and data pointer, reading the
-// current slice length at invocation time for correct clamping.
-func (t AutoTableC) BindNav(down, up string) AutoTableC {
-	sc := t.scroll
-	data := t.data
-	t.declaredBindings = append(t.declaredBindings,
-		binding{pattern: down, handler: func() {
-			if sc == nil {
-				return
-			}
-			total := reflect.ValueOf(data).Elem().Len()
-			sc.scrollDown(1, total)
-		}},
-		binding{pattern: up, handler: func() {
-			if sc == nil {
-				return
-			}
-			sc.scrollUp(1)
-		}},
-	)
-	return t
-}
-
-// BindPageNav registers key bindings for page-sized scrolling.
-func (t AutoTableC) BindPageNav(pageDown, pageUp string) AutoTableC {
-	sc := t.scroll
-	data := t.data
-	t.declaredBindings = append(t.declaredBindings,
-		binding{pattern: pageDown, handler: func() {
-			if sc == nil {
-				return
-			}
-			total := reflect.ValueOf(data).Elem().Len()
-			sc.pageDown(total)
-		}},
-		binding{pattern: pageUp, handler: func() {
-			if sc == nil {
-				return
-			}
-			sc.pageUp()
-		}},
-	)
-	return t
-}
-
-// BindVimNav wires standard vim-style scroll keys:
-// j/k for line, Ctrl-d/Ctrl-u for page.
-func (t AutoTableC) BindVimNav() AutoTableC {
-	return t.BindNav("j", "k").BindPageNav("<C-d>", "<C-u>")
-}
-
-func (t AutoTableC) bindings() []binding { return t.declaredBindings }
-
-// autoTableSort sorts a *[]T slice in-place by the given struct field index.
-func autoTableSort(data any, fieldIdx int, asc bool) {
-	rv := reflect.ValueOf(data)
-	if rv.Kind() != reflect.Pointer {
-		return
-	}
-	slice := rv.Elem()
-	if slice.Kind() != reflect.Slice {
-		return
-	}
-
-	n := slice.Len()
-	if n < 2 {
-		return
-	}
-
-	// copy to avoid aliasing during write-back
-	tmp := make([]reflect.Value, n)
-	for i := 0; i < n; i++ {
-		tmp[i] = reflect.New(slice.Type().Elem()).Elem()
-		tmp[i].Set(slice.Index(i))
-	}
-
-	sortSliceReflect(tmp, fieldIdx, asc)
-
-	for i, v := range tmp {
-		slice.Index(i).Set(v)
-	}
-}
-
-// sortSliceReflect sorts reflected values by a struct field.
-func sortSliceReflect(items []reflect.Value, fieldIdx int, asc bool) {
-	n := len(items)
-	// simple insertion sort -- tables are typically small
-	for i := 1; i < n; i++ {
-		for j := i; j > 0; j-- {
-			a := derefValue(items[j-1]).Field(fieldIdx)
-			b := derefValue(items[j]).Field(fieldIdx)
-			cmp := compareValues(a, b)
-			if !asc {
-				cmp = -cmp
-			}
-			if cmp <= 0 {
-				break
-			}
-			items[j-1], items[j] = items[j], items[j-1]
-		}
-	}
-}
-
-func derefValue(v reflect.Value) reflect.Value {
-	if v.Kind() == reflect.Ptr {
-		return v.Elem()
-	}
-	return v
-}
-
-// compareValues compares two reflected values, handling numeric types natively
-// and falling back to string comparison.
-func compareValues(a, b reflect.Value) int {
-	switch a.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		ai, bi := a.Int(), b.Int()
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
-		return 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		ai, bi := a.Uint(), b.Uint()
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
-		return 0
-	case reflect.Float32, reflect.Float64:
-		ai, bi := a.Float(), b.Float()
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
-		return 0
-	case reflect.String:
-		as, bs := a.String(), b.String()
-		if as < bs {
-			return -1
-		}
-		if as > bs {
-			return 1
-		}
-		return 0
-	default:
-		// fallback: compare string representations
-		as := fmt.Sprintf("%v", a.Interface())
-		bs := fmt.Sprintf("%v", b.Interface())
-		if as < bs {
-			return -1
-		}
-		if as > bs {
-			return 1
-		}
-		return 0
-	}
 }
 
 // ============================================================================
@@ -1585,6 +1601,15 @@ type CheckboxC struct {
 	unchecked        string
 	style            Style
 	declaredBindings []binding
+
+	// focus
+	focused bool
+	onBlur  func()
+
+	// validation
+	validator  BoolValidator
+	validateOn ValidateOn
+	err        string
 }
 
 // Checkbox creates a checkbox bound to a bool pointer.
@@ -1607,34 +1632,41 @@ func CheckboxPtr(checked *bool, label *string) *CheckboxC {
 	}
 }
 
+// Ref provides access to the component for external references.
 func (c *CheckboxC) Ref(f func(*CheckboxC)) *CheckboxC { f(c); return c }
 
+// Marks sets the checked and unchecked display characters.
 func (c *CheckboxC) Marks(checked, unchecked string) *CheckboxC {
 	c.checkedMark = checked
 	c.unchecked = unchecked
 	return c
 }
 
+// Style sets the component style.
 func (c *CheckboxC) Style(s Style) *CheckboxC {
 	c.style = s
 	return c
 }
 
+// Margin sets uniform margin on all sides.
 func (c *CheckboxC) Margin(all int16) *CheckboxC {
 	c.style.margin = [4]int16{all, all, all, all}
 	return c
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (c *CheckboxC) MarginVH(v, h int16) *CheckboxC {
 	c.style.margin = [4]int16{v, h, v, h}
 	return c
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (c *CheckboxC) MarginTRBL(t, r, b, l int16) *CheckboxC {
 	c.style.margin = [4]int16{t, r, b, l}
 	return c
 }
 
+// BindToggle registers a key binding to toggle the checked state.
 func (c *CheckboxC) BindToggle(key string) *CheckboxC {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: key, handler: c.Toggle},
@@ -1644,9 +1676,60 @@ func (c *CheckboxC) BindToggle(key string) *CheckboxC {
 
 func (c *CheckboxC) bindings() []binding { return c.declaredBindings }
 
+// focusBinding implements focusable. Checkbox has no text input.
+func (c *CheckboxC) focusBinding() *textInputBinding { return nil }
+
+// setFocused implements focusable.
+func (c *CheckboxC) setFocused(focused bool) {
+	wasFocused := c.focused
+	c.focused = focused
+	if wasFocused && !focused {
+		if c.validateOn&VOnBlur != 0 {
+			c.runValidation()
+		}
+		if c.onBlur != nil {
+			c.onBlur()
+		}
+	}
+}
+
+// Focused returns whether this checkbox currently has focus.
+func (c *CheckboxC) Focused() bool { return c.focused }
+
+// Validate sets a validation function and when it runs.
+// If when is omitted, defaults to VOnBlur|VOnSubmit.
+func (c *CheckboxC) Validate(fn BoolValidator, when ...ValidateOn) *CheckboxC {
+	c.validator = fn
+	if len(when) > 0 {
+		c.validateOn = when[0]
+	} else {
+		c.validateOn = VOnBlur | VOnSubmit
+	}
+	return c
+}
+
+// Err returns the current validation error message, or empty string if valid.
+func (c *CheckboxC) Err() string {
+	return c.err
+}
+
+// runValidation runs the validator and stores the result.
+func (c *CheckboxC) runValidation() {
+	if c.validator != nil {
+		if err := c.validator(*c.checked); err != nil {
+			c.err = err.Error()
+		} else {
+			c.err = ""
+		}
+	}
+}
+
 // Toggle flips the checked state.
 func (c *CheckboxC) Toggle() {
 	*c.checked = !*c.checked
+	if c.validateOn&VOnChange != 0 {
+		c.runValidation()
+	}
 }
 
 // Checked returns the current state.
@@ -1665,6 +1748,10 @@ type RadioC struct {
 	gap              int8
 	horizontal       bool
 	declaredBindings []binding
+
+	// focus
+	focused bool
+	onBlur  func()
 }
 
 // Radio creates a radio group with static options.
@@ -1687,44 +1774,53 @@ func RadioPtr(selected *int, options *[]string) *RadioC {
 	}
 }
 
+// Ref provides access to the component for external references.
 func (r *RadioC) Ref(f func(*RadioC)) *RadioC { f(r); return r }
 
+// Marks sets the selected and unselected display characters.
 func (r *RadioC) Marks(selected, unselected string) *RadioC {
 	r.selectedMark = selected
 	r.unselected = unselected
 	return r
 }
 
+// Style sets the component style.
 func (r *RadioC) Style(s Style) *RadioC {
 	r.style = s
 	return r
 }
 
+// Margin sets uniform margin on all sides.
 func (r *RadioC) Margin(all int16) *RadioC {
 	r.style.margin = [4]int16{all, all, all, all}
 	return r
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (r *RadioC) MarginVH(v, h int16) *RadioC {
 	r.style.margin = [4]int16{v, h, v, h}
 	return r
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (r *RadioC) MarginTRBL(t, ri, b, l int16) *RadioC {
 	r.style.margin = [4]int16{t, ri, b, l}
 	return r
 }
 
+// Gap sets the spacing between children.
 func (r *RadioC) Gap(g int8) *RadioC {
 	r.gap = g
 	return r
 }
 
+// Horizontal renders the radio group horizontally instead of vertically.
 func (r *RadioC) Horizontal() *RadioC {
 	r.horizontal = true
 	return r
 }
 
+// BindNav registers key bindings for cycling selection.
 func (r *RadioC) BindNav(next, prev string) *RadioC {
 	r.declaredBindings = append(r.declaredBindings,
 		binding{pattern: next, handler: func() { r.Next() }},
@@ -1734,6 +1830,23 @@ func (r *RadioC) BindNav(next, prev string) *RadioC {
 }
 
 func (r *RadioC) bindings() []binding { return r.declaredBindings }
+
+// focusBinding implements focusable. Radio has no text input.
+func (r *RadioC) focusBinding() *textInputBinding { return nil }
+
+// setFocused implements focusable.
+func (r *RadioC) setFocused(focused bool) {
+	wasFocused := r.focused
+	r.focused = focused
+	if wasFocused && !focused {
+		if r.onBlur != nil {
+			r.onBlur()
+		}
+	}
+}
+
+// Focused returns whether this radio group currently has focus.
+func (r *RadioC) Focused() bool { return r.focused }
 
 // Next moves selection to next option.
 func (r *RadioC) Next() {
@@ -1789,7 +1902,9 @@ type CheckListC[T any] struct {
 	cached           *SelectionList
 }
 
-// CheckList creates a list where each item has a checkbox.
+// CheckList creates a navigable checklist from a bound slice.
+// Items should have struct tags `glyph:"checked"` and `glyph:"render"`,
+// or use .Checked(func(*T) *bool) and .Render(func(*T) any) to configure manually.
 func CheckList[T any](items *[]T) *CheckListC[T] {
 	c := &CheckListC[T]{
 		items:         items,
@@ -1801,13 +1916,15 @@ func CheckList[T any](items *[]T) *CheckListC[T] {
 	return c
 }
 
-// Checked sets the function to get the checked state for each item.
+// Checked provides the bool pointer that controls each item's checkbox.
+// fn: func(item *T) *bool. return a pointer to the item's checked field.
 func (c *CheckListC[T]) Checked(fn func(*T) *bool) *CheckListC[T] {
 	c.checked = fn
 	return c
 }
 
-// Render sets a custom render function for item content (after the checkbox).
+// Render customises how each item appears after its checkbox.
+// fn: func(item *T) any. return a component tree for the item content.
 func (c *CheckListC[T]) Render(fn func(*T) any) *CheckListC[T] {
 	c.render = fn
 	return c
@@ -1826,41 +1943,49 @@ func (c *CheckListC[T]) Marker(m string) *CheckListC[T] {
 	return c
 }
 
+// MarkerStyle sets the style for the selection marker.
 func (c *CheckListC[T]) MarkerStyle(s Style) *CheckListC[T] {
 	c.markerStyle = s
 	return c
 }
 
+// Style sets the component style.
 func (c *CheckListC[T]) Style(s Style) *CheckListC[T] {
 	c.style = s
 	return c
 }
 
+// SelectedStyle sets the style for the selected row.
 func (c *CheckListC[T]) SelectedStyle(s Style) *CheckListC[T] {
 	c.selectedStyle = s
 	return c
 }
 
+// Margin sets uniform margin on all sides.
 func (c *CheckListC[T]) Margin(all int16) *CheckListC[T] {
 	c.style.margin = [4]int16{all, all, all, all}
 	return c
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (c *CheckListC[T]) MarginVH(v, h int16) *CheckListC[T] {
 	c.style.margin = [4]int16{v, h, v, h}
 	return c
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (c *CheckListC[T]) MarginTRBL(t, r, b, l int16) *CheckListC[T] {
 	c.style.margin = [4]int16{t, r, b, l}
 	return c
 }
 
+// Gap sets the spacing between children.
 func (c *CheckListC[T]) Gap(g int8) *CheckListC[T] {
 	c.gap = g
 	return c
 }
 
+// BindNav registers key bindings for moving selection down and up.
 func (c *CheckListC[T]) BindNav(down, up string) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: down, handler: c.Down},
@@ -1869,6 +1994,7 @@ func (c *CheckListC[T]) BindNav(down, up string) *CheckListC[T] {
 	return c
 }
 
+// BindPageNav registers key bindings for page-sized movement.
 func (c *CheckListC[T]) BindPageNav(pageDown, pageUp string) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: pageDown, handler: c.PageDown},
@@ -1877,6 +2003,7 @@ func (c *CheckListC[T]) BindPageNav(pageDown, pageUp string) *CheckListC[T] {
 	return c
 }
 
+// BindFirstLast registers key bindings for jumping to first/last item.
 func (c *CheckListC[T]) BindFirstLast(first, last string) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: first, handler: c.First},
@@ -1891,6 +2018,7 @@ func (c *CheckListC[T]) BindVimNav() *CheckListC[T] {
 	return c.BindNav("j", "k").BindPageNav("<C-d>", "<C-u>").BindFirstLast("g", "G")
 }
 
+// BindToggle registers a key binding to toggle the checked state.
 func (c *CheckListC[T]) BindToggle(key string) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: key, handler: func() {
@@ -1905,6 +2033,7 @@ func (c *CheckListC[T]) BindToggle(key string) *CheckListC[T] {
 	return c
 }
 
+// BindDelete registers a key binding to delete the selected item.
 func (c *CheckListC[T]) BindDelete(key string) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: key, handler: c.Delete},
@@ -1912,8 +2041,8 @@ func (c *CheckListC[T]) BindDelete(key string) *CheckListC[T] {
 	return c
 }
 
-// Handle registers a key binding that passes the currently selected item
-// to the callback. If nothing is selected, the callback is not called.
+// Handle registers a key binding that acts on the currently selected item.
+// fn: func(item *T). receives a pointer to the selected item (skipped if empty).
 func (c *CheckListC[T]) Handle(key string, fn func(*T)) *CheckListC[T] {
 	c.declaredBindings = append(c.declaredBindings,
 		binding{pattern: key, handler: func() {
@@ -1927,6 +2056,7 @@ func (c *CheckListC[T]) Handle(key string, fn func(*T)) *CheckListC[T] {
 
 func (c *CheckListC[T]) bindings() []binding { return c.declaredBindings }
 
+// Ref provides access to the component for external references.
 func (c *CheckListC[T]) Ref(f func(*CheckListC[T])) *CheckListC[T] { f(c); return c }
 
 // SelectedItem returns a pointer to the currently selected item.
@@ -1961,12 +2091,23 @@ func (c *CheckListC[T]) Delete() {
 	}
 }
 
-func (c *CheckListC[T]) Up(m any)       { c.toSelectionList().Up(m) }
-func (c *CheckListC[T]) Down(m any)     { c.toSelectionList().Down(m) }
-func (c *CheckListC[T]) PageUp(m any)   { c.toSelectionList().PageUp(m) }
+// Up moves selection up by one.
+func (c *CheckListC[T]) Up(m any) { c.toSelectionList().Up(m) }
+
+// Down moves selection down by one.
+func (c *CheckListC[T]) Down(m any) { c.toSelectionList().Down(m) }
+
+// PageUp moves selection up by page size.
+func (c *CheckListC[T]) PageUp(m any) { c.toSelectionList().PageUp(m) }
+
+// PageDown moves selection down by page size.
 func (c *CheckListC[T]) PageDown(m any) { c.toSelectionList().PageDown(m) }
-func (c *CheckListC[T]) First(m any)    { c.toSelectionList().First(m) }
-func (c *CheckListC[T]) Last(m any)     { c.toSelectionList().Last(m) }
+
+// First moves selection to first item.
+func (c *CheckListC[T]) First(m any) { c.toSelectionList().First(m) }
+
+// Last moves selection to last item.
+func (c *CheckListC[T]) Last(m any) { c.toSelectionList().Last(m) }
 
 func (c *CheckListC[T]) toSelectionList() *SelectionList {
 	if c.cached == nil {
@@ -1981,7 +2122,7 @@ func (c *CheckListC[T]) toSelectionList() *SelectionList {
 			if t.Kind() == reflect.Struct {
 				for i := 0; i < t.NumField(); i++ {
 					field := t.Field(i)
-					tag := field.Tag.Get("forme")
+					tag := field.Tag.Get("glyph")
 
 					if tag == "checked" && field.Type.Kind() == reflect.Bool && checkedFn == nil {
 						idx := i
@@ -2043,16 +2184,62 @@ type InputC struct {
 	style       Style
 	declaredTIB *textInputBinding
 
+	// value binding
+	boundValue *string
+
+	// validation
+	validator  StringValidator
+	validateOn ValidateOn
+	err        string
+
 	// focus management
 	focused bool
 	manager *FocusManager
+
+	// blur callback (wired by Form for VOnBlur validation)
+	onBlur func()
 }
 
 // Input creates a text input with internal state.
-func Input() *InputC {
-	return &InputC{}
+// Optionally pass a *string to bind the input value to a variable.
+func Input(bind ...*string) *InputC {
+	i := &InputC{}
+	if len(bind) > 0 && bind[0] != nil {
+		i.boundValue = bind[0]
+		i.field.Value = *bind[0]
+	}
+	return i
 }
 
+// Validate sets a validation function and when it runs.
+// If when is omitted, defaults to VOnBlur|VOnSubmit.
+func (i *InputC) Validate(fn StringValidator, when ...ValidateOn) *InputC {
+	i.validator = fn
+	if len(when) > 0 {
+		i.validateOn = when[0]
+	} else {
+		i.validateOn = VOnBlur | VOnSubmit
+	}
+	return i
+}
+
+// Err returns the current validation error message, or empty string if valid.
+func (i *InputC) Err() string {
+	return i.err
+}
+
+// runValidation runs the validator and stores the result.
+func (i *InputC) runValidation() {
+	if i.validator != nil {
+		if err := i.validator(i.field.Value); err != nil {
+			i.err = err.Error()
+		} else {
+			i.err = ""
+		}
+	}
+}
+
+// Ref provides access to the component for external references.
 func (i *InputC) Ref(f func(*InputC)) *InputC { f(i); return i }
 
 // Placeholder sets the placeholder text.
@@ -2073,30 +2260,36 @@ func (i *InputC) Mask(m rune) *InputC {
 	return i
 }
 
+// Style sets the component style.
 func (i *InputC) Style(s Style) *InputC {
 	i.style = s
 	return i
 }
 
+// Margin sets uniform margin on all sides.
 func (i *InputC) Margin(all int16) *InputC {
 	i.style.margin = [4]int16{all, all, all, all}
 	return i
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (i *InputC) MarginVH(v, h int16) *InputC {
 	i.style.margin = [4]int16{v, h, v, h}
 	return i
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (i *InputC) MarginTRBL(t, r, b, l int16) *InputC {
 	i.style.margin = [4]int16{t, r, b, l}
 	return i
 }
 
+// Bind routes unmatched key input to this text field.
 func (i *InputC) Bind() *InputC {
 	i.declaredTIB = &textInputBinding{
-		value:  &i.field.Value,
-		cursor: &i.field.Cursor,
+		value:    &i.field.Value,
+		cursor:   &i.field.Cursor,
+		onChange: i.handleChange,
 	}
 	return i
 }
@@ -2109,8 +2302,9 @@ func (i *InputC) ManagedBy(fm *FocusManager) *InputC {
 	i.manager = fm
 	i.focused = false
 	i.declaredTIB = &textInputBinding{
-		value:  &i.field.Value,
-		cursor: &i.field.Cursor,
+		value:    &i.field.Value,
+		cursor:   &i.field.Cursor,
+		onChange: i.handleChange,
 	}
 	fm.Register(i)
 	return i
@@ -2123,7 +2317,29 @@ func (i *InputC) focusBinding() *textInputBinding {
 
 // setFocused implements focusable.
 func (i *InputC) setFocused(focused bool) {
+	wasFocused := i.focused
 	i.focused = focused
+	// blur: was focused, now not
+	if wasFocused && !focused {
+		if i.validateOn&VOnBlur != 0 {
+			i.runValidation()
+		}
+		if i.onBlur != nil {
+			i.onBlur()
+		}
+	}
+}
+
+// handleChange is called after every keystroke.
+func (i *InputC) handleChange(val string) {
+	// sync to bound value
+	if i.boundValue != nil {
+		*i.boundValue = val
+	}
+	// validate on change
+	if i.validateOn&VOnChange != 0 {
+		i.runValidation()
+	}
 }
 
 // Focused returns whether this input currently has focus.

@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 // Layer is a pre-rendered buffer with scroll management.
 // Content is rendered once (expensive), then blitted to screen each frame (cheap).
@@ -32,6 +32,10 @@ type Layer struct {
 	// Width changes always trigger a re-render (text wrapping changes).
 	// Height changes trigger a re-render if content height depends on viewport.
 	Render func()
+
+	// AlwaysRender causes Render to fire every frame, not just on width changes.
+	// Used by components that track external pointer mutations (e.g. TextViewC).
+	AlwaysRender bool
 }
 
 // NewLayer creates a new empty layer.
@@ -92,8 +96,7 @@ func (l *Layer) NeedsRender() bool {
 	if l.Render == nil {
 		return false
 	}
-	// first render, or width changed (text wrapping)
-	return l.lastRenderWidth == 0 || l.lastRenderWidth != l.viewWidth
+	return l.AlwaysRender || l.lastRenderWidth == 0 || l.lastRenderWidth != l.viewWidth
 }
 
 // prepare ensures the layer is ready to blit. Called by the framework before
@@ -303,4 +306,22 @@ func (l *Layer) ScreenCursor() (x, y int, visible bool) {
 	x = l.screenX + l.cursor.X
 	y = l.screenY + viewY
 	return x, y, true
+}
+
+// Cursor represents a cursor position and style.
+// Use this to read full cursor state. For setting, use the individual
+// methods (SetCursor, SetCursorStyle, ShowCursor, HideCursor) which
+// are optimized for their typical usage patterns.
+type Cursor struct {
+	X, Y    int
+	Style   CursorShape
+	Visible bool
+}
+
+// DefaultCursor returns a cursor with sensible defaults.
+func DefaultCursor() Cursor {
+	return Cursor{
+		Style:   CursorBlock,
+		Visible: true,
+	}
 }

@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"bytes"
@@ -244,7 +244,7 @@ func BenchmarkVignetteTransition(b *testing.B) {
 		}
 	}
 	resolveColor16(renderBuf, 120, 40)
-	PPVignette(1.0)(renderBuf, PostContext{Width: 120, Height: 40})
+	SEVignette().Strength(1.0).Apply(renderBuf, PostContext{Width: 120, Height: 40})
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -282,7 +282,7 @@ func BenchmarkVignetteSteadyState(b *testing.B) {
 		}
 	}
 	resolveColor16(renderBuf, 120, 40)
-	PPVignette(1.0)(renderBuf, PostContext{Width: 120, Height: 40})
+	SEVignette().Strength(1.0).Apply(renderBuf, PostContext{Width: 120, Height: 40})
 
 	// prime both buffers with the same vignette output (steady state)
 	copy(s.back.cells, renderBuf.cells)
@@ -320,7 +320,7 @@ func BenchmarkPlasmaFrame(b *testing.B) {
 			s.front.Set(x, y, Cell{Rune: 'A', Style: style})
 		}
 	}
-	plasma := PPPlasma(0.6)
+	plasma := SEPlasma()
 	ctx := PostContext{Width: 120, Height: 40}
 
 	b.ResetTimer()
@@ -334,7 +334,7 @@ func BenchmarkPlasmaFrame(b *testing.B) {
 			}
 		}
 		ctx.Time += 33 * 1e6 // 33ms advance
-		plasma(renderBuf, ctx)
+		plasma.Apply(renderBuf, ctx)
 		copy(s.back.cells, renderBuf.cells)
 		s.back.MarkAllDirty()
 		s.front.Clear() // simulate prior frame having different content
@@ -349,7 +349,7 @@ func BenchmarkPlasmaFrame(b *testing.B) {
 // Phase-isolation benchmarks — proves where frame time actually goes.
 //
 // The three phases of a rendered frame:
-//   Phase 1 — Effect:  resolveColor16 + PostProcess passes (pure Go, CPU-bound)
+//   Phase 1 — Effect:  resolveColor16 + Effect passes (pure Go, CPU-bound)
 //   Phase 2 — Diff:    Flush() — cell comparison + escape-sequence building (pure Go)
 //   Phase 3 — Write:   FlushBuffer() — single Write() syscall to terminal (I/O-bound)
 //
@@ -368,14 +368,14 @@ func BenchmarkPlasmaComputeOnly(b *testing.B) {
 			buf.Set(x, y, Cell{Rune: 'A', Style: style})
 		}
 	}
-	plasma := PPPlasma(0.6)
+	plasma := SEPlasma()
 	ctx := PostContext{Width: 120, Height: 40}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		ctx.Time += 33 * 1e6
-		plasma(buf, ctx)
+		plasma.Apply(buf, ctx)
 	}
 }
 
@@ -401,7 +401,7 @@ func BenchmarkPlasmaFlushBuildOnly(b *testing.B) {
 			renderBuf.Set(x, y, Cell{Rune: 'A', Style: style})
 		}
 	}
-	PPPlasma(0.6)(renderBuf, PostContext{Width: 120, Height: 40, Time: 1e9})
+	SEPlasma().Apply(renderBuf, PostContext{Width: 120, Height: 40, Time: 1e9})
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -440,7 +440,7 @@ func BenchmarkWriteThroughput(b *testing.B) {
 			renderBuf.Set(x, y, Cell{Rune: 'A', Style: style})
 		}
 	}
-	PPPlasma(0.6)(renderBuf, PostContext{Width: 120, Height: 40, Time: 1e9})
+	SEPlasma().Apply(renderBuf, PostContext{Width: 120, Height: 40, Time: 1e9})
 	copy(s.back.cells, renderBuf.cells)
 	s.back.MarkAllDirty()
 	s.front.Clear()
@@ -480,5 +480,130 @@ func BenchmarkAppendInt(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf := scratch[:0]
 		buf = appendInt(buf, 12345)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Effect dispatch overhead benchmarks
+//
+// All three benchmarks run identical per-cell work (desaturate luminance blend)
+// on a 120×40 buffer. The only variable is how the inner function is called:
+//   Direct  — loop inlined, no function call at all
+//   Closure — func variable (current Effect model)
+//   Method  — concrete type with a method (potential inlining via devirtualisation)
+//
+// Compare ns/op to isolate call overhead from computation cost.
+// ---------------------------------------------------------------------------
+
+// BenchmarkEffectDispatchDirect is the baseline: the inner loop written inline.
+// This gives the minimum achievable time — pure computation, zero dispatch cost.
+func BenchmarkEffectDispatchDirect(b *testing.B) {
+	buf := NewBuffer(120, 40)
+	for y := range 40 {
+		for x := range 120 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(180, 120, 60)}})
+		}
+	}
+	ctx := PostContext{Width: 120, Height: 40}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		for y := range ctx.Height {
+			base := y * buf.width
+			for x := range ctx.Width {
+				c := &buf.cells[base+x]
+				fg := resolveFG(c.Style.FG, ctx)
+				lum := uint8((uint32(fg.R)*299 + uint32(fg.G)*587 + uint32(fg.B)*114) / 1000)
+				c.Style.FG = RGB(lum, lum, lum)
+			}
+		}
+	}
+}
+
+// BenchmarkEffectDispatchClosure calls the same work via a func variable —
+// the current Effect model. Measures the indirect call overhead.
+func BenchmarkEffectDispatchClosure(b *testing.B) {
+	buf := NewBuffer(120, 40)
+	for y := range 40 {
+		for x := range 120 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(180, 120, 60)}})
+		}
+	}
+	ctx := PostContext{Width: 120, Height: 40}
+
+	effect := SEDesaturate().Strength(1.0) // interface dispatch — same math as Direct
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		effect.Apply(buf, ctx)
+	}
+}
+
+// desatShader is a concrete type implementing the same desaturate logic.
+// Go can potentially devirtualise/inline method calls on concrete types.
+type desatShader struct{}
+
+func (desatShader) run(buf *Buffer, ctx PostContext) {
+	for y := range ctx.Height {
+		base := y * buf.width
+		for x := range ctx.Width {
+			c := &buf.cells[base+x]
+			fg := resolveFG(c.Style.FG, ctx)
+			lum := uint8((uint32(fg.R)*299 + uint32(fg.G)*587 + uint32(fg.B)*114) / 1000)
+			c.Style.FG = RGB(lum, lum, lum)
+		}
+	}
+}
+
+// BenchmarkEffectDispatchMethod calls the same work via a concrete method.
+// If Go can inline through the method call, this will match Direct.
+func BenchmarkEffectDispatchMethod(b *testing.B) {
+	buf := NewBuffer(120, 40)
+	for y := range 40 {
+		for x := range 120 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(180, 120, 60)}})
+		}
+	}
+	ctx := PostContext{Width: 120, Height: 40}
+	shader := desatShader{}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		shader.run(buf, ctx)
+	}
+}
+
+// desatShader.Apply satisfies Effect — used to benchmark interface dispatch.
+func (desatShader) Apply(buf *Buffer, ctx PostContext) {
+	for y := range ctx.Height {
+		base := y * buf.width
+		for x := range ctx.Width {
+			c := &buf.cells[base+x]
+			fg := resolveFG(c.Style.FG, ctx)
+			lum := uint8((uint32(fg.R)*299 + uint32(fg.G)*587 + uint32(fg.B)*114) / 1000)
+			c.Style.FG = RGB(lum, lum, lum)
+		}
+	}
+}
+
+// BenchmarkEffectDispatchInterface calls via an interface — what a concrete
+// Effect interface design would do when iterating a []Effect pipeline.
+func BenchmarkEffectDispatchInterface(b *testing.B) {
+	buf := NewBuffer(120, 40)
+	for y := range 40 {
+		for x := range 120 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(180, 120, 60)}})
+		}
+	}
+	ctx := PostContext{Width: 120, Height: 40}
+	var pp Effect = desatShader{}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		pp.Apply(buf, ctx)
 	}
 }

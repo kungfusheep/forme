@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"bufio"
@@ -6,9 +6,6 @@ import (
 	"sync"
 )
 
-// LogC displays a scrollable log that reads from an io.Reader.
-// Lines are buffered internally with optional max line limit (ring buffer).
-// Scrolling is handled automatically via the underlying Layer.
 type LogC struct {
 	reader     io.Reader
 	maxLines   int
@@ -31,8 +28,10 @@ type LogC struct {
 	newLineCount int  // lines arrived while not following (for "X new lines" indicator)
 }
 
-// Log creates a log that reads lines from the given reader.
+// Log creates a scrollable log viewer that reads lines from an io.Reader.
 // The reader is consumed in a background goroutine that exits on EOF/error.
+// Lines are buffered with a configurable max (ring buffer); scrolling follows
+// new content automatically until the user scrolls away.
 func Log(r io.Reader) *LogC {
 	return &LogC{
 		reader:     r,

@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"testing"
@@ -210,6 +210,35 @@ func TestFzfQueryScore(t *testing.T) {
 		}
 	})
 
+	t.Run("AND groups joined by OR", func(t *testing.T) {
+		q := ParseFzfQuery("quick fox | slow cat | lazy dog")
+
+		// first OR group matches: "quick" AND "fox" both present
+		_, matched := q.Score("the quick brown fox")
+		if !matched {
+			t.Error("first AND group matches, should match")
+		}
+
+		// third OR group matches: "lazy" AND "dog" both present
+		_, matched = q.Score("the lazy old dog")
+		if !matched {
+			t.Error("third AND group matches, should match")
+		}
+
+		// second OR group: "slow" present but "cat" missing, fails
+		// other groups also fail
+		_, matched = q.Score("the slow brown fox")
+		if matched {
+			t.Error("no AND group fully satisfied, should not match")
+		}
+
+		// none match
+		_, matched = q.Score("hello world")
+		if matched {
+			t.Error("nothing matches, should not match")
+		}
+	})
+
 	t.Run("negation", func(t *testing.T) {
 		q := ParseFzfQuery("!xyz")
 		_, matched := q.Score("abcdef")
@@ -221,6 +250,85 @@ func TestFzfQueryScore(t *testing.T) {
 			t.Error("xyz present, negation should not match")
 		}
 	})
+}
+
+func TestFzfAndOrPrecedence(t *testing.T) {
+	type tc struct {
+		name      string
+		query     string
+		candidate string
+		want      bool
+	}
+
+	tests := []tc{
+		// basic structure: ` | ` splits OR groups, space splits AND terms within
+		// "a b | c d" = (a AND b) OR (c AND d)
+
+		// --- single OR group with AND ---
+		{"AND satisfied", "quick fox", "the quick brown fox", true},
+		{"AND partial fail", "quick cat", "the quick brown fox", false},
+		{"AND both missing", "slow cat", "the quick brown fox", false},
+
+		// --- pure OR ---
+		{"OR first matches", "fox | cat", "the quick brown fox", true},
+		{"OR second matches", "fox | cat", "the lazy house cat", true},
+		{"OR neither matches", "fox | cat", "the slow brown dog", false},
+
+		// --- AND groups joined by OR ---
+		// (quick AND fox) OR (lazy AND dog) OR (fast AND cat)
+		{"OR-AND first group", "quick fox | lazy dog | fast cat", "the quick brown fox", true},
+		{"OR-AND second group", "quick fox | lazy dog | fast cat", "the lazy old dog", true},
+		{"OR-AND third group", "quick fox | lazy dog | fast cat", "the fast house cat", true},
+		{"OR-AND no group satisfied", "quick fox | lazy dog | fast cat", "the slow brown fox", false},
+		// fuzzy "cat" matches "the quick lazy fast animal" via subsequence c-a-t (quiCk lAzy fasT)
+		// use exact terms to test strict AND isolation across OR groups
+		{"OR-AND partial across groups fuzzy", "quick fox | lazy dog | fast cat", "the quick lazy fast animal", true},
+		{"OR-AND partial across groups exact", "'quick 'fox | 'lazy 'dog | 'fast 'cat", "the quick lazy fast animal", false},
+
+		// --- single term OR groups: a | b | c ---
+		{"single-term OR first", "alpha | beta | gamma", "alpha testing", true},
+		{"single-term OR middle", "alpha | beta | gamma", "beta release", true},
+		{"single-term OR last", "alpha | beta | gamma", "gamma ray", true},
+		{"single-term OR none", "alpha | beta | gamma", "delta force", false},
+
+		// --- AND with negation inside OR groups ---
+		// (!bad AND good) OR (nice)
+		{"negation in AND group matches", "!bad good | nice", "good morning", true},
+		{"negation in AND group blocked", "!bad good | nice", "bad good", false},
+		{"negation in AND group falls to OR", "!bad good | nice", "nice day", true},
+
+		// --- exact + prefix + suffix inside OR groups ---
+		// (^start AND end$) OR ('middle)
+		{"prefix+suffix AND group", "^the fox$ | 'brown", "the quick brown fox", true},
+		{"exact match in OR fallback", "^the fox$ | 'brown", "a brown bear", true},
+		{"prefix+suffix AND both needed", "^the fox$ | 'brown", "the quick red dog", false},
+
+		// --- three AND terms in one group, OR'd with another ---
+		// (a AND b AND c) OR (x)
+		{"three-way AND satisfied", "quick brown fox | unicorn", "the quick brown fox", true},
+		{"three-way AND one missing", "quick brown fox | unicorn", "the quick red fox", false},
+		{"three-way AND fails, OR fallback", "quick brown fox | unicorn", "a magical unicorn", true},
+
+		// --- edge: single term on each side ---
+		{"single | single first", "foo | bar", "foo", true},
+		{"single | single second", "foo | bar", "bar", true},
+		{"single | single neither", "foo | bar", "baz", false},
+
+		// --- verify AND binds tighter: "a b | c" is (a AND b) OR c, NOT a AND (b OR c) ---
+		{"precedence: a b | c, AND group matches", "quick fox | zzz", "the quick brown fox", true},
+		{"precedence: a b | c, OR fallback", "quick fox | zzz", "zzz", true},
+		{"precedence: a b | c, only 'quick' not enough", "quick fox | zzz", "the quick brown dog", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := ParseFzfQuery(tt.query)
+			_, matched := q.Score(tt.candidate)
+			if matched != tt.want {
+				t.Errorf("query=%q candidate=%q: got matched=%v, want %v", tt.query, tt.candidate, matched, tt.want)
+			}
+		})
+	}
 }
 
 func BenchmarkFzfScore1000(b *testing.B) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 func main() {

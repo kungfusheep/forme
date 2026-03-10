@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ func TestIfWithGrowBorder(t *testing.T) {
 	//   - If(showProcs).Then(VBoxNode{Border, Grow(2)} "Processes")
 	view := VBoxNode{Children: []any{
 		VBoxNode{
-			Title:    "Timing",
+			Title: "Timing",
 			Children: []any{
 				TextNode{Content: "Line 1"},
 				TextNode{Content: "Line 2"},
@@ -24,7 +24,7 @@ func TestIfWithGrowBorder(t *testing.T) {
 		}.Border(BorderSingle).BorderFG(Yellow).Grow(1),
 
 		If(&showProcs).Eq(true).Then(VBoxNode{
-			Title:    "Processes",
+			Title: "Processes",
 			Children: []any{
 				TextNode{Content: "Process 1"},
 				TextNode{Content: "Process 2"},
@@ -112,7 +112,7 @@ func TestDashboardLayoutBorders(t *testing.T) {
 		// Main content row (horizontal flex)
 		HBoxNode{Gap: 1, Children: []any{
 			VBoxNode{
-				Title:    "Stats",
+				Title: "Stats",
 				Children: []any{
 					TextNode{Content: "Tasks: 100"},
 					TextNode{Content: "Memory: 4GB"},
@@ -132,7 +132,7 @@ func TestDashboardLayoutBorders(t *testing.T) {
 		// The outer Col has Grow(1), inner children have Grow(1) and Grow(2)
 		VBoxNode{Children: []any{
 			VBoxNode{
-				Title:    "Timing",
+				Title: "Timing",
 				Children: []any{
 					TextNode{Content: "Render: 100µs"},
 					TextNode{Content: "Flush: 50µs"},
@@ -140,7 +140,7 @@ func TestDashboardLayoutBorders(t *testing.T) {
 			}.Border(BorderDouble).BorderFG(Yellow).Grow(1),
 
 			If(&showProcs).Eq(true).Then(VBoxNode{
-				Title:    "Processes",
+				Title: "Processes",
 				Children: []any{
 					TextNode{Content: "PID    NAME     CPU"},
 					TextNode{Content: "1001   nginx    2.5%"},
@@ -184,5 +184,90 @@ func TestDashboardLayoutBorders(t *testing.T) {
 
 	if !processesBottomFound {
 		t.Error("Processes box bottom border not found - this is the bug we're debugging!")
+	}
+}
+
+// TestHBoxWithBorderedChildren tests that borders inside HBox flex children
+// are drawn correctly.
+func TestHBoxWithBorderedChildren(t *testing.T) {
+	view := HBoxNode{Gap: 1, Children: []any{
+		// Left panel
+		VBoxNode{Children: []any{
+			VBoxNode{
+				Title: "Stats",
+				Children: []any{
+					TextNode{Content: "Tasks: 142"},
+					TextNode{Content: "Sleeping: 138"},
+				},
+			}.Border(BorderSingle).BorderFG(Cyan),
+			VBoxNode{
+				Title: "Load",
+				Children: []any{
+					TextNode{Content: "1.17, 0.69, 0.85"},
+				},
+			}.Border(BorderRounded).BorderFG(Green),
+		}}.Grow(1),
+
+		// Right panel
+		VBoxNode{Children: []any{
+			VBoxNode{
+				Title: "Info",
+				Children: []any{
+					TextNode{Content: "Line 1"},
+					TextNode{Content: "Line 2"},
+					TextNode{Content: "Line 3"},
+				},
+			}.Border(BorderSingle).BorderFG(Magenta),
+		}}.Grow(2),
+	}}
+
+	tmpl := Build(view)
+	buf := NewBuffer(60, 15)
+	tmpl.Execute(buf, 60, 15)
+
+	t.Log("Op geometries:")
+	for i, op := range tmpl.ops {
+		g := tmpl.geom[i]
+		name := ""
+		if op.Title != "" {
+			name = op.Title
+		} else if op.Kind == OpContainer {
+			if op.IsRow {
+				name = "Row"
+			} else {
+				name = "Col"
+			}
+		}
+		t.Logf("  [%d] %s: LocalX=%d LocalY=%d W=%d H=%d", i, name, g.LocalX, g.LocalY, g.W, g.H)
+	}
+
+	t.Log("Buffer contents:")
+	for y := 0; y < 15; y++ {
+		line := buf.GetLine(y)
+		t.Logf("Line %2d: %s", y, line)
+	}
+
+	statsBottomFound := false
+	loadBottomFound := false
+
+	for y := 0; y < 15; y++ {
+		for x := 0; x < 60; x++ {
+			cell := buf.Get(x, y)
+			if cell.Rune == BorderSingle.BottomLeft && cell.Style.FG == Cyan {
+				statsBottomFound = true
+				t.Logf("Found Stats bottom border at y=%d", y)
+			}
+			if cell.Rune == BorderRounded.BottomLeft && cell.Style.FG == Green {
+				loadBottomFound = true
+				t.Logf("Found Load bottom border at y=%d", y)
+			}
+		}
+	}
+
+	if !statsBottomFound {
+		t.Error("Stats box bottom border not found!")
+	}
+	if !loadBottomFound {
+		t.Error("Load box bottom border not found!")
 	}
 }

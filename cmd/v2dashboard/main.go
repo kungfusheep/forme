@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kungfusheep/riffkey"
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 // Grid returns a layout function that arranges children in a grid

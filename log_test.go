@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"io"

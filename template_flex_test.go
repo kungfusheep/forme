@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"strings"
@@ -1129,4 +1129,117 @@ func TestTreeViewComponent(t *testing.T) {
 			t.Error("Output should contain leaf indicator '*'")
 		}
 	})
+}
+
+// TestSparklineInHBoxGrowPanels tests the commandcenter scenario: multiple VBox.Grow(1)
+// panels inside an HBox, each containing a Sparkline. The Sparkline must not overflow
+// through the top border of its parent VBox.
+func TestSparklineInHBoxGrowPanels(t *testing.T) {
+	data := []float64{1, 2, 3, 4, 5, 4, 3, 2, 1, 2}
+	label := "142 req/s"
+
+	tmpl := Build(
+		VBoxNode{
+			Children: []any{
+				HBoxNode{
+					Gap: 1,
+					Children: []any{
+						VBoxNode{
+							Title:    "requests/s",
+							Children: []any{SparklineNode{Values: data}, TextNode{Content: label}},
+						}.Border(BorderSingle).Grow(1),
+						VBoxNode{
+							Title:    "p99 latency",
+							Children: []any{SparklineNode{Values: data}, TextNode{Content: label}},
+						}.Border(BorderSingle).Grow(1),
+						VBoxNode{
+							Title:    "error rate",
+							Children: []any{SparklineNode{Values: data}, TextNode{Content: label}},
+						}.Border(BorderSingle).Grow(1),
+					},
+				},
+				// service table with Grow(1) in root VBox context
+				VBoxNode{
+					Children: []any{TextNode{Content: "services"}},
+				}.Border(BorderSingle).Grow(1),
+			},
+		},
+	)
+
+	buf := NewBuffer(80, 20)
+	tmpl.Execute(buf, 80, 20)
+
+	output := buf.String()
+	lines := strings.Split(output, "\n")
+
+	t.Logf("output:\n%s", output)
+
+	// line 0 is the top border of the HBox panels — must contain a corner character
+	topLine := lines[0]
+	if !strings.ContainsAny(topLine, "┌╔+-") {
+		t.Errorf("top border of panels missing or overwritten; got: %q", topLine)
+	}
+
+	// the sparkline/label content must appear on row 1 or later (inside the border)
+	contentRow := -1
+	for i, l := range lines {
+		if strings.Contains(l, label) {
+			contentRow = i
+			break
+		}
+	}
+	if contentRow < 1 {
+		t.Errorf("panel content rendered above or on top border (row %d)", contentRow)
+	}
+}
+
+// TestSparklineGrowInsideBorderedVBox is a regression test for a bug where
+// a Sparkline inside a bordered VBox with Grow(1) would overflow through the
+// top border. distributeFlexInCol was not including op.Margin[0] when
+// recalculating child positions after flex distribution.
+func TestSparklineGrowInsideBorderedVBox(t *testing.T) {
+	data := []float64{1, 2, 3, 4, 5, 4, 3, 2, 1, 2}
+
+	tmpl := Build(
+		VBoxNode{
+			Children: []any{
+				VBoxNode{
+					Children: []any{
+						SparklineNode{Values: data},
+						TextNode{Content: "label"},
+					},
+				}.Border(BorderSingle).Grow(1),
+			},
+		},
+	)
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+
+	output := buf.String()
+	lines := strings.Split(output, "\n")
+
+	t.Logf("output:\n%s", output)
+
+	// the top border must be on line 0 and must contain a corner character —
+	// if the sparkline overflows, it overwrites the border line
+	if len(lines) == 0 {
+		t.Fatal("no output")
+	}
+	topLine := lines[0]
+	if !strings.ContainsAny(topLine, "┌╔+-") {
+		t.Errorf("top border missing or overwritten by sparkline content; got: %q", topLine)
+	}
+
+	// label must appear inside the box, not above the top border
+	labelRow := -1
+	for i, l := range lines {
+		if strings.Contains(l, "label") {
+			labelRow = i
+			break
+		}
+	}
+	if labelRow < 1 {
+		t.Errorf("label rendered above or on top border (row %d)", labelRow)
+	}
 }

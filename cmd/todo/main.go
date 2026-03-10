@@ -1,15 +1,15 @@
 package main
 
-import . "github.com/kungfusheep/forme"
+import . "github.com/kungfusheep/glyph"
 
 type Todo struct {
-	Text string `forme:"render"`
-	Done bool   `forme:"checked"`
+	Text string `glyph:"render"`
+	Done bool   `glyph:"checked"`
 }
 
 func main() {
 
-	todos := []Todo{{"Learn forme", true}, {"Build something", false}}
+	todos := []Todo{{"Learn glyph", true}, {"Build something", false}}
 	var input InputState
 
 	app, _ := NewApp()

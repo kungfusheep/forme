@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"fmt"
@@ -112,6 +112,158 @@ func TestV2DynamicText(t *testing.T) {
 
 	if got := buf.GetLine(0); got != "Changed!" {
 		t.Errorf("after change: got %q, want %q", got, "Changed!")
+	}
+}
+
+func TestFuncText(t *testing.T) {
+	// basic: func is called each render
+	counter := 0
+	tmpl := Build(VBoxNode{Children: []any{
+		TextNode{Content: func() string { return fmt.Sprintf("count:%d", counter) }},
+	}})
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "count:0" {
+		t.Errorf("render 1: got %q, want %q", got, "count:0")
+	}
+
+	counter = 7
+	buf.Clear()
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "count:7" {
+		t.Errorf("render 2: got %q, want %q", got, "count:7")
+	}
+}
+
+func TestFuncTextViaTextC(t *testing.T) {
+	// same but through the Text() functional API
+	val := "hello"
+	tmpl := Build(VBox(
+		Text(func() string { return val }),
+	))
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "hello" {
+		t.Errorf("render 1: got %q, want %q", got, "hello")
+	}
+
+	val = "world"
+	buf.Clear()
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "world" {
+		t.Errorf("render 2: got %q, want %q", got, "world")
+	}
+}
+
+func TestFuncTextWidth(t *testing.T) {
+	// width is derived from the func return value when no explicit Width set
+	val := "hi"
+	tmpl := Build(HBox(
+		Text(func() string { return val }),
+		Text("!"),
+	))
+
+	buf := NewBuffer(40, 5)
+	tmpl.Execute(buf, 40, 5)
+	line := buf.GetLine(0)
+	if !strings.Contains(line, "hi") {
+		t.Errorf("expected 'hi' in line: %q", line)
+	}
+	if !strings.Contains(line, "!") {
+		t.Errorf("expected '!' in line: %q", line)
+	}
+}
+
+func TestFuncTextWithStyle(t *testing.T) {
+	// styling (bold, FG) applies correctly
+	val := "styled"
+	tmpl := Build(VBox(
+		Text(func() string { return val }).Bold(),
+	))
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "styled" {
+		t.Errorf("got %q, want %q", got, "styled")
+	}
+}
+
+func TestFuncTextClosureOverMultipleVars(t *testing.T) {
+	// real-world pattern: formatted derived value
+	done, total := 3, 10
+	tmpl := Build(VBox(
+		Text(func() string { return fmt.Sprintf("%d/%d", done, total) }),
+	))
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "3/10" {
+		t.Errorf("render 1: got %q, want %q", got, "3/10")
+	}
+
+	done = 10
+	buf.Clear()
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "10/10" {
+		t.Errorf("render 2: got %q, want %q", got, "10/10")
+	}
+}
+
+func TestFuncTextInHBox(t *testing.T) {
+	// func text renders correctly when siblings are present
+	label := "status"
+	tmpl := Build(HBox(
+		Text("Label: "),
+		Text(func() string { return label }),
+	))
+
+	buf := NewBuffer(40, 5)
+	tmpl.Execute(buf, 40, 5)
+	line := buf.GetLine(0)
+	if !strings.Contains(line, "Label: ") {
+		t.Errorf("missing label in %q", line)
+	}
+	if !strings.Contains(line, "status") {
+		t.Errorf("missing func value in %q", line)
+	}
+
+	label = "online"
+	buf.Clear()
+	tmpl.Execute(buf, 40, 5)
+	line = buf.GetLine(0)
+	if !strings.Contains(line, "online") {
+		t.Errorf("after update: missing 'online' in %q", line)
+	}
+}
+
+func TestFuncTextInIf(t *testing.T) {
+	// func text inside conditional branch
+	show := true
+	val := "visible"
+	tmpl := Build(VBox(
+		If(&show).Then(Text(func() string { return val })),
+	))
+
+	buf := NewBuffer(40, 10)
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "visible" {
+		t.Errorf("render 1: got %q, want %q", got, "visible")
+	}
+
+	val = "updated"
+	buf.Clear()
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "updated" {
+		t.Errorf("render 2: got %q, want %q", got, "updated")
+	}
+
+	show = false
+	buf.Clear()
+	tmpl.Execute(buf, 40, 10)
+	if got := buf.GetLine(0); got != "" {
+		t.Errorf("hidden: expected empty line, got %q", got)
 	}
 }
 
@@ -4191,7 +4343,7 @@ func TestAutoTableColumnConfig(t *testing.T) {
 			t.Fatalf("could not find Value header, row0: %q", buf.GetLine(0))
 		}
 
-		// row 1 has "5" — right-aligned in a column wide enough for "12,345" (6 chars)
+		// row 1 has "5", right-aligned in a column wide enough for "12,345" (6 chars)
 		// the "5" should NOT be at valStart (that would be left-aligned)
 		cell := buf.Get(valStart, 1)
 		if cell.Rune == '5' {
@@ -4199,4 +4351,139 @@ func TestAutoTableColumnConfig(t *testing.T) {
 				buf.GetLine(0), buf.GetLine(1))
 		}
 	})
+}
+
+// TestV2SplitLayout tests the nested Row/Col structure used by minivim splits
+func TestV2SplitLayout(t *testing.T) {
+	layer1 := NewLayer()
+	buf1 := NewBuffer(40, 10)
+	buf1.WriteStringFast(0, 0, "Window 1 content", Style{}, 40)
+	layer1.SetBuffer(buf1)
+
+	layer2 := NewLayer()
+	buf2 := NewBuffer(40, 10)
+	buf2.WriteStringFast(0, 0, "Window 2 content", Style{}, 40)
+	layer2.SetBuffer(buf2)
+
+	spans1 := []Span{{Text: "Status 1"}}
+	spans2 := []Span{{Text: "Status 2"}}
+
+	view := VBoxNode{Children: []any{
+		HBoxNode{Children: []any{
+			VBoxNode{Children: []any{
+				LayerViewNode{Layer: layer1, ViewHeight: 5},
+				RichTextNode{Spans: spans1},
+			}},
+			VBoxNode{Children: []any{
+				LayerViewNode{Layer: layer2, ViewHeight: 5},
+				RichTextNode{Spans: spans2},
+			}},
+		}},
+		TextNode{Content: "Global status"},
+	}}
+
+	tmpl := Build(view)
+	screen := NewBuffer(80, 20)
+	tmpl.Execute(screen, 80, 20)
+
+	t.Log("Output:")
+	for y := 0; y < 10; y++ {
+		t.Logf("%2d: %q", y, screen.GetLine(y))
+	}
+
+	line0 := screen.GetLine(0)
+	if line0 == "" {
+		t.Error("Line 0 is empty - split layout failed")
+	}
+
+	if !contains(line0, "Window 1") {
+		t.Errorf("Window 1 content not found at line 0: %q", line0)
+	}
+
+	found := false
+	for y := 0; y < 6; y++ {
+		if contains(screen.GetLine(y), "Window 2") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Window 2 content not found in output")
+	}
+}
+
+// TestSimpleForEach verifies single-level ForEach works with progress bars
+func TestSimpleForEach(t *testing.T) {
+	items := make([]StressItem, 10)
+	for i := range items {
+		items[i] = StressItem{CPU: float32(i) / 10.0}
+	}
+
+	ui := VBoxNode{
+		Children: []any{
+			TextNode{Content: "Simple ForEach"},
+			ForEach(&items, func(item *StressItem) any {
+				return ProgressNode{Value: &item.CPU, BarWidth: 8}
+			}),
+		},
+	}
+
+	serial := Build(ui)
+	buf := NewBuffer(100, 50)
+	buf.Clear()
+	serial.Execute(buf, 100, 50)
+
+	cell := buf.Get(0, 1)
+	isProgressChar := cell.Rune == '█' || cell.Rune == ' ' || cell.Rune == '░' ||
+		cell.Rune == '▏' || cell.Rune == '▎' || cell.Rune == '▍' || cell.Rune == '▌' ||
+		cell.Rune == '▋' || cell.Rune == '▊' || cell.Rune == '▉'
+	if !isProgressChar {
+		t.Errorf("Expected progress bar character at (0,1), got %c", cell.Rune)
+	}
+}
+
+// TestNestedForEach verifies nested ForEach with progress grid
+func TestNestedForEach(t *testing.T) {
+	buf := NewBuffer(100, 50)
+
+	rows := make([][]StressItem, 10)
+	for i := range rows {
+		rows[i] = make([]StressItem, 10)
+		for j := range rows[i] {
+			rows[i][j] = StressItem{
+				CPU: float32((i*10+j)%100) / 100.0,
+			}
+		}
+	}
+
+	ui := VBoxNode{
+		Children: []any{
+			TextNode{Content: "Dense Grid"},
+			ForEach(&rows, func(row *[]StressItem) any {
+				return HBoxNode{Children: []any{
+					ForEach(row, func(item *StressItem) any {
+						return ProgressNode{Value: &item.CPU, BarWidth: 8}
+					}),
+				}}
+			}),
+		},
+	}
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 100, 50)
+
+	progressChars := 0
+	for x := 0; x < 80; x++ {
+		cell := buf.Get(x, 1)
+		isProgressChar := cell.Rune == '█' || cell.Rune == ' ' || cell.Rune == '░' || cell.Rune == '▓' ||
+			cell.Rune == '▏' || cell.Rune == '▎' || cell.Rune == '▍' || cell.Rune == '▌' ||
+			cell.Rune == '▋' || cell.Rune == '▊' || cell.Rune == '▉'
+		if isProgressChar {
+			progressChars++
+		}
+	}
+	if progressChars < 70 {
+		t.Errorf("Expected ~80 progress bar characters on row 1, got %d", progressChars)
+	}
 }

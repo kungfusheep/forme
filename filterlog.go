@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"bufio"
@@ -6,15 +6,6 @@ import (
 	"sync"
 )
 
-// FilterLogC is a filterable log viewer. It composes an input and a log
-// into a single component with fzf-style filtering.
-//
-// usage:
-//
-//	FilterLog(reader).
-//	    Placeholder("filter...").
-//	    MaxLines(10000).
-//	    BindVimNav()
 type FilterLogC struct {
 	input *InputC
 	log   *LogC
@@ -36,7 +27,13 @@ type FilterLogC struct {
 	manager *FocusManager
 }
 
-// FilterLog creates a filterable log viewer.
+// FilterLog creates a filterable log viewer that composes an input and a log
+// with fzf-style filtering. Type to filter log lines in real-time.
+//
+//	FilterLog(reader).
+//	    Placeholder("filter...").
+//	    MaxLines(10000).
+//	    BindVimNav()
 func FilterLog(r io.Reader) *FilterLogC {
 	fl := &FilterLogC{
 		input: Input(),
@@ -122,16 +119,19 @@ func (fl *FilterLogC) Grow(g float32) *FilterLogC {
 	return fl
 }
 
+// Margin sets uniform margin on all sides.
 func (fl *FilterLogC) Margin(all int16) *FilterLogC {
 	fl.margin = [4]int16{all, all, all, all}
 	return fl
 }
 
+// MarginVH sets vertical and horizontal margin.
 func (fl *FilterLogC) MarginVH(v, h int16) *FilterLogC {
 	fl.margin = [4]int16{v, h, v, h}
 	return fl
 }
 
+// MarginTRBL sets individual margins for top, right, bottom, left.
 func (fl *FilterLogC) MarginTRBL(t, r, b, l int16) *FilterLogC {
 	fl.margin = [4]int16{t, r, b, l}
 	return fl

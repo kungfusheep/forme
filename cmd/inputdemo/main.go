@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 	"github.com/kungfusheep/riffkey"
 )
 
@@ -16,11 +16,11 @@ func main() {
 	email := Input().Placeholder("you@example.com").Width(30)
 	password := Input().Placeholder("Enter password").Width(30).Mask('*')
 
-	form := Form(
+	form := Form.Gap(1).LabelFG(BrightWhite)(
 		Field("Name", name),
 		Field("Email", email),
 		Field("Password", password),
-	).Gap(1).LabelFG(BrightWhite)
+	)
 
 	app, err := NewApp()
 	if err != nil {

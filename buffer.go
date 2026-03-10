@@ -1,7 +1,9 @@
-package forme
+package glyph
 
 import (
+	"context"
 	"fmt"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
@@ -119,8 +121,8 @@ var partialBlocks = [9]rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'
 
 // WriteProgressBar writes a progress bar directly to the buffer.
 // Uses partial block characters for smooth sub-character precision.
-// Background color fills the empty space for seamless appearance.
-// Batch write - much faster than per-cell Set calls.
+// Background color fills the empty space.
+// Writes all cells in a single pass.
 func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	if y < 0 || y >= b.height {
 		return
@@ -173,7 +175,7 @@ func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 }
 
 // WriteStringFast writes a string without border merging.
-// Direct slice access for maximum speed.
+// Writes directly to the cell slice without border merging.
 func (b *Buffer) WriteStringFast(x, y int, s string, style Style, maxWidth int) {
 	if y < 0 || y >= b.height {
 		return
@@ -376,7 +378,7 @@ func (b *Buffer) Fill(c Cell) {
 }
 
 // Clear clears the buffer to empty cells with default style.
-// Uses copy() from a cached empty buffer for speed (memmove vs scalar loop).
+// Uses copy() from a cached empty buffer.
 func (b *Buffer) Clear() {
 	size := len(b.cells)
 
@@ -433,7 +435,7 @@ func (b *Buffer) ResetDirtyMax() {
 }
 
 // ClearDirty clears only the rows that were written to since last clear.
-// Much faster than Clear() when content doesn't fill the buffer.
+// Useful when content doesn't fill the buffer.
 func (b *Buffer) ClearDirty() {
 	if b.dirtyMaxY < 0 {
 		return
@@ -640,6 +642,11 @@ var borderEdgesArray = [128]uint8{
 	0x6E: 0b1100, // ╮ BoxRoundedTopRight (0x256E)
 	0x6F: 0b1001, // ╯ BoxRoundedBottomRight (0x256F)
 	0x70: 0b0011, // ╰ BoxRoundedBottomLeft (0x2570)
+	// single-direction stubs — allow merge to produce T/cross junctions
+	0x74: 0b1000, // ╴ left stub  (0x2574): merges │+╴ → ┤, ─+╴ → ─
+	0x75: 0b0001, // ╵ up stub    (0x2575): merges ─+╵ → ┴
+	0x76: 0b0010, // ╶ right stub (0x2576): merges │+╶ → ├, ─+╶ → ─
+	0x77: 0b0100, // ╷ down stub  (0x2577): merges ─+╷ → ┬
 }
 
 // edgesToBorderArray provides O(1) lookup from edge bits to border rune
@@ -1036,7 +1043,7 @@ func (b *Buffer) StringTrimmed() string {
 // srcX, srcY: top-left corner in source buffer (for scrolling)
 // dstX, dstY: top-left corner in destination buffer
 // width, height: size of region to copy
-// Uses optimized row-by-row copy() for speed.
+// Copies row-by-row using copy().
 func (b *Buffer) Blit(src *Buffer, srcX, srcY, dstX, dstY, width, height int) {
 	// Clip to source bounds
 	if srcX < 0 {
@@ -1079,7 +1086,7 @@ func (b *Buffer) Blit(src *Buffer, srcX, srcY, dstX, dstY, width, height int) {
 		return
 	}
 
-	// Row-by-row copy using copy() for speed
+	// row-by-row copy
 	for y := 0; y < height; y++ {
 		srcStart := (srcY+y)*src.width + srcX
 		dstStart := (dstY+y)*b.width + dstX
@@ -1095,7 +1102,7 @@ func (b *Buffer) Blit(src *Buffer, srcX, srcY, dstX, dstY, width, height int) {
 
 // CopyFrom copies all cells from src to b using a single bulk copy.
 // Requires both buffers to have identical dimensions.
-// This is much faster than cell-by-cell copy for full-buffer transfers.
+// Uses a single bulk copy of the cell slice.
 func (b *Buffer) CopyFrom(src *Buffer) {
 	if b.width == src.width && b.height == src.height {
 		copy(b.cells, src.cells)
@@ -1141,4 +1148,89 @@ func (b *Buffer) Resize(width, height int) {
 	// Resize dirty tracking - mark all dirty after resize
 	b.dirtyRows = make([]bool, height)
 	b.allDirty = true
+}
+
+// ============================================================================
+// BufferPool: double-buffered rendering
+// ============================================================================
+
+// BufferPool manages double-buffered rendering.
+// Swap alternates between two buffers, clearing the inactive one
+// synchronously before making it current.
+type BufferPool struct {
+	buffers [2]*Buffer
+	current atomic.Uint32  // 0 or 1 - which buffer is active
+	dirty   [2]atomic.Bool // track if each buffer needs clearing
+}
+
+// NewBufferPool creates a double-buffered pool.
+func NewBufferPool(width, height int) *BufferPool {
+	return &BufferPool{
+		buffers: [2]*Buffer{
+			NewBuffer(width, height),
+			NewBuffer(width, height),
+		},
+	}
+}
+
+// Current returns the current buffer for rendering.
+func (p *BufferPool) Current() *Buffer {
+	return p.buffers[p.current.Load()]
+}
+
+// Swap switches to the other buffer.
+// Returns the new current buffer (cleared and ready to use).
+func (p *BufferPool) Swap() *Buffer {
+	old := p.current.Load()
+	next := 1 - old
+
+	// Mark old buffer as needing clear
+	p.dirty[old].Store(true)
+
+	// Only clear if needed (skip if already clean)
+	if p.dirty[next].Load() {
+		p.buffers[next].ClearDirty()
+		p.dirty[next].Store(false)
+	}
+
+	p.current.Store(next)
+	return p.buffers[next]
+}
+
+// Stop is a no-op kept for API compatibility.
+func (p *BufferPool) Stop() {}
+
+// Width returns the buffer width.
+func (p *BufferPool) Width() int {
+	return p.buffers[0].Width()
+}
+
+// Height returns the buffer height.
+func (p *BufferPool) Height() int {
+	return p.buffers[0].Height()
+}
+
+// Resize resizes both buffers in the pool to new dimensions.
+// Call this when the terminal is resized.
+func (p *BufferPool) Resize(width, height int) {
+	for i := 0; i < 2; i++ {
+		p.buffers[i].Resize(width, height)
+		p.dirty[i].Store(false) // Mark as clean after resize (Resize clears)
+	}
+}
+
+// Run executes a render loop until ctx is cancelled.
+// Each frame the callback receives a pre-cleared buffer - do whatever you need with it.
+func (p *BufferPool) Run(ctx context.Context, frame func(buf *Buffer)) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		buf := p.Current()
+		frame(buf)
+		p.Swap()
+	}
 }

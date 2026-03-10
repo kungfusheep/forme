@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	green := Style{FG: Green}
 	cyan := Style{FG: Cyan}
 
-	view := VBox.Border(BorderRounded).BorderFG(Green).Title("forme")(
+	view := VBox.Border(BorderRounded).BorderFG(Green).Title("glyph")(
 		HBox(
 			VBox.Border(BorderDouble).BorderFG(Green).Title("system").Width(16).CascadeStyle(&green)(
 				If(&online).

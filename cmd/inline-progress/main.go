@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"time"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 type layer struct {

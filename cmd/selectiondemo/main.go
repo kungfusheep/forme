@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/kungfusheep/riffkey"
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 type Command struct {

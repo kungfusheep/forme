@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 type MenuItem struct {

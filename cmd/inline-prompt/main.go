@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 func main() {
@@ -13,11 +13,11 @@ func main() {
 	email := Input().Placeholder("you@example.com").Width(30)
 	token := Input().Placeholder("ghp_...").Width(30).Mask('*')
 
-	form := Form(
+	form := Form.Gap(0).LabelFG(Cyan)(
 		Field("Name", name),
 		Field("Email", email),
 		Field("Token", token),
-	).Gap(0).LabelFG(Cyan)
+	)
 
 	app, err := NewInlineApp()
 	if err != nil {

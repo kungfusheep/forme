@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"math"
@@ -26,22 +26,31 @@ func resolveColor16(buf *Buffer, w, h int) {
 	}
 }
 
-// PostProcess transforms the buffer after rendering, before flush.
-// Like a GPU shader pass — receives the full cell buffer and frame context.
+// Effect transforms the buffer after rendering, before flush.
+// Like a GPU shader pass. Receives the full cell buffer and frame context.
 // Mutate cells in-place. Chain multiple passes for layered effects.
-type PostProcess func(buf *Buffer, ctx PostContext)
+type Effect interface {
+	Apply(buf *Buffer, ctx PostContext)
+}
 
-// ScreenEffectNode is a declarative node that registers a full-screen
-// post-processing effect. Place it anywhere in the view tree — it takes
-// zero layout space and applies to the entire screen. Works with If()
-// for reactive toggling.
+// funcEffect adapts a bare function to the Effect interface.
+// Returned by EachCell and used internally by blend/quantize wrappers.
+type funcEffect func(*Buffer, PostContext)
+
+func (f funcEffect) Apply(buf *Buffer, ctx PostContext) { f(buf, ctx) }
+
+// ScreenEffectNode is a declarative node that registers one or more full-screen
+// post-processing effects. Place it anywhere in the view tree. It takes zero
+// layout space and applies to the entire screen. Works with If() for reactive
+// toggling. Accepts multiple effects in a single node.
 type ScreenEffectNode struct {
-	Effect PostProcess
+	Effects []Effect
 }
 
 // ScreenEffect creates a declarative full-screen post-processing node.
-func ScreenEffect(pp PostProcess) ScreenEffectNode {
-	return ScreenEffectNode{Effect: pp}
+// Accepts multiple effects — they apply in order, left to right.
+func ScreenEffect(pp ...Effect) ScreenEffectNode {
+	return ScreenEffectNode{Effects: pp}
 }
 
 // PostContext provides frame metadata to post-processing passes.
@@ -58,12 +67,12 @@ type PostContext struct {
 	DefaultBG Color
 }
 
-// EachCell wraps a per-cell transform into a PostProcess.
-// The fragment shader equivalent — you define the per-cell logic,
+// EachCell wraps a per-cell transform into a Effect.
+// The fragment shader equivalent. You define the per-cell logic,
 // iteration is handled for you. Splits work across four quadrants
-// using a persistent worker pool — zero allocations in the hot path.
-func EachCell(fn func(x, y int, cell Cell, ctx PostContext) Cell) PostProcess {
-	return func(buf *Buffer, ctx PostContext) {
+// using a persistent worker pool. Zero allocations in the hot path.
+func EachCell(fn func(x, y int, cell Cell, ctx PostContext) Cell) Effect {
+	return funcEffect(func(buf *Buffer, ctx PostContext) {
 		qp := getCellPool()
 		midX, midY := ctx.Width/2, ctx.Height/2
 
@@ -95,7 +104,7 @@ func EachCell(fn func(x, y int, cell Cell, ctx PostContext) Cell) PostProcess {
 		for i := range 3 {
 			<-qp.done[i]
 		}
-	}
+	})
 }
 
 type cellPool struct {
@@ -142,17 +151,19 @@ func getCellPool() *cellPool {
 // Blend modes
 // ---------------------------------------------------------------------------
 
+// BlendMode controls how two colours are combined during post-processing.
+// Use with WithBlend to wrap any Effect effect.
 type BlendMode int
 
 const (
-	BlendNormal   BlendMode = iota
-	BlendMultiply           // darkens: a * b / 255
-	BlendScreen             // lightens: 255 - (255-a)(255-b)/255
-	BlendOverlay            // multiply if dark, screen if light
-	BlendAdd                // clipped addition
-	BlendSoftLight          // gentle contrast
-	BlendColorDodge         // dramatic brighten
-	BlendColorBurn          // dramatic darken
+	BlendNormal     BlendMode = iota
+	BlendMultiply             // darkens: a * b / 255
+	BlendScreen               // lightens: 255 - (255-a)(255-b)/255
+	BlendOverlay              // multiply if dark, screen if light
+	BlendAdd                  // clipped addition
+	BlendSoftLight            // gentle contrast
+	BlendColorDodge           // dramatic brighten
+	BlendColorBurn            // dramatic darken
 )
 
 // BlendColor combines two RGB colours using the specified blend mode.
@@ -219,39 +230,60 @@ func softLightG(a float64) float64 {
 	return math.Sqrt(a)
 }
 
-// WithBlend wraps any PostProcess with a blend mode. Snapshots the buffer
-// before the effect runs, then blends the effect's output with the original
-// using the specified mode. Works with any effect — plasma through multiply,
-// fire through screen, etc.
-func WithBlend(mode BlendMode, pp PostProcess) PostProcess {
-	return func(buf *Buffer, ctx PostContext) {
-		w, h := ctx.Width, ctx.Height
+// blendEffect wraps an inner Effect with a blend mode. Snapshots the
+// buffer before the effect runs, then blends the output with the original.
+type blendEffect struct {
+	mode  BlendMode
+	inner Effect
+}
 
-		// snapshot original FG+BG
-		type colorPair struct{ fg, bg Color }
-		snap := make([]colorPair, w*h)
-		for y := range h {
-			bufBase := y * buf.width
-			snapBase := y * w
-			for x := range w {
-				c := buf.cells[bufBase+x]
-				snap[snapBase+x] = colorPair{c.Style.FG, c.Style.BG}
-			}
-		}
+func (b blendEffect) Apply(buf *Buffer, ctx PostContext) {
+	w, h := ctx.Width, ctx.Height
 
-		// run the effect
-		pp(buf, ctx)
-
-		// blend result with snapshot
-		for y := range h {
-			bufBase := y * buf.width
-			snapBase := y * w
-			for x := range w {
-				c := &buf.cells[bufBase+x]
-				orig := snap[snapBase+x]
-				c.Style.FG = BlendColor(orig.fg, c.Style.FG, mode)
-				c.Style.BG = BlendColor(orig.bg, c.Style.BG, mode)
-			}
+	// snapshot original FG+BG
+	type colorPair struct{ fg, bg Color }
+	snap := make([]colorPair, w*h)
+	for y := range h {
+		bufBase := y * buf.width
+		snapBase := y * w
+		for x := range w {
+			c := buf.cells[bufBase+x]
+			snap[snapBase+x] = colorPair{c.Style.FG, c.Style.BG}
 		}
 	}
+
+	// run the effect
+	b.inner.Apply(buf, ctx)
+
+	// blend result with snapshot
+	for y := range h {
+		bufBase := y * buf.width
+		snapBase := y * w
+		for x := range w {
+			c := &buf.cells[bufBase+x]
+			orig := snap[snapBase+x]
+			c.Style.FG = BlendColor(orig.fg, c.Style.FG, b.mode)
+			c.Style.BG = BlendColor(orig.bg, c.Style.BG, b.mode)
+		}
+	}
+}
+
+// WithBlend wraps any Effect with a blend mode. Snapshots the buffer
+// before the effect runs, then blends the effect's output with the original
+// using the specified mode. Works with any effect, plasma through multiply,
+// fire through screen, etc.
+func WithBlend(mode BlendMode, pp Effect) Effect {
+	return blendEffect{mode: mode, inner: pp}
+}
+
+// WithQuantize wraps a Effect with output quantization.
+// Runs pp first, then snaps all resulting RGB values to the nearest multiple of step.
+// Use step=32 for animated effects like SEPlasma — reduces bytes/frame by ~40-50%
+// with acceptable banding at typical terminal sizes.
+func WithQuantize(step uint8, pp Effect) Effect {
+	q := SEQuantize(step)
+	return funcEffect(func(buf *Buffer, ctx PostContext) {
+		pp.Apply(buf, ctx)
+		q.Apply(buf, ctx)
+	})
 }

@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"testing"
@@ -16,7 +16,7 @@ func TestEachCell(t *testing.T) {
 	})
 
 	ctx := PostContext{Width: 4, Height: 3}
-	pass(buf, ctx)
+	pass.Apply(buf, ctx)
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.R != 0 || got.Style.FG.B != 255 {
@@ -44,8 +44,8 @@ func TestPipelineOrder(t *testing.T) {
 		return c
 	})
 
-	pass1(buf, ctx)
-	pass2(buf, ctx)
+	pass1.Apply(buf, ctx)
+	pass2.Apply(buf, ctx)
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.R != 127 {
@@ -53,87 +53,87 @@ func TestPipelineOrder(t *testing.T) {
 	}
 }
 
-func TestPPDimAll(t *testing.T) {
+func TestSEDimAll(t *testing.T) {
 	buf := NewBuffer(3, 2)
 	buf.Set(1, 0, Cell{Rune: 'A', Style: Style{FG: RGB(255, 255, 255)}})
 
-	pass := PPDimAll()
-	pass(buf, PostContext{Width: 3, Height: 2})
+	pass := SEDimAll()
+	pass.Apply(buf, PostContext{Width: 3, Height: 2})
 
 	got := buf.Get(1, 0)
 	if !got.Style.Attr.Has(AttrDim) {
-		t.Error("PPDimAll: expected AttrDim to be set")
+		t.Error("SEDimAll: expected AttrDim to be set")
 	}
 	if got.Rune != 'A' {
-		t.Errorf("PPDimAll: expected rune 'A', got %c", got.Rune)
+		t.Errorf("SEDimAll: expected rune 'A', got %c", got.Rune)
 	}
 }
 
-func TestPPTint(t *testing.T) {
+func TestSETint(t *testing.T) {
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(200, 200, 200)}})
 
-	pass := PPTint(RGB(255, 0, 0), 1.0)
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SETint(RGB(255, 0, 0)).Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.R != 255 || got.Style.FG.G != 0 || got.Style.FG.B != 0 {
-		t.Errorf("PPTint: expected (255,0,0), got (%d,%d,%d)", got.Style.FG.R, got.Style.FG.G, got.Style.FG.B)
+		t.Errorf("SETint: expected (255,0,0), got (%d,%d,%d)", got.Style.FG.R, got.Style.FG.G, got.Style.FG.B)
 	}
 }
 
-func TestPPTintPartial(t *testing.T) {
+func TestSETintPartial(t *testing.T) {
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(100, 100, 100)}})
 
-	pass := PPTint(RGB(200, 200, 200), 0.5)
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SETint(RGB(200, 200, 200)).Strength(0.5)
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.R != 150 {
-		t.Errorf("PPTint partial: expected R=150, got R=%d", got.Style.FG.R)
+		t.Errorf("SETint partial: expected R=150, got R=%d", got.Style.FG.R)
 	}
 }
 
-func TestPPTintProcessesAllModes(t *testing.T) {
-	// BasicColor(2) = green (R:0, G:170, B:0) — tint fully toward blue
+func TestSETintProcessesAllModes(t *testing.T) {
+	// BasicColor(2) = green (R:0, G:170, B:0), tint fully toward blue
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: BasicColor(2)}})
 
-	pass := PPTint(RGB(0, 0, 255), 1.0)
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SETint(RGB(0, 0, 255)).Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.B != 255 {
-		t.Errorf("PPTint: Color16 should be tinted, got (%d,%d,%d)",
+		t.Errorf("SETint: Color16 should be tinted, got (%d,%d,%d)",
 			got.Style.FG.R, got.Style.FG.G, got.Style.FG.B)
 	}
 
 	// ColorDefault should still be skipped
 	buf2 := NewBuffer(1, 1)
 	buf2.Set(0, 0, Cell{Rune: 'X'})
-	pass(buf2, PostContext{Width: 1, Height: 1})
+	pass.Apply(buf2, PostContext{Width: 1, Height: 1})
 	got2 := buf2.Get(0, 0)
 	if got2.Style.FG.Mode != ColorDefault {
-		t.Error("PPTint: should skip ColorDefault")
+		t.Error("SETint: should skip ColorDefault")
 	}
 }
 
-func TestPPDesaturate(t *testing.T) {
+func TestSEDesaturate(t *testing.T) {
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(255, 0, 0)}})
 
-	pass := PPDesaturate(1.0)
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SEDesaturate().Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	if got.Style.FG.R != got.Style.FG.G || got.Style.FG.G != got.Style.FG.B {
-		t.Errorf("PPDesaturate: expected equal RGB (gray), got (%d,%d,%d)",
+		t.Errorf("SEDesaturate: expected equal RGB (gray), got (%d,%d,%d)",
 			got.Style.FG.R, got.Style.FG.G, got.Style.FG.B)
 	}
 }
 
-func TestPPFocusDim(t *testing.T) {
+func TestSEFocusDim(t *testing.T) {
 	buf := NewBuffer(10, 5)
 	for y := range 5 {
 		for x := range 10 {
@@ -141,25 +141,25 @@ func TestPPFocusDim(t *testing.T) {
 		}
 	}
 
-	fx, fy, fw, fh := 2, 1, 3, 2
-	pass := PPFocusDim(&fx, &fy, &fw, &fh)
-	pass(buf, PostContext{Width: 10, Height: 5})
+	ref := NodeRef{X: 2, Y: 1, W: 3, H: 2}
+	pass := SEFocusDim(&ref)
+	pass.Apply(buf, PostContext{Width: 10, Height: 5})
 
 	if buf.Get(2, 1).Style.Attr.Has(AttrDim) {
-		t.Error("PPFocusDim: cell inside focus should not be dimmed")
+		t.Error("SEFocusDim: cell inside focus should not be dimmed")
 	}
 	if buf.Get(4, 2).Style.Attr.Has(AttrDim) {
-		t.Error("PPFocusDim: cell inside focus should not be dimmed")
+		t.Error("SEFocusDim: cell inside focus should not be dimmed")
 	}
 	if !buf.Get(0, 0).Style.Attr.Has(AttrDim) {
-		t.Error("PPFocusDim: cell outside focus should be dimmed")
+		t.Error("SEFocusDim: cell outside focus should be dimmed")
 	}
 	if !buf.Get(5, 3).Style.Attr.Has(AttrDim) {
-		t.Error("PPFocusDim: cell outside focus should be dimmed")
+		t.Error("SEFocusDim: cell outside focus should be dimmed")
 	}
 }
 
-func TestPPDissolve(t *testing.T) {
+func TestSEDissolve(t *testing.T) {
 	buf := NewBuffer(20, 10)
 	for y := range 10 {
 		for x := range 20 {
@@ -168,8 +168,8 @@ func TestPPDissolve(t *testing.T) {
 	}
 
 	progress := 0.5
-	pass := PPDissolve(&progress)
-	pass(buf, PostContext{Width: 20, Height: 10})
+	pass := SEDissolve(&progress)
+	pass.Apply(buf, PostContext{Width: 20, Height: 10})
 
 	dissolved := 0
 	total := 20 * 10
@@ -183,11 +183,11 @@ func TestPPDissolve(t *testing.T) {
 
 	ratio := float64(dissolved) / float64(total)
 	if ratio < 0.3 || ratio > 0.7 {
-		t.Errorf("PPDissolve: expected ~50%% dissolved, got %.1f%% (%d/%d)", ratio*100, dissolved, total)
+		t.Errorf("SEDissolve: expected ~50%% dissolved, got %.1f%% (%d/%d)", ratio*100, dissolved, total)
 	}
 }
 
-func TestPPVignette(t *testing.T) {
+func TestSEVignette(t *testing.T) {
 	buf := NewBuffer(20, 10)
 	center := RGB(200, 200, 200)
 	for y := range 10 {
@@ -196,8 +196,8 @@ func TestPPVignette(t *testing.T) {
 		}
 	}
 
-	pass := PPVignette(1.0)
-	pass(buf, PostContext{Width: 20, Height: 10})
+	pass := SEVignette().Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 20, Height: 10})
 
 	centerCell := buf.Get(10, 5)
 	edgeCell := buf.Get(0, 0)
@@ -206,32 +206,132 @@ func TestPPVignette(t *testing.T) {
 	edgeLum := int(edgeCell.Style.FG.R) + int(edgeCell.Style.FG.G) + int(edgeCell.Style.FG.B)
 
 	if centerLum <= edgeLum {
-		t.Errorf("PPVignette: center (%d) should be brighter than edge (%d)", centerLum, edgeLum)
+		t.Errorf("SEVignette: center (%d) should be brighter than edge (%d)", centerLum, edgeLum)
 	}
 }
 
-func TestPPHighContrast(t *testing.T) {
-	buf := NewBuffer(2, 1)
-	// dark gray and light gray
-	buf.Set(0, 0, Cell{Rune: 'A', Style: Style{FG: RGB(80, 80, 80)}})
-	buf.Set(1, 0, Cell{Rune: 'B', Style: Style{FG: RGB(180, 180, 180)}})
-
-	pass := PPHighContrast(3.0)
-	pass(buf, PostContext{Width: 2, Height: 1})
-
-	dark := buf.Get(0, 0)
-	light := buf.Get(1, 0)
-
-	// dark should get darker, light should get lighter
-	if dark.Style.FG.R >= 80 {
-		t.Errorf("PPHighContrast: dark cell should get darker, got R=%d", dark.Style.FG.R)
+func TestSEVignetteFocus(t *testing.T) {
+	buf := NewBuffer(40, 20)
+	grey := RGB(200, 200, 200)
+	for y := range 20 {
+		for x := range 40 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: grey}})
+		}
 	}
-	if light.Style.FG.R <= 180 {
-		t.Errorf("PPHighContrast: light cell should get lighter, got R=%d", light.Style.FG.R)
+
+	// ref centred at (30,15) — far from screen centre (20,10)
+	ref := NodeRef{X: 25, Y: 12, W: 10, H: 6}
+	SEVignette().Strength(1.0).Focus(&ref).Apply(buf, PostContext{Width: 40, Height: 20})
+
+	// cell near ref centre should be brighter than top-left corner
+	nearRef := buf.Get(30, 15)
+	corner := buf.Get(0, 0)
+	nearLum := int(nearRef.Style.FG.R) + int(nearRef.Style.FG.G) + int(nearRef.Style.FG.B)
+	cornerLum := int(corner.Style.FG.R) + int(corner.Style.FG.G) + int(corner.Style.FG.B)
+	if nearLum <= cornerLum {
+		t.Errorf("SEVignette Focus: cell near ref (%d) should be brighter than corner (%d)", nearLum, cornerLum)
 	}
 }
 
-func TestPPFrost(t *testing.T) {
+func TestSEVignetteDodge(t *testing.T) {
+	buf := NewBuffer(40, 20)
+	grey := RGB(200, 200, 200)
+	for y := range 20 {
+		for x := range 40 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: grey}})
+		}
+	}
+
+	ref := NodeRef{X: 25, Y: 12, W: 10, H: 6}
+	SEVignette().Strength(1.0).Dodge(&ref).Apply(buf, PostContext{Width: 40, Height: 20})
+
+	// cells inside the dodge ref must be completely unaffected
+	expected := int(grey.R) + int(grey.G) + int(grey.B)
+	for y := ref.Y; y < ref.Y+ref.H; y++ {
+		for x := ref.X; x < ref.X+ref.W; x++ {
+			c := buf.Get(x, y)
+			lum := int(c.Style.FG.R) + int(c.Style.FG.G) + int(c.Style.FG.B)
+			if lum != expected {
+				t.Errorf("SEVignette Dodge: cell inside ref (%d,%d) should be unaffected, got lum %d want %d", x, y, lum, expected)
+			}
+		}
+	}
+}
+
+func TestSEVignetteFocusCorner(t *testing.T) {
+	// focus node near a corner — previously produced a tiny maxDist and near-black screen
+	buf := NewBuffer(80, 24)
+	grey := RGB(200, 200, 200)
+	for y := range 24 {
+		for x := range 80 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: grey}})
+		}
+	}
+
+	ref := NodeRef{X: 2, Y: 2, W: 10, H: 5}
+	SEVignette().Strength(0.9).Focus(&ref).Apply(buf, PostContext{Width: 80, Height: 24})
+
+	// the screen center should still have meaningful brightness, not be black
+	center := buf.Get(40, 12)
+	centerLum := int(center.Style.FG.R) + int(center.Style.FG.G) + int(center.Style.FG.B)
+	if centerLum < 300 {
+		t.Errorf("SEVignette corner Focus: screen center should not be black, got lum %d", centerLum)
+	}
+}
+
+func TestQuantizeUint8Overflow(t *testing.T) {
+	// step=32: 255 rounds up to 256, which previously wrapped to 0
+	if got := quantizeUint8(255, 32); got != 255 {
+		t.Errorf("quantizeUint8(255, 32) = %d, want 255", got)
+	}
+	if got := quantizeUint8(241, 32); got != 255 {
+		t.Errorf("quantizeUint8(241, 32) = %d, want 255", got)
+	}
+	// step=16: 255 rounds to 256 → should clamp
+	if got := quantizeUint8(255, 16); got != 255 {
+		t.Errorf("quantizeUint8(255, 16) = %d, want 255", got)
+	}
+	// normal case: 128 with step 32 → 128
+	if got := quantizeUint8(128, 32); got != 128 {
+		t.Errorf("quantizeUint8(128, 32) = %d, want 128", got)
+	}
+}
+
+func TestSEDropShadow(t *testing.T) {
+	buf := NewBuffer(40, 20)
+	grey := RGB(200, 200, 200)
+	for y := range 20 {
+		for x := range 40 {
+			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: grey}})
+		}
+	}
+
+	ref := NodeRef{X: 10, Y: 5, W: 10, H: 5}
+	SEDropShadow().Strength(1.0).Radius(6).Focus(&ref).Apply(buf, PostContext{Width: 40, Height: 20})
+
+	// cells inside the focus ref must be completely unaffected
+	expected := int(grey.R) + int(grey.G) + int(grey.B)
+	for y := ref.Y; y < ref.Y+ref.H; y++ {
+		for x := ref.X; x < ref.X+ref.W; x++ {
+			c := buf.Get(x, y)
+			lum := int(c.Style.FG.R) + int(c.Style.FG.G) + int(c.Style.FG.B)
+			if lum != expected {
+				t.Errorf("SEDropShadow: cell inside ref (%d,%d) should be unaffected, got lum %d want %d", x, y, lum, expected)
+			}
+		}
+	}
+
+	// cell just outside the ref should be darker than one far away
+	near := buf.Get(ref.X+ref.W, ref.Y+ref.H/2) // immediately right of ref
+	far := buf.Get(39, 10)
+	nearLum := int(near.Style.FG.R) + int(near.Style.FG.G) + int(near.Style.FG.B)
+	farLum := int(far.Style.FG.R) + int(far.Style.FG.G) + int(far.Style.FG.B)
+	if nearLum >= farLum {
+		t.Errorf("SEDropShadow: cell near ref (%d) should be darker than far cell (%d)", nearLum, farLum)
+	}
+}
+
+func TestSEFrost(t *testing.T) {
 	buf := NewBuffer(10, 5)
 	for y := range 5 {
 		for x := range 10 {
@@ -239,48 +339,48 @@ func TestPPFrost(t *testing.T) {
 		}
 	}
 
-	pass := PPFrost(1.0)
-	pass(buf, PostContext{Width: 10, Height: 5})
+	pass := SEFrost().Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 10, Height: 5})
 
 	got := buf.Get(0, 0)
 	// rune should be replaced with a shade block
 	shades := map[rune]bool{'░': true, '▒': true, '▓': true}
 	if !shades[got.Rune] {
-		t.Errorf("PPFrost: expected shade block, got %c", got.Rune)
+		t.Errorf("SEFrost: expected shade block, got %c", got.Rune)
 	}
 	// FG should be desaturated and tinted (no longer pure red)
 	if got.Style.FG.G == 0 && got.Style.FG.B == 0 {
-		t.Error("PPFrost: expected FG to be tinted away from pure red")
+		t.Error("SEFrost: expected FG to be tinted away from pure red")
 	}
 }
 
-func TestPPPulse(t *testing.T) {
+func TestSEPulse(t *testing.T) {
 	buf := NewBuffer(2, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(200, 200, 200)}})
 
 	// at time=0, sin(0)=0, t=0.5, dim=0.5*0.5=0.25
-	pass := PPPulse(1.0, 0.5)
-	pass(buf, PostContext{Width: 2, Height: 1, Time: 0})
+	pass := SEPulse().Speed(1.0).Strength(0.5)
+	pass.Apply(buf, PostContext{Width: 2, Height: 1, Time: 0})
 
 	got := buf.Get(0, 0)
 	// should be dimmed somewhat from 200
 	if got.Style.FG.R >= 200 {
-		t.Errorf("PPPulse: expected dimming at t=0, got R=%d", got.Style.FG.R)
+		t.Errorf("SEPulse: expected dimming at t=0, got R=%d", got.Style.FG.R)
 	}
 	if got.Style.FG.R == 0 {
-		t.Error("PPPulse: should not be fully black")
+		t.Error("SEPulse: should not be fully black")
 	}
 }
 
-func TestPPScreenShake(t *testing.T) {
+func TestSEScreenShake(t *testing.T) {
 	buf := NewBuffer(10, 1)
 	for x := range 10 {
 		buf.Set(x, 0, Cell{Rune: rune('A' + x), Style: DefaultStyle()})
 	}
 
 	// frame chosen so sin(frame*1.5) gives a non-zero offset
-	pass := PPScreenShake(3.0)
-	pass(buf, PostContext{Width: 10, Height: 1, Frame: 1})
+	pass := SEScreenShake(3.0)
+	pass.Apply(buf, PostContext{Width: 10, Height: 1, Frame: 1})
 
 	// at least some cells should have shifted
 	unchanged := 0
@@ -290,18 +390,18 @@ func TestPPScreenShake(t *testing.T) {
 		}
 	}
 	if unchanged == 10 {
-		t.Error("PPScreenShake: expected some cells to shift")
+		t.Error("SEScreenShake: expected some cells to shift")
 	}
 }
 
-func TestPPGradientMap(t *testing.T) {
+func TestSEGradientMap(t *testing.T) {
 	buf := NewBuffer(3, 1)
 	buf.Set(0, 0, Cell{Rune: 'D', Style: Style{FG: RGB(30, 30, 30)}})   // dark
 	buf.Set(1, 0, Cell{Rune: 'M', Style: Style{FG: RGB(128, 128, 128)}}) // mid
 	buf.Set(2, 0, Cell{Rune: 'B', Style: Style{FG: RGB(230, 230, 230)}}) // bright
 
-	pass := PPGradientMap(RGB(0, 0, 50), RGB(0, 128, 128), RGB(200, 255, 200))
-	pass(buf, PostContext{Width: 3, Height: 1})
+	pass := SEGradientMap(RGB(0, 0, 50), RGB(0, 128, 128), RGB(200, 255, 200))
+	pass.Apply(buf, PostContext{Width: 3, Height: 1})
 
 	dark := buf.Get(0, 0)
 	mid := buf.Get(1, 0)
@@ -309,20 +409,20 @@ func TestPPGradientMap(t *testing.T) {
 
 	// dark cell should be near the dark stop (blue-ish)
 	if dark.Style.FG.B < dark.Style.FG.R {
-		t.Errorf("PPGradientMap: dark cell should lean blue, got (%d,%d,%d)",
+		t.Errorf("SEGradientMap: dark cell should lean blue, got (%d,%d,%d)",
 			dark.Style.FG.R, dark.Style.FG.G, dark.Style.FG.B)
 	}
 	// mid cell should be near teal
 	if mid.Style.FG.G < 100 {
-		t.Errorf("PPGradientMap: mid cell should have green, got G=%d", mid.Style.FG.G)
+		t.Errorf("SEGradientMap: mid cell should have green, got G=%d", mid.Style.FG.G)
 	}
 	// bright cell should be near the bright stop (green-white)
 	if bright.Style.FG.G < 200 {
-		t.Errorf("PPGradientMap: bright cell should lean green-white, got G=%d", bright.Style.FG.G)
+		t.Errorf("SEGradientMap: bright cell should lean green-white, got G=%d", bright.Style.FG.G)
 	}
 }
 
-func TestPPBloom(t *testing.T) {
+func TestSEBloom(t *testing.T) {
 	buf := NewBuffer(5, 1)
 	// dark cells with one bright cell in the middle
 	for x := range 5 {
@@ -330,85 +430,38 @@ func TestPPBloom(t *testing.T) {
 	}
 	buf.Set(2, 0, Cell{Rune: 'X', Style: Style{FG: RGB(255, 255, 255)}})
 
-	pass := PPBloom(2, 0.5, 0.8)
-	pass(buf, PostContext{Width: 5, Height: 1})
+	pass := SEBloom().Threshold(0.5).Strength(0.8)
+	pass.Apply(buf, PostContext{Width: 5, Height: 1})
 
 	// neighbours of the bright cell should be brighter than they started
 	left := buf.Get(1, 0)
 	right := buf.Get(3, 0)
 	if left.Style.FG.R <= 20 {
-		t.Errorf("PPBloom: left neighbour should be brighter, got R=%d", left.Style.FG.R)
+		t.Errorf("SEBloom: left neighbour should be brighter, got R=%d", left.Style.FG.R)
 	}
 	if right.Style.FG.R <= 20 {
-		t.Errorf("PPBloom: right neighbour should be brighter, got R=%d", right.Style.FG.R)
+		t.Errorf("SEBloom: right neighbour should be brighter, got R=%d", right.Style.FG.R)
 	}
 }
 
-func TestPPBloomSkipsDark(t *testing.T) {
+func TestSEBloomSkipsDark(t *testing.T) {
 	buf := NewBuffer(3, 1)
 	for x := range 3 {
 		buf.Set(x, 0, Cell{Rune: 'X', Style: Style{FG: RGB(30, 30, 30)}})
 	}
 
-	pass := PPBloom(2, 0.5, 1.0)
-	pass(buf, PostContext{Width: 3, Height: 1})
+	pass := SEBloom().Threshold(0.5).Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 3, Height: 1})
 
 	// all cells dark, nothing should bloom
 	got := buf.Get(1, 0)
 	if got.Style.FG.R != 30 {
-		t.Errorf("PPBloom: all-dark buffer should be unchanged, got R=%d", got.Style.FG.R)
+		t.Errorf("SEBloom: all-dark buffer should be unchanged, got R=%d", got.Style.FG.R)
 	}
 }
 
-func TestPPDropShadow(t *testing.T) {
-	buf := NewBuffer(5, 3)
-	bg := RGB(100, 100, 100)
-	for y := range 3 {
-		for x := range 5 {
-			buf.Set(x, y, Cell{Rune: ' ', Style: Style{BG: bg}})
-		}
-	}
-	// place content at (1,0)
-	buf.Set(1, 0, Cell{Rune: 'A', Style: Style{FG: RGB(255, 255, 255), BG: bg}})
 
-	pass := PPDropShadow(1, 1, 0.5)
-	pass(buf, PostContext{Width: 5, Height: 3})
-
-	// shadow should appear at (2,1) — offset (1,1) from content at (1,0)
-	shadowCell := buf.Get(2, 1)
-	if shadowCell.Style.BG.R >= 100 {
-		t.Errorf("PPDropShadow: shadow cell BG should be darker, got R=%d", shadowCell.Style.BG.R)
-	}
-
-	// cell not in shadow path should be unchanged
-	clean := buf.Get(0, 0)
-	if clean.Style.BG.R != 100 {
-		t.Errorf("PPDropShadow: non-shadow cell should be unchanged, got R=%d", clean.Style.BG.R)
-	}
-}
-
-func TestPPDropShadowSkipsContent(t *testing.T) {
-	buf := NewBuffer(3, 2)
-	bg := RGB(100, 100, 100)
-	for y := range 2 {
-		for x := range 3 {
-			buf.Set(x, y, Cell{Rune: ' ', Style: Style{BG: bg}})
-		}
-	}
-	buf.Set(0, 0, Cell{Rune: 'A', Style: Style{FG: RGB(255, 255, 255), BG: bg}})
-	buf.Set(1, 1, Cell{Rune: 'B', Style: Style{FG: RGB(255, 255, 255), BG: bg}})
-
-	pass := PPDropShadow(1, 1, 0.8)
-	pass(buf, PostContext{Width: 3, Height: 2})
-
-	// (1,1) has content — shadow should NOT darken it even though (0,0) casts to it
-	got := buf.Get(1, 1)
-	if got.Style.BG.R != 100 {
-		t.Errorf("PPDropShadow: content cell should not be shadowed, got BG R=%d", got.Style.BG.R)
-	}
-}
-
-func TestPPCRT(t *testing.T) {
+func TestSECRT(t *testing.T) {
 	buf := NewBuffer(20, 4)
 	for y := range 4 {
 		for x := range 20 {
@@ -416,8 +469,8 @@ func TestPPCRT(t *testing.T) {
 		}
 	}
 
-	pass := PPCRT()
-	pass(buf, PostContext{Width: 20, Height: 4})
+	pass := SECRT()
+	pass.Apply(buf, PostContext{Width: 20, Height: 4})
 
 	evenRow := buf.Get(10, 0)
 	oddRow := buf.Get(10, 1)
@@ -426,7 +479,7 @@ func TestPPCRT(t *testing.T) {
 
 	// odd rows should be darker (scanlines)
 	if oddLum >= evenLum {
-		t.Errorf("PPCRT: odd row (%d) should be darker than even row (%d)", oddLum, evenLum)
+		t.Errorf("SECRT: odd row (%d) should be darker than even row (%d)", oddLum, evenLum)
 	}
 
 	// edge should be darker than center (vignette)
@@ -435,55 +488,55 @@ func TestPPCRT(t *testing.T) {
 	centerLum := int(center.Style.FG.R) + int(center.Style.FG.G) + int(center.Style.FG.B)
 	edgeLum := int(edge.Style.FG.R) + int(edge.Style.FG.G) + int(edge.Style.FG.B)
 	if centerLum <= edgeLum {
-		t.Errorf("PPCRT: center (%d) should be brighter than edge (%d)", centerLum, edgeLum)
+		t.Errorf("SECRT: center (%d) should be brighter than edge (%d)", centerLum, edgeLum)
 	}
 
 	// warm tint: R channel should be relatively higher than B
 	c := buf.Get(10, 0)
 	if c.Style.FG.R <= c.Style.FG.B {
-		t.Errorf("PPCRT: expected warm tint (R > B), got R=%d B=%d", c.Style.FG.R, c.Style.FG.B)
+		t.Errorf("SECRT: expected warm tint (R > B), got R=%d B=%d", c.Style.FG.R, c.Style.FG.B)
 	}
 }
 
-func TestPPMonochrome(t *testing.T) {
+func TestSEMonochrome(t *testing.T) {
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(255, 0, 0)}})
 
 	// green phosphor monochrome
-	pass := PPMonochrome(RGB(0, 255, 0))
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SEMonochrome(RGB(0, 255, 0))
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	// red input → luminance ~76 (0.299*255) → green output
 	if got.Style.FG.R != 0 {
-		t.Errorf("PPMonochrome: R should be 0 with green tint, got %d", got.Style.FG.R)
+		t.Errorf("SEMonochrome: R should be 0 with green tint, got %d", got.Style.FG.R)
 	}
 	if got.Style.FG.G == 0 {
-		t.Error("PPMonochrome: G should be non-zero with green tint")
+		t.Error("SEMonochrome: G should be non-zero with green tint")
 	}
 	if got.Style.FG.B != 0 {
-		t.Errorf("PPMonochrome: B should be 0 with green tint, got %d", got.Style.FG.B)
+		t.Errorf("SEMonochrome: B should be 0 with green tint, got %d", got.Style.FG.B)
 	}
 }
 
-func TestPPMonochromeAmber(t *testing.T) {
+func TestSEMonochromeAmber(t *testing.T) {
 	buf := NewBuffer(1, 1)
 	buf.Set(0, 0, Cell{Rune: 'X', Style: Style{FG: RGB(200, 200, 200)}})
 
-	pass := PPMonochrome(RGB(255, 180, 0))
-	pass(buf, PostContext{Width: 1, Height: 1})
+	pass := SEMonochrome(RGB(255, 180, 0))
+	pass.Apply(buf, PostContext{Width: 1, Height: 1})
 
 	got := buf.Get(0, 0)
 	// should have R > G > B=0
 	if got.Style.FG.R <= got.Style.FG.G {
-		t.Errorf("PPMonochrome amber: expected R > G, got R=%d G=%d", got.Style.FG.R, got.Style.FG.G)
+		t.Errorf("SEMonochrome amber: expected R > G, got R=%d G=%d", got.Style.FG.R, got.Style.FG.G)
 	}
 	if got.Style.FG.B != 0 {
-		t.Errorf("PPMonochrome amber: B should be 0, got %d", got.Style.FG.B)
+		t.Errorf("SEMonochrome amber: B should be 0, got %d", got.Style.FG.B)
 	}
 }
 
-func TestPPPlasma(t *testing.T) {
+func TestSEPlasma(t *testing.T) {
 	buf := NewBuffer(10, 5)
 	for y := range 5 {
 		for x := range 10 {
@@ -491,44 +544,19 @@ func TestPPPlasma(t *testing.T) {
 		}
 	}
 
-	pass := PPPlasma(1.0)
-	pass(buf, PostContext{Width: 10, Height: 5, Time: 1 * time.Second})
+	pass := SEPlasma().Strength(1.0)
+	pass.Apply(buf, PostContext{Width: 10, Height: 5, Time: 1 * time.Second})
 
 	// cells at different positions should have different colours (it's a plasma)
 	a := buf.Get(0, 0)
 	b := buf.Get(5, 2)
 	if a.Style.FG.R == b.Style.FG.R && a.Style.FG.G == b.Style.FG.G && a.Style.FG.B == b.Style.FG.B {
-		t.Error("PPPlasma: different positions should have different colours")
+		t.Error("SEPlasma: different positions should have different colours")
 	}
 }
 
-func TestPPMatrix(t *testing.T) {
-	buf := NewBuffer(20, 10)
-	for y := range 10 {
-		for x := range 20 {
-			buf.Set(x, y, Cell{Rune: ' ', Style: Style{FG: RGB(200, 200, 200)}})
-		}
-	}
 
-	pass := PPMatrix(2)
-	pass(buf, PostContext{Width: 20, Height: 10, Time: 2 * time.Second})
-
-	// some cells should have green FG (matrix rain)
-	greenCells := 0
-	for y := range 10 {
-		for x := range 20 {
-			c := buf.Get(x, y)
-			if c.Style.FG.G > c.Style.FG.R && c.Style.FG.G > 50 && c.Style.FG.R == 0 {
-				greenCells++
-			}
-		}
-	}
-	if greenCells == 0 {
-		t.Error("PPMatrix: expected some green cells from rain drops")
-	}
-}
-
-func TestPPFire(t *testing.T) {
+func TestSEFire(t *testing.T) {
 	buf := NewBuffer(20, 10)
 	for y := range 10 {
 		for x := range 20 {
@@ -536,10 +564,10 @@ func TestPPFire(t *testing.T) {
 		}
 	}
 
-	pass := PPFire()
+	pass := SEFire()
 	// run a few frames to let fire propagate
 	for frame := range 30 {
-		pass(buf, PostContext{Width: 20, Height: 10, Time: time.Duration(frame*33) * time.Millisecond})
+		pass.Apply(buf, PostContext{Width: 20, Height: 10, Time: time.Duration(frame*33) * time.Millisecond})
 	}
 
 	// bottom rows should have some fire-coloured cells (red-ish)
@@ -551,7 +579,7 @@ func TestPPFire(t *testing.T) {
 		}
 	}
 	if firePixels == 0 {
-		t.Error("PPFire: expected some red/fire coloured cells on bottom row")
+		t.Error("SEFire: expected some red/fire coloured cells on bottom row")
 	}
 
 	// fire should use shade block characters
@@ -564,54 +592,40 @@ func TestPPFire(t *testing.T) {
 		}
 	}
 	if !hasShade {
-		t.Error("PPFire: expected shade block characters in fire area")
+		t.Error("SEFire: expected shade block characters in fire area")
 	}
 }
 
-func BenchmarkPPPlasmaEarlyTime(b *testing.B) {
+func BenchmarkSEPlasmaEarlyTime(b *testing.B) {
 	buf := NewBuffer(200, 50)
 	for y := range 50 {
 		for x := range 200 {
 			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(128, 128, 128), BG: RGB(20, 20, 30)}})
 		}
 	}
-	pass := PPPlasma(0.6)
+	pass := SEPlasma()
 	ctx := PostContext{Width: 200, Height: 50, Time: 1 * time.Second}
 	b.ResetTimer()
 	for range b.N {
-		pass(buf, ctx)
+		pass.Apply(buf, ctx)
 	}
 }
 
-func BenchmarkPPPlasmaLateTime(b *testing.B) {
+func BenchmarkSEPlasmaLateTime(b *testing.B) {
 	buf := NewBuffer(200, 50)
 	for y := range 50 {
 		for x := range 200 {
 			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(128, 128, 128), BG: RGB(20, 20, 30)}})
 		}
 	}
-	pass := PPPlasma(0.6)
+	pass := SEPlasma()
 	ctx := PostContext{Width: 200, Height: 50, Time: 5 * time.Minute}
 	b.ResetTimer()
 	for range b.N {
-		pass(buf, ctx)
+		pass.Apply(buf, ctx)
 	}
 }
 
-func BenchmarkPPMatrix(b *testing.B) {
-	buf := NewBuffer(200, 50)
-	for y := range 50 {
-		for x := range 200 {
-			buf.Set(x, y, Cell{Rune: 'X', Style: Style{FG: RGB(128, 128, 128), BG: RGB(20, 20, 30)}})
-		}
-	}
-	pass := PPMatrix(2)
-	ctx := PostContext{Width: 200, Height: 50, Time: 1 * time.Second}
-	b.ResetTimer()
-	for range b.N {
-		pass(buf, ctx)
-	}
-}
 
 func TestBlendMultiply(t *testing.T) {
 	a := RGB(200, 100, 50)
@@ -673,10 +687,10 @@ func TestWithBlend(t *testing.T) {
 	})
 
 	pass := WithBlend(BlendMultiply, effect)
-	pass(buf, PostContext{Width: 2, Height: 1})
+	pass.Apply(buf, PostContext{Width: 2, Height: 1})
 
 	got := buf.Get(0, 0)
-	// multiply: 200*128/255 ≈ 100 — should be darker than both inputs
+	// multiply: 200*128/255 ≈ 100, should be darker than both inputs
 	if got.Style.FG.R >= 128 {
 		t.Errorf("WithBlend(Multiply): expected R < 128, got %d", got.Style.FG.R)
 	}
@@ -690,8 +704,8 @@ func TestWithBlendPlasma(t *testing.T) {
 		}
 	}
 
-	pass := WithBlend(BlendMultiply, PPPlasma(1.0))
-	pass(buf, PostContext{Width: 5, Height: 3, Time: 1 * time.Second})
+	pass := WithBlend(BlendMultiply, SEPlasma().Strength(1.0))
+	pass.Apply(buf, PostContext{Width: 5, Height: 3, Time: 1 * time.Second})
 
 	// plasma through multiply should be darker than original
 	got := buf.Get(2, 1)
@@ -703,7 +717,7 @@ func TestWithBlendPlasma(t *testing.T) {
 
 func TestScreenEffectInTree(t *testing.T) {
 	called := false
-	effect := func(buf *Buffer, ctx PostContext) { called = true }
+	effect := funcEffect(func(buf *Buffer, ctx PostContext) { called = true })
 
 	tmpl := Build(VBox(
 		Text("hello"),
@@ -719,7 +733,7 @@ func TestScreenEffectInTree(t *testing.T) {
 	}
 
 	// run the collected effect
-	effects[0](buf, PostContext{Width: 20, Height: 5})
+	effects[0].Apply(buf, PostContext{Width: 20, Height: 5})
 	if !called {
 		t.Error("screen effect was not called")
 	}
@@ -727,7 +741,7 @@ func TestScreenEffectInTree(t *testing.T) {
 
 func TestScreenEffectWithIf(t *testing.T) {
 	active := false
-	effect := func(buf *Buffer, ctx PostContext) {}
+	effect := funcEffect(func(buf *Buffer, ctx PostContext) {})
 
 	tmpl := Build(VBox(
 		Text("hello"),
@@ -736,20 +750,20 @@ func TestScreenEffectWithIf(t *testing.T) {
 
 	buf := NewBuffer(20, 5)
 
-	// inactive — no effects collected
+	// inactive, no effects collected
 	tmpl.Execute(buf, 20, 5)
 	if len(tmpl.ScreenEffects()) != 0 {
 		t.Errorf("expected 0 effects when inactive, got %d", len(tmpl.ScreenEffects()))
 	}
 
-	// activate — effect collected
+	// activate, effect collected
 	active = true
 	tmpl.Execute(buf, 20, 5)
 	if len(tmpl.ScreenEffects()) != 1 {
 		t.Errorf("expected 1 effect when active, got %d", len(tmpl.ScreenEffects()))
 	}
 
-	// deactivate — back to 0
+	// deactivate, back to 0
 	active = false
 	tmpl.Execute(buf, 20, 5)
 	if len(tmpl.ScreenEffects()) != 0 {
@@ -759,9 +773,9 @@ func TestScreenEffectWithIf(t *testing.T) {
 
 func TestScreenEffectMultiple(t *testing.T) {
 	order := make([]int, 0, 3)
-	e1 := func(buf *Buffer, ctx PostContext) { order = append(order, 1) }
-	e2 := func(buf *Buffer, ctx PostContext) { order = append(order, 2) }
-	e3 := func(buf *Buffer, ctx PostContext) { order = append(order, 3) }
+	e1 := funcEffect(func(buf *Buffer, ctx PostContext) { order = append(order, 1) })
+	e2 := funcEffect(func(buf *Buffer, ctx PostContext) { order = append(order, 2) })
+	e3 := funcEffect(func(buf *Buffer, ctx PostContext) { order = append(order, 3) })
 
 	tmpl := Build(VBox(
 		ScreenEffect(e1),
@@ -779,7 +793,7 @@ func TestScreenEffectMultiple(t *testing.T) {
 	}
 
 	for _, e := range effects {
-		e(buf, PostContext{})
+		e.Apply(buf, PostContext{})
 	}
 	if len(order) != 3 || order[0] != 1 || order[1] != 2 || order[2] != 3 {
 		t.Errorf("effects should run in tree order, got %v", order)
@@ -789,14 +803,14 @@ func TestScreenEffectMultiple(t *testing.T) {
 func TestScreenEffectZeroLayoutSpace(t *testing.T) {
 	tmpl := Build(VBox(
 		Text("line1"),
-		ScreenEffect(func(*Buffer, PostContext) {}),
+		ScreenEffect(funcEffect(func(*Buffer, PostContext) {})),
 		Text("line2"),
 	))
 
 	buf := NewBuffer(20, 5)
 	tmpl.Execute(buf, 20, 5)
 
-	// line2 should be on row 1, not row 2 — ScreenEffect takes no space
+	// line2 should be on row 1, not row 2. ScreenEffect takes no space
 	c := buf.Get(0, 1)
 	if c.Rune != 'l' {
 		t.Errorf("ScreenEffect should take zero layout space, got rune %c at (0,1)", c.Rune)
@@ -804,7 +818,7 @@ func TestScreenEffectZeroLayoutSpace(t *testing.T) {
 }
 
 func BenchmarkScreenEffectCollection(b *testing.B) {
-	effect := func(buf *Buffer, ctx PostContext) {}
+	effect := funcEffect(func(buf *Buffer, ctx PostContext) {})
 	active := true
 	tmpl := Build(VBox(
 		Text("content"),

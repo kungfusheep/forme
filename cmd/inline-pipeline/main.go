@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	. "github.com/kungfusheep/forme"
+	. "github.com/kungfusheep/glyph"
 )
 
 type step struct {

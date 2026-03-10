@@ -1,4 +1,4 @@
-package forme
+package glyph
 
 import (
 	"bytes"
@@ -424,24 +424,8 @@ func (s *Screen) Flush() {
 
 // writeIntToBuf writes an integer to the buffer without allocation.
 func (s *Screen) writeIntToBuf(n int) {
-	if n == 0 {
-		s.buf.WriteByte('0')
-		return
-	}
-	if n < 0 {
-		s.buf.WriteByte('-')
-		n = -n
-	}
-
-	// Use scratch space on stack (max 10 digits for int32)
 	var scratch [10]byte
-	i := len(scratch)
-	for n > 0 {
-		i--
-		scratch[i] = byte('0' + n%10)
-		n /= 10
-	}
-	s.buf.Write(scratch[i:])
+	s.buf.Write(appendInt(scratch[:0], n))
 }
 
 // FlushFull does a complete redraw without diffing.
@@ -480,8 +464,11 @@ func (s *Screen) FlushFull() {
 
 // FlushInline renders the buffer for inline mode (no alternate screen).
 // Renders at current cursor position using relative movement.
+// prevLines is the number of lines rendered in the previous frame; any
+// lines beyond the current content up to prevLines are cleared so that
+// stale content does not remain on screen when the view shrinks.
 // Returns the number of lines rendered for cleanup tracking.
-func (s *Screen) FlushInline(height int) int {
+func (s *Screen) FlushInline(height, prevLines int) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -502,18 +489,28 @@ func (s *Screen) FlushInline(height int) int {
 		}
 		linesRendered++
 
-		if y < height-1 {
+		if y < height-1 || linesRendered < prevLines {
 			s.buf.WriteString("\n") // Move down to next line
 		}
 	}
+
+	// Clear any leftover lines from the previous frame
+	for y := linesRendered; y < prevLines; y++ {
+		s.buf.WriteString("\r\x1b[K")
+		if y < prevLines-1 {
+			s.buf.WriteString("\n")
+		}
+	}
+
+	totalLines := max(linesRendered, prevLines)
 
 	// Reset style
 	s.buf.WriteString("\x1b[0m")
 	s.lastStyle = DefaultStyle()
 
 	// Move cursor back to start of our content (first line)
-	if linesRendered > 1 {
-		s.buf.WriteString(fmt.Sprintf("\x1b[%dA", linesRendered-1))
+	if totalLines > 1 {
+		s.buf.WriteString(fmt.Sprintf("\x1b[%dA", totalLines-1))
 	}
 	s.buf.WriteString("\r")
 
@@ -755,7 +752,7 @@ func appendInt(b []byte, n int) []byte {
 // background colours using OSC 10 (FG) and OSC 11 (BG), and the basic-16
 // palette using OSC 4;N;?. Must be called after entering raw mode.
 // Returns zero-value Colors on failure (unsupported terminal, timeout, etc.)
-// — callers should check Mode != ColorDefault.
+// Callers should check Mode != ColorDefault.
 func (s *Screen) QueryDefaultColors() (fg, bg Color) {
 	if !s.inRawMode {
 		return
@@ -797,7 +794,7 @@ func (s *Screen) QueryDefaultColors() (fg, bg Color) {
 	}
 	s.writer.Write(query)
 
-	// read responses — larger buffer for 18 colour responses
+	// read responses (larger buffer for 18 colour responses)
 	var resp [1024]byte
 	total := 0
 	for total < len(resp) {
@@ -877,7 +874,7 @@ func parseOSCColor(data []byte, digit byte) Color {
 	}
 	rest := data[idx+len(marker):]
 
-	// parse rrrr/gggg/bbbb — each component is 1-4 hex digits
+	// parse rrrr/gggg/bbbb, each component is 1-4 hex digits
 	r, rest, ok := parseHexComponent(rest)
 	if !ok || len(rest) == 0 || rest[0] != '/' {
 		return Color{}
