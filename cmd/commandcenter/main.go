@@ -20,10 +20,10 @@ var (
 	rpText    = Hex(0xe0def4)
 	rpSubtle  = Hex(0x908caa)
 	rpMuted   = Hex(0x6e6a86)
-	rpLove    = Hex(0xeb6f92)
-	rpGold    = Hex(0xf6c177)
-	rpFoam    = Hex(0x9ccfd8)
-	rpIris    = Hex(0xc4a7e7)
+	// rpLove    = Hex(0xeb6f92)
+	rpGold = Hex(0xf6c177)
+	rpFoam = Hex(0x9ccfd8)
+	rpIris = Hex(0xc4a7e7)
 )
 
 type service struct {
@@ -121,92 +121,92 @@ func main() {
 	app.SetView(
 		VBox.Grow(1).Fill(rpBase).CascadeStyle(&Style{FG: rpText})(
 			VBox.Grow(1).MarginVH(1, 2)(
-			HBox.CascadeStyle(&Style{FG: rpSubtle})(
-				Text("● glyph control").FG(rpIris),
-				Space(),
-				Text("prod-us-east-1  "),
-				Text(&clock),
-			),
-			HRule().Char(BorderDouble.Horizontal).FG(rpOverlay),
-
-			HBox.Gap(1)(
-				metricPanel("requests/s", &reqData, &reqRate, rpFoam),
-				metricPanel("p99 latency", &latData, &p99Lat, rpIris),
-				metricPanel("error rate", &errData, &errRate, rpGold),
-			),
-
-			HBox.Grow(1).Gap(1)(
-				VBox.Grow(1).Border(BorderRounded).BorderFG(rpOverlay).Title("services")(
-					HBox.Gap(2)(
-						Text("●").FG(rpMuted),
-						Text("SERVICE").FG(rpMuted),
-						Space(),
-						Text("CPU").FG(rpMuted).Width(6).Align(AlignRight),
-						Text("MEM").FG(rpMuted).Width(8).Align(AlignRight),
-						Text("STATUS").FG(rpMuted).Width(11),
-					),
-					HRule().FG(rpOverlay).Extend(),
-					svcList,
+				HBox.CascadeStyle(&Style{FG: rpSubtle})(
+					Text("● glyph control").FG(rpIris),
+					Space(),
+					Text("prod-us-east-1  "),
+					Text(&clock),
 				),
-				VBox.Border(BorderRounded).BorderFG(rpOverlay).Title("log")(
-					ForEach(&logLines, func(l *string) any {
-						return Text(l).FG(rpMuted)
-					}),
+				HRule().Char(BorderDouble.Horizontal).FG(rpOverlay),
+
+				HBox.Gap(1)(
+					metricPanel("requests/s", &reqData, &reqRate, rpFoam),
+					metricPanel("p99 latency", &latData, &p99Lat, rpIris),
+					metricPanel("error rate", &errData, &errRate, rpGold),
 				),
-			),
 
-			HRule().Char(BorderDouble.Horizontal).FG(rpOverlay),
-			Text("press [ctrl+c] to quit  [enter] to inspect  [r] restart (modal)").FG(rpMuted),
+				HBox.Grow(1).Gap(1)(
+					VBox.Grow(1).Border(BorderRounded).BorderFG(rpOverlay).Title("services")(
+						HBox.Gap(2)(
+							Text("●").FG(rpMuted),
+							Text("SERVICE").FG(rpMuted),
+							Space(),
+							Text("CPU").FG(rpMuted).Width(6).Align(AlignRight),
+							Text("MEM").FG(rpMuted).Width(8).Align(AlignRight),
+							Text("STATUS").FG(rpMuted).Width(11),
+						),
+						HRule().FG(rpOverlay).Extend(),
+						svcList,
+					),
+					VBox.Border(BorderRounded).BorderFG(rpOverlay).Title("log")(
+						ForEach(&logLines, func(l *string) any {
+							return Text(l).FG(rpMuted)
+						}),
+					),
+				),
 
-			If(&showModal).Then(OverlayNode{
-				Centered: true,
-				Child: VBox.Gap(0).Width(46).Fill(rpSurface).NodeRef(&popupRef)(
-					SpaceH(1),
-					HBox(
-						If(&selectedSvc.Status).Eq("warn").
-							Then(Text("  ○ ").FG(rpGold)).
-							Else(Text("  ● ").FG(rpFoam)),
-						If(&selectedSvc.Status).Eq("warn").
-							Then(Text(&selectedSvc.Name).FG(rpGold).Bold()).
-							Else(Text(&selectedSvc.Name).FG(rpFoam).Bold()),
-						Space(),
-						Text("esc  close  ").FG(rpMuted),
-					),
-					HRule().FG(rpOverlay),
-					Text("  cpu history").FG(rpMuted),
-					Sparkline(&selectedSvc.CPUHistory).FG(rpIris),
-					HBox.Gap(3)(
-						VBox(
-							Text("  cpu").FG(rpMuted),
-							Text("  mem").FG(rpMuted),
+				HRule().Char(BorderDouble.Horizontal).FG(rpOverlay),
+				Text("press [ctrl+c] to quit  [enter] to inspect  [r] restart (modal)").FG(rpMuted),
+
+				If(&showModal).Then(OverlayNode{
+					Centered: true,
+					Child: VBox.Gap(0).Width(46).Fill(rpSurface).NodeRef(&popupRef)(
+						SpaceH(1),
+						HBox(
+							If(&selectedSvc.Status).Eq("warn").
+								Then(Text("  ○ ").FG(rpGold)).
+								Else(Text("  ● ").FG(rpFoam)),
+							If(&selectedSvc.Status).Eq("warn").
+								Then(Text(&selectedSvc.Name).FG(rpGold).Bold()).
+								Else(Text(&selectedSvc.Name).FG(rpFoam).Bold()),
+							Space(),
+							Text("esc  close  ").FG(rpMuted),
 						),
-						VBox(
-							IfOrd(&selectedSvc.CPU).Gt(20.0).
-								Then(Text(&selectedSvc.CPUStr).FG(rpGold)).
-								Else(Text(&selectedSvc.CPUStr).FG(rpText)),
-							Text(&selectedSvc.Mem).FG(rpText),
-						),
-					),
-					HRule().FG(rpOverlay),
-					If(&restarting).
-						Then(
-							HBox.Gap(1)(
-								Text("  restarting").FG(rpMuted),
-								HBox.Grow(1).CascadeStyle(&pulseStyle)(
-									Progress(&restartPct),
-								),
+						HRule().FG(rpOverlay),
+						Text("  cpu history").FG(rpMuted),
+						Sparkline(&selectedSvc.CPUHistory).FG(rpIris),
+						HBox.Gap(3)(
+							VBox(
+								Text("  cpu").FG(rpMuted),
+								Text("  mem").FG(rpMuted),
 							),
-						).
-						Else(
-							Text("  [r] restart service").FG(rpMuted),
+							VBox(
+								IfOrd(&selectedSvc.CPU).Gt(20.0).
+									Then(Text(&selectedSvc.CPUStr).FG(rpGold)).
+									Else(Text(&selectedSvc.CPUStr).FG(rpText)),
+								Text(&selectedSvc.Mem).FG(rpText),
+							),
 						),
-					SpaceH(1),
-					ScreenEffect(
-						SEVignette().Dodge(&popupRef).Smooth(),
-						// SEDropShadow().Focus(&popupRef),
-						SEGlow().Focus(&popupRef).Brightness(1.1),
+						HRule().FG(rpOverlay),
+						If(&restarting).
+							Then(
+								HBox.Gap(1)(
+									Text("  restarting").FG(rpMuted),
+									HBox.Grow(1).CascadeStyle(&pulseStyle)(
+										Progress(&restartPct),
+									),
+								),
+							).
+							Else(
+								Text("  [r] restart service").FG(rpMuted),
+							),
+						SpaceH(1),
+						ScreenEffect(
+							SEVignette().Dodge(&popupRef).Smooth(),
+							// SEDropShadow().Focus(&popupRef),
+							SEGlow().Focus(&popupRef).Brightness(1.1),
+						),
 					),
-				),
 				}),
 			),
 		),
