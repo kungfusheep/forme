@@ -3535,8 +3535,9 @@ func TestAutoTableSort(t *testing.T) {
 
 		// manually set sort state on the compiled op and re-render
 		op := &tmpl.ops[0]
-		op.AutoTableSort.col = 0
-		op.AutoTableSort.asc = true
+		ext := op.Ext.(*opAutoTable)
+		ext.sort.col = 0
+		ext.sort.asc = true
 
 		buf2 := NewBuffer(60, 5)
 		tmpl.Execute(buf2, 60, 5)
@@ -3546,7 +3547,7 @@ func TestAutoTableSort(t *testing.T) {
 		}
 
 		// flip to descending
-		op.AutoTableSort.asc = false
+		ext.sort.asc = false
 		buf3 := NewBuffer(60, 5)
 		tmpl.Execute(buf3, 60, 5)
 		header = buf3.GetLine(0)
@@ -3555,8 +3556,8 @@ func TestAutoTableSort(t *testing.T) {
 		}
 
 		// switch to Age column
-		op.AutoTableSort.col = 1
-		op.AutoTableSort.asc = true
+		ext.sort.col = 1
+		ext.sort.asc = true
 		buf4 := NewBuffer(60, 5)
 		tmpl.Execute(buf4, 60, 5)
 		header = buf4.GetLine(0)
@@ -3577,11 +3578,12 @@ func TestAutoTableSort(t *testing.T) {
 
 		// set sort state to sort by first displayed column (City)
 		op := &tmpl.ops[0]
-		op.AutoTableSort.col = 0
-		op.AutoTableSort.asc = true
+		ext := op.Ext.(*opAutoTable)
+		ext.sort.col = 0
+		ext.sort.asc = true
 
 		// trigger the sort using the field index from the op
-		fieldIdx := op.AutoTableFields[0]
+		fieldIdx := ext.fields[0]
 		autoTableSort(&rows, fieldIdx, true)
 
 		buf := NewBuffer(60, 6)
@@ -3756,7 +3758,7 @@ func TestAutoTableScroll(t *testing.T) {
 		tmpl := Build(AutoTable(&rows).Scrollable(3))
 
 		op := &tmpl.ops[0]
-		op.AutoTableScroll.offset = 2
+		op.Ext.(*opAutoTable).scroll.offset = 2
 
 		buf := NewBuffer(60, 10)
 		tmpl.Execute(buf, 60, 10)
@@ -3790,7 +3792,7 @@ func TestAutoTableScroll(t *testing.T) {
 		tmpl := Build(AutoTable(&rows).Scrollable(2))
 
 		op := &tmpl.ops[0]
-		op.AutoTableScroll.offset = 100
+		op.Ext.(*opAutoTable).scroll.offset = 100
 
 		buf := NewBuffer(60, 10)
 		tmpl.Execute(buf, 60, 10)
@@ -3844,8 +3846,9 @@ func TestAutoTableScroll(t *testing.T) {
 		tmpl := Build(AutoTable(&rows).Scrollable(2).Sortable())
 
 		op := &tmpl.ops[0]
-		op.AutoTableSort.col = 0
-		op.AutoTableSort.asc = true
+		ext := op.Ext.(*opAutoTable)
+		ext.sort.col = 0
+		ext.sort.asc = true
 
 		buf := NewBuffer(60, 10)
 		tmpl.Execute(buf, 60, 10)
@@ -3861,7 +3864,7 @@ func TestAutoTableScroll(t *testing.T) {
 		}
 
 		// scroll down by 2
-		op.AutoTableScroll.offset = 2
+		ext.scroll.offset = 2
 		buf2 := NewBuffer(60, 10)
 		tmpl.Execute(buf2, 60, 10)
 

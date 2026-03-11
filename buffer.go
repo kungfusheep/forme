@@ -145,14 +145,7 @@ func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 	fullBlocks := totalEighths / 8
 	partialEighths := totalEighths % 8
 
-	// Direct slice access - no bounds check per cell, no border merge
 	base := y * b.width
-
-	// Dark gray background for empty areas - partial blocks blend into this
-	emptyBG := Color{Mode: ColorRGB, R: 60, G: 60, B: 60}
-	filledCell := Cell{Rune: '█', Style: style}
-	emptyCell := Cell{Rune: ' ', Style: Style{BG: emptyBG}}
-	partialStyle := Style{FG: style.FG, BG: emptyBG}
 
 	end := x + width
 	if end > b.width {
@@ -162,14 +155,35 @@ func (b *Buffer) WriteProgressBar(x, y, width int, ratio float32, style Style) {
 		x = 0
 	}
 
-	for i := x; i < end; i++ {
-		pos := i - x
-		if pos < fullBlocks {
-			b.cells[base+i] = filledCell
-		} else if pos == fullBlocks && partialEighths > 0 {
-			b.cells[base+i] = Cell{Rune: partialBlocks[partialEighths], Style: partialStyle}
-		} else {
-			b.cells[base+i] = emptyCell
+	dst := b.cells[base+x : base+end]
+
+	// bulk fill the filled region
+	if fullBlocks > 0 {
+		filledCell := Cell{Rune: '█', Style: style}
+		n := fullBlocks
+		if n > len(dst) {
+			n = len(dst)
+		}
+		dst[0] = filledCell
+		for filled := 1; filled < n; filled *= 2 {
+			copy(dst[filled:n], dst[:filled])
+		}
+		dst = dst[n:]
+	}
+
+	// single partial block cell
+	if partialEighths > 0 && len(dst) > 0 {
+		emptyBG := Color{Mode: ColorRGB, R: 60, G: 60, B: 60}
+		dst[0] = Cell{Rune: partialBlocks[partialEighths], Style: Style{FG: style.FG, BG: emptyBG}}
+		dst = dst[1:]
+	}
+
+	// bulk fill the empty region
+	if len(dst) > 0 {
+		emptyBG := Color{Mode: ColorRGB, R: 60, G: 60, B: 60}
+		dst[0] = Cell{Rune: ' ', Style: Style{BG: emptyBG}}
+		for filled := 1; filled < len(dst); filled *= 2 {
+			copy(dst[filled:], dst[:filled])
 		}
 	}
 }
