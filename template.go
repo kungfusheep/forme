@@ -290,12 +290,6 @@ type Op struct {
 	AutoTableSort     *autoTableSortState // nil unless sorting enabled
 	AutoTableScroll   *autoTableScroll    // nil unless scrolling enabled
 
-	// Sparkline
-	SparkValues    []float64  // static values
-	SparkValuesPtr *[]float64 // pointer values
-	SparkMin       float64    // min value (0 = auto)
-	SparkMax       float64    // max value (0 = auto)
-	SparkStyle     Style      // styling
 
 	// HRule/VRule
 	RuleChar    rune  // line character
@@ -368,6 +362,58 @@ type Op struct {
 
 	// ScreenEffect
 	ScreenEffectFns []Effect // full-screen post-process functions
+
+	// component-specific data — type-assert based on Kind.
+	// we use a Kind switch + type assertion instead of interface dispatch because
+	// concrete method calls after assertion are inlinable. interface calls are not,
+	// and cause parameters to escape to heap. verified via go build -gcflags='-m -m'.
+	Ext any
+
+	// dynamic layout property overrides — nil for static ops
+	Dyn *OpDyn
+}
+
+// OpDyn holds pointer overrides for shared layout properties.
+// only allocated for ops that use dynamic values (e.g. Height(&h)).
+type OpDyn struct {
+	Height *int16
+	Width  *int16
+}
+
+// opSparkline holds sparkline-specific data.
+type opSparkline struct {
+	values    []float64
+	valuesPtr *[]float64
+	min       float64
+	max       float64
+	style     Style
+}
+
+func (s *opSparkline) resolveValues() []float64 {
+	if s.valuesPtr != nil {
+		return *s.valuesPtr
+	}
+	return s.values
+}
+
+func (s *opSparkline) render(t *Template, buf *Buffer, x, y, w, h int16) {
+	style := t.effectiveStyle(s.style)
+	vals := s.resolveValues()
+	if len(vals) == 0 {
+		return
+	}
+	if h <= 1 {
+		buf.WriteSparkline(int(x), int(y), vals, int(w), s.min, s.max, style)
+	} else {
+		buf.WriteSparklineMulti(int(x), int(y), vals, int(w), int(h), s.min, s.max, style)
+	}
+}
+
+func (s *opSparkline) dataLen() int {
+	if s.valuesPtr != nil {
+		return len(*s.valuesPtr)
+	}
+	return len(s.values)
 }
 
 // margin helpers (avoid repeating [0]/[1]/[2]/[3] everywhere)
@@ -413,8 +459,7 @@ const (
 	OpTable     // Table with columns and rows
 	OpAutoTable // AutoTable with pointer to slice of structs (reactive)
 
-	OpSparkline    // Sparkline with static values
-	OpSparklinePtr // Sparkline with pointer values
+	OpSparkline // Sparkline (data in Ext)
 
 	OpHRule        // Horizontal line
 	OpVRule        // Vertical line
@@ -1419,25 +1464,22 @@ func (t *Template) compileCounterC(v counterC, parent int16, depth int) int16 {
 }
 
 func (t *Template) compileSparklineC(v SparklineC, parent int16, depth int) int16 {
-	op := Op{
-		Parent:     parent,
-		Width:      v.width,
-		Height:     v.height,
-		SparkMin:   v.min,
-		SparkMax:   v.max,
-		SparkStyle: v.style,
-	}
-
+	ext := &opSparkline{min: v.min, max: v.max, style: v.style}
 	switch vals := v.values.(type) {
 	case []float64:
-		op.Kind = OpSparkline
-		op.SparkValues = vals
+		ext.values = vals
 	case *[]float64:
-		op.Kind = OpSparklinePtr
-		op.SparkValuesPtr = vals
+		ext.valuesPtr = vals
 	}
 
-	op.Margin = v.style.margin
+	op := Op{
+		Kind:   OpSparkline,
+		Parent: parent,
+		Width:  v.width,
+		Height: v.height,
+		Margin: v.style.margin,
+		Ext:    ext,
+	}
 	return t.addOp(op, depth)
 }
 
@@ -2083,17 +2125,7 @@ func (t *Template) setOpWidth(op *Op, geom *Geom, availW int16, elemBase unsafe.
 			if availW > 0 {
 				geom.W = availW
 			} else {
-				geom.W = int16(len(op.SparkValues))
-			}
-		}
-
-	case OpSparklinePtr:
-		geom.W = op.Width
-		if geom.W == 0 {
-			if availW > 0 {
-				geom.W = availW
-			} else if op.SparkValuesPtr != nil {
-				geom.W = int16(len(*op.SparkValuesPtr))
+				geom.W = int16(op.Ext.(*opSparkline).dataLen())
 			}
 		}
 
@@ -2685,7 +2717,7 @@ func (t *Template) layout(_ int16) {
 					geom.H = 1
 				}
 
-			case OpSparkline, OpSparklinePtr:
+			case OpSparkline:
 				geom.H = op.Height
 				if geom.H <= 0 {
 					geom.H = 1
@@ -3771,24 +3803,7 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		t.renderTable(buf, op, absX, absY, maxW)
 
 	case OpSparkline:
-		style := t.effectiveStyle(op.SparkStyle)
-		h := int(geom.H)
-		if h <= 1 {
-			buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(contentW), op.SparkMin, op.SparkMax, style)
-		} else {
-			buf.WriteSparklineMulti(int(absX), int(absY), op.SparkValues, int(contentW), h, op.SparkMin, op.SparkMax, style)
-		}
-
-	case OpSparklinePtr:
-		if op.SparkValuesPtr != nil {
-			style := t.effectiveStyle(op.SparkStyle)
-			h := int(geom.H)
-			if h <= 1 {
-				buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), op.SparkMin, op.SparkMax, style)
-			} else {
-				buf.WriteSparklineMulti(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), h, op.SparkMin, op.SparkMax, style)
-			}
-		}
+		op.Ext.(*opSparkline).render(t, buf, absX, absY, contentW, geom.H)
 
 	case OpHRule:
 		width := int(maxW)
@@ -4285,24 +4300,7 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		sub.renderTable(buf, op, absX, absY, maxW)
 
 	case OpSparkline:
-		style := sub.effectiveStyle(op.SparkStyle)
-		h := int(geom.H)
-		if h <= 1 {
-			buf.WriteSparkline(int(absX), int(absY), op.SparkValues, int(contentW), op.SparkMin, op.SparkMax, style)
-		} else {
-			buf.WriteSparklineMulti(int(absX), int(absY), op.SparkValues, int(contentW), h, op.SparkMin, op.SparkMax, style)
-		}
-
-	case OpSparklinePtr:
-		if op.SparkValuesPtr != nil {
-			style := sub.effectiveStyle(op.SparkStyle)
-			h := int(geom.H)
-			if h <= 1 {
-				buf.WriteSparkline(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), op.SparkMin, op.SparkMax, style)
-			} else {
-				buf.WriteSparklineMulti(int(absX), int(absY), *op.SparkValuesPtr, int(contentW), h, op.SparkMin, op.SparkMax, style)
-			}
-		}
+		op.Ext.(*opSparkline).render(sub, buf, absX, absY, contentW, geom.H)
 
 	case OpHRule:
 		width := int(maxW)
@@ -5597,7 +5595,7 @@ func opKindName(k OpKind) string {
 	names := map[OpKind]string{
 		OpText: "Text", OpTextPtr: "TextPtr", OpTextFn: "TextFn", OpProgress: "Progress",
 		OpContainer: "Container", OpIf: "If", OpForEach: "ForEach",
-		OpLayer: "Layer", OpOverlay: "Overlay", OpScreenEffect: "ScreenEffect", OpHRule: "HRule",
+		OpLayer: "Layer", OpOverlay: "Overlay", OpScreenEffect: "ScreenEffect", OpSparkline: "Sparkline", OpHRule: "HRule",
 		OpVRule: "VRule", OpSpacer: "Spacer", OpSelectionList: "SelectionList",
 	}
 	if name, ok := names[k]; ok {
