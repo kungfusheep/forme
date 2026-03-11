@@ -118,9 +118,9 @@ func TestV2DynamicText(t *testing.T) {
 func TestFuncText(t *testing.T) {
 	// basic: func is called each render
 	counter := 0
-	tmpl := Build(VBoxNode{Children: []any{
-		TextNode{Content: func() string { return fmt.Sprintf("count:%d", counter) }},
-	}})
+	tmpl := Build(VBox(
+		Text(func() string { return fmt.Sprintf("count:%d", counter) }),
+	))
 
 	buf := NewBuffer(40, 10)
 	tmpl.Execute(buf, 40, 10)
