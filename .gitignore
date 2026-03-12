@@ -1,6 +1,7 @@
 # compiled binaries — anchored to root so cmd/ subdirs are not affected
 /postprocessdemo
 /avionics
+/commandcenter
 /dashboard
 /deploylog
 /filterlogdemo
