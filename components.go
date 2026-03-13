@@ -73,11 +73,11 @@ type VBoxC struct {
 	gapPtr          *int8
 	percentWidthPtr *float32
 	flexGrowPtr     *float32
-	heightCond       conditionNode
-	widthCond        conditionNode
-	gapCond          conditionNode
-	percentWidthCond conditionNode
-	flexGrowCond     conditionNode
+	heightCond       any
+	widthCond        any
+	gapCond          any
+	percentWidthCond any
+	flexGrowCond     any
 	children        []any
 }
 
@@ -114,6 +114,8 @@ func (f VBoxFn) Gap(g any) VBoxFn {
 			v.gapPtr = val
 		case conditionNode:
 			v.gapCond = val
+		case tweenNode:
+						v.gapCond = val
 		}
 		return v
 	}
@@ -168,6 +170,8 @@ func (f VBoxFn) Width(w any) VBoxFn {
 			v.widthPtr = val
 		case conditionNode:
 			v.widthCond = val
+		case tweenNode:
+						v.widthCond = val
 		}
 		return v
 	}
@@ -186,6 +190,8 @@ func (f VBoxFn) Height(h any) VBoxFn {
 			v.heightPtr = val
 		case conditionNode:
 			v.heightCond = val
+		case tweenNode:
+						v.heightCond = val
 		}
 		return v
 	}
@@ -214,6 +220,8 @@ func (f VBoxFn) WidthPct(pct any) VBoxFn {
 			v.percentWidthPtr = val
 		case conditionNode:
 			v.percentWidthCond = val
+		case tweenNode:
+						v.percentWidthCond = val
 		}
 		return v
 	}
@@ -234,6 +242,8 @@ func (f VBoxFn) Grow(g any) VBoxFn {
 			v.flexGrowPtr = val
 		case conditionNode:
 			v.flexGrowCond = val
+		case tweenNode:
+						v.flexGrowCond = val
 		}
 		return v
 	}
@@ -318,11 +328,11 @@ type HBoxC struct {
 	gapPtr          *int8
 	percentWidthPtr *float32
 	flexGrowPtr     *float32
-	heightCond       conditionNode
-	widthCond        conditionNode
-	gapCond          conditionNode
-	percentWidthCond conditionNode
-	flexGrowCond     conditionNode
+	heightCond       any
+	widthCond        any
+	gapCond          any
+	percentWidthCond any
+	flexGrowCond     any
 	children        []any
 }
 
@@ -359,6 +369,8 @@ func (f HBoxFn) Gap(g any) HBoxFn {
 			h.gapPtr = val
 		case conditionNode:
 			h.gapCond = val
+		case tweenNode:
+						h.gapCond = val
 		}
 		return h
 	}
@@ -413,6 +425,8 @@ func (f HBoxFn) Width(w any) HBoxFn {
 			h.widthPtr = val
 		case conditionNode:
 			h.widthCond = val
+		case tweenNode:
+						h.widthCond = val
 		}
 		return h
 	}
@@ -431,6 +445,8 @@ func (f HBoxFn) Height(h any) HBoxFn {
 			c.heightPtr = val
 		case conditionNode:
 			c.heightCond = val
+		case tweenNode:
+						c.heightCond = val
 		}
 		return c
 	}
@@ -459,6 +475,8 @@ func (f HBoxFn) WidthPct(pct any) HBoxFn {
 			h.percentWidthPtr = val
 		case conditionNode:
 			h.percentWidthCond = val
+		case tweenNode:
+						h.percentWidthCond = val
 		}
 		return h
 	}
@@ -479,6 +497,8 @@ func (f HBoxFn) Grow(g any) HBoxFn {
 			h.flexGrowPtr = val
 		case conditionNode:
 			h.flexGrowCond = val
+		case tweenNode:
+						h.flexGrowCond = val
 		}
 		return h
 	}
@@ -585,7 +605,7 @@ type TextC struct {
 	style     Style
 	width     int16 // explicit width (0 = content-sized)
 	widthPtr  *int16
-	widthCond conditionNode
+	widthCond any
 }
 
 // Text creates a text display component.
@@ -661,6 +681,8 @@ func (t TextC) Width(w any) TextC {
 		t.widthPtr = val
 	case conditionNode:
 		t.widthCond = val
+		case tweenNode:
+					t.widthCond = val
 	}
 	return t
 }
@@ -737,9 +759,9 @@ type SpacerC struct {
 	widthPtr     *int16
 	heightPtr    *int16
 	flexGrowPtr  *float32
-	widthCond    conditionNode
-	heightCond   conditionNode
-	flexGrowCond conditionNode
+	widthCond    any
+	heightCond   any
+	flexGrowCond any
 }
 
 // Space creates a flexible empty spacer.
@@ -768,6 +790,8 @@ func (s SpacerC) Width(w any) SpacerC {
 		s.widthPtr = val
 	case conditionNode:
 		s.widthCond = val
+		case tweenNode:
+					s.widthCond = val
 	}
 	return s
 }
@@ -783,6 +807,8 @@ func (s SpacerC) Height(h any) SpacerC {
 		s.heightPtr = val
 	case conditionNode:
 		s.heightCond = val
+		case tweenNode:
+					s.heightCond = val
 	}
 	return s
 }
@@ -812,6 +838,8 @@ func (s SpacerC) Grow(g any) SpacerC {
 		s.flexGrowPtr = val
 	case conditionNode:
 		s.flexGrowCond = val
+		case tweenNode:
+					s.flexGrowCond = val
 	}
 	return s
 }
@@ -886,7 +914,7 @@ type VRuleC struct {
 	height     int16
 	extend     bool
 	heightPtr  *int16
-	heightCond conditionNode
+	heightCond any
 }
 
 // VRule creates a vertical rule.
@@ -926,6 +954,8 @@ func (v VRuleC) Height(h any) VRuleC {
 		v.heightPtr = val
 	case conditionNode:
 		v.heightCond = val
+		case tweenNode:
+					v.heightCond = val
 	}
 	return v
 }
@@ -951,7 +981,7 @@ type ProgressC struct {
 	width     int16
 	style     Style
 	widthPtr  *int16
-	widthCond conditionNode
+	widthCond any
 }
 
 // Progress creates a progress bar bound to an int pointer (0-100).
@@ -970,6 +1000,8 @@ func (p ProgressC) Width(w any) ProgressC {
 		p.widthPtr = val
 	case conditionNode:
 		p.widthCond = val
+		case tweenNode:
+					p.widthCond = val
 	}
 	return p
 }
@@ -1064,7 +1096,7 @@ type LeaderC struct {
 	fill      rune
 	style     Style
 	widthPtr  *int16
-	widthCond conditionNode
+	widthCond any
 }
 
 // Leader creates a label.....value display with fill characters.
@@ -1084,6 +1116,8 @@ func (l LeaderC) Width(w any) LeaderC {
 		l.widthPtr = val
 	case conditionNode:
 		l.widthCond = val
+		case tweenNode:
+					l.widthCond = val
 	}
 	return l
 }
@@ -1158,8 +1192,8 @@ type SparklineC struct {
 	style      Style
 	widthPtr   *int16
 	heightPtr  *int16
-	widthCond  conditionNode
-	heightCond conditionNode
+	widthCond  any
+	heightCond any
 }
 
 // Sparkline creates a mini bar chart using Unicode block characters (▁▂▃▄▅▆▇█).
@@ -1179,6 +1213,8 @@ func (s SparklineC) Width(w any) SparklineC {
 		s.widthPtr = val
 	case conditionNode:
 		s.widthCond = val
+		case tweenNode:
+					s.widthCond = val
 	}
 	return s
 }
@@ -1196,6 +1232,8 @@ func (s SparklineC) Height(h any) SparklineC {
 		s.heightPtr = val
 	case conditionNode:
 		s.heightCond = val
+		case tweenNode:
+					s.heightCond = val
 	}
 	return s
 }
@@ -1280,7 +1318,7 @@ type LayerViewC struct {
 	flexGrow     float32
 	margin       [4]int16
 	flexGrowPtr  *float32
-	flexGrowCond conditionNode
+	flexGrowCond any
 }
 
 // LayerView displays a scrollable, pre-rendered layer within the view tree.
@@ -1314,6 +1352,8 @@ func (l LayerViewC) Grow(g any) LayerViewC {
 		l.flexGrowPtr = val
 	case conditionNode:
 		l.flexGrowCond = val
+		case tweenNode:
+					l.flexGrowCond = val
 	}
 	return l
 }
@@ -1708,7 +1748,7 @@ type TabsC struct {
 	inactiveStyle Style
 	margin        [4]int16
 	gapPtr        *int8
-	gapCond       conditionNode
+	gapCond       any
 }
 
 // Tabs creates a row of selectable tab headers.
@@ -1734,6 +1774,8 @@ func (t TabsC) Gap(g any) TabsC {
 		t.gapPtr = val
 	case conditionNode:
 		t.gapCond = val
+		case tweenNode:
+					t.gapCond = val
 	}
 	return t
 }
@@ -1997,7 +2039,7 @@ type RadioC struct {
 	horizontal       bool
 	declaredBindings []binding
 	gapPtr           *int8
-	gapCond          conditionNode
+	gapCond          any
 
 	// focus
 	focused bool
@@ -2069,6 +2111,8 @@ func (r *RadioC) Gap(g any) *RadioC {
 		r.gapPtr = val
 	case conditionNode:
 		r.gapCond = val
+		case tweenNode:
+					r.gapCond = val
 	}
 	return r
 }
@@ -2160,7 +2204,7 @@ type CheckListC[T any] struct {
 	declaredBindings []binding
 	cached           *SelectionList
 	gapPtr           *int8
-	gapCond          conditionNode
+	gapCond          any
 }
 
 // CheckList creates a navigable checklist from a bound slice.
@@ -2251,6 +2295,8 @@ func (c *CheckListC[T]) Gap(g any) *CheckListC[T] {
 		c.gapPtr = val
 	case conditionNode:
 		c.gapCond = val
+		case tweenNode:
+					c.gapCond = val
 	}
 	return c
 }
@@ -2454,7 +2500,7 @@ type InputC struct {
 	style       Style
 	declaredTIB *textInputBinding
 	widthPtr    *int16
-	widthCond   conditionNode
+	widthCond   any
 
 	// value binding
 	boundValue *string
@@ -2531,6 +2577,8 @@ func (i *InputC) Width(w any) *InputC {
 		i.widthPtr = val
 	case conditionNode:
 		i.widthCond = val
+		case tweenNode:
+					i.widthCond = val
 	}
 	return i
 }

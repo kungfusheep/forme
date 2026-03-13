@@ -236,6 +236,7 @@ func (a *App) SetView(view any) *App {
 
 	a.template = Build(view)
 	a.template.SetApp(a) // Link for jump mode support
+	a.template.requestRender = a.RequestRender
 	a.wireBindings(a.template, a.router)
 	// Create buffer pool for async clearing (or reuse existing)
 	size := a.screen.Size()

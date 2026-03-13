@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
@@ -131,6 +132,14 @@ type Template struct {
 
 	// per-frame evaluators — conditions, animations, etc. run at start of Execute
 	evals []func()
+
+	// frame timing — single timestamp per frame, shared by all animations
+	frameTime time.Time
+	animating bool
+
+	// animation ticker — runs at ~60fps only while animations are active
+	animTicker    *time.Ticker
+	requestRender func()
 }
 
 // pendingOverlay stores info needed to render an overlay after main content
@@ -360,6 +369,199 @@ func anyToInt8(v any) int8 {
 		return *val
 	}
 	return 0
+}
+
+// compileDyn resolves a dynamic property value (conditionNode or tweenNode) to a pointer.
+// used by compile sites where Cond fields can hold either type.
+
+func (t *Template) compileDynInt16(v any) *int16 {
+	switch c := v.(type) {
+	case conditionNode:
+		return t.compileCondInt16(c)
+	case tweenNode:
+		return t.compileTweenInt16(c)
+	}
+	return nil
+}
+
+func (t *Template) compileDynFloat32(v any) *float32 {
+	switch c := v.(type) {
+	case conditionNode:
+		return t.compileCondFloat32(c)
+	case tweenNode:
+		return t.compileTweenFloat32(c)
+	}
+	return nil
+}
+
+func (t *Template) compileDynInt8(v any) *int8 {
+	switch c := v.(type) {
+	case conditionNode:
+		return t.compileCondInt8(c)
+	case tweenNode:
+		return t.compileTweenInt8(c)
+	}
+	return nil
+}
+
+// Animating returns true if any tween is currently in progress.
+// check this after Execute to determine if another frame is needed.
+func (t *Template) Animating() bool { return t.animating }
+
+// compileTween resolves a tweenNode's target to a typed pointer, allocates
+// interpolation storage, and registers a per-frame evaluator that watches the
+// target and lerps toward it. all tweens in a frame share t.frameTime.
+
+func (t *Template) compileTweenInt16(tw tweenNode) *int16 {
+	watchPtr := t.resolveTweenTargetInt16(tw.getTarget())
+	storage := new(int16)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := float64(*watchPtr)
+	var startTime time.Time
+
+	t.evals = append(t.evals, func() {
+		target := *watchPtr
+		now := t.frameTime
+		if target != lastTarget {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = int16(startVal + progress*(float64(target)-startVal))
+		t.animating = true
+	})
+	return storage
+}
+
+func (t *Template) compileTweenFloat32(tw tweenNode) *float32 {
+	watchPtr := t.resolveTweenTargetFloat32(tw.getTarget())
+	storage := new(float32)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := float64(*watchPtr)
+	var startTime time.Time
+
+	t.evals = append(t.evals, func() {
+		target := *watchPtr
+		now := t.frameTime
+		if target != lastTarget {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = float32(startVal + progress*(float64(target)-startVal))
+		t.animating = true
+	})
+	return storage
+}
+
+func (t *Template) compileTweenInt8(tw tweenNode) *int8 {
+	watchPtr := t.resolveTweenTargetInt8(tw.getTarget())
+	storage := new(int8)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := float64(*watchPtr)
+	var startTime time.Time
+
+	t.evals = append(t.evals, func() {
+		target := *watchPtr
+		now := t.frameTime
+		if target != lastTarget {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = int8(startVal + progress*(float64(target)-startVal))
+		t.animating = true
+	})
+	return storage
+}
+
+// resolve tween targets — unwrap conditionNode or pointer, same as properties
+func (t *Template) resolveTweenTargetInt16(target any) *int16 {
+	switch v := target.(type) {
+	case *int16:
+		return v
+	case conditionNode:
+		return t.compileCondInt16(v)
+	}
+	// static fallback: allocate storage with the value
+	storage := new(int16)
+	*storage = anyToInt16(target)
+	return storage
+}
+
+func (t *Template) resolveTweenTargetFloat32(target any) *float32 {
+	switch v := target.(type) {
+	case *float32:
+		return v
+	case conditionNode:
+		return t.compileCondFloat32(v)
+	}
+	storage := new(float32)
+	*storage = anyToFloat32(target)
+	return storage
+}
+
+func (t *Template) resolveTweenTargetInt8(target any) *int8 {
+	switch v := target.(type) {
+	case *int8:
+		return v
+	case conditionNode:
+		return t.compileCondInt8(v)
+	}
+	storage := new(int8)
+	*storage = anyToInt8(target)
+	return storage
 }
 
 // opSparkline holds sparkline-specific data.
@@ -1516,16 +1718,16 @@ func (t *Template) compileForEach(items any, render any, parent int16, depth int
 func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	f := flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow, fitContent: v.fitContent, widthPtr: v.widthPtr, heightPtr: v.heightPtr, percentWidthPtr: v.percentWidthPtr, flexGrowPtr: v.flexGrowPtr}
 	if v.heightCond != nil {
-		f.heightPtr = t.compileCondInt16(v.heightCond)
+		f.heightPtr = t.compileDynInt16(v.heightCond)
 	}
 	if v.widthCond != nil {
-		f.widthPtr = t.compileCondInt16(v.widthCond)
+		f.widthPtr = t.compileDynInt16(v.widthCond)
 	}
 	if v.percentWidthCond != nil {
-		f.percentWidthPtr = t.compileCondFloat32(v.percentWidthCond)
+		f.percentWidthPtr = t.compileDynFloat32(v.percentWidthCond)
 	}
 	if v.flexGrowCond != nil {
-		f.flexGrowPtr = t.compileCondFloat32(v.flexGrowCond)
+		f.flexGrowPtr = t.compileDynFloat32(v.flexGrowCond)
 	}
 	idx := t.compileContainer(
 		v.children,
@@ -1557,7 +1759,7 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Gap = t.compileCondInt8(v.gapCond)
+		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	}
 	return idx
 }
@@ -1565,16 +1767,16 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsafe.Pointer, elemSize uintptr) int16 {
 	f := flex{percentWidth: v.percentWidth, width: v.width, height: v.height, flexGrow: v.flexGrow, fitContent: v.fitContent, widthPtr: v.widthPtr, heightPtr: v.heightPtr, percentWidthPtr: v.percentWidthPtr, flexGrowPtr: v.flexGrowPtr}
 	if v.heightCond != nil {
-		f.heightPtr = t.compileCondInt16(v.heightCond)
+		f.heightPtr = t.compileDynInt16(v.heightCond)
 	}
 	if v.widthCond != nil {
-		f.widthPtr = t.compileCondInt16(v.widthCond)
+		f.widthPtr = t.compileDynInt16(v.widthCond)
 	}
 	if v.percentWidthCond != nil {
-		f.percentWidthPtr = t.compileCondFloat32(v.percentWidthCond)
+		f.percentWidthPtr = t.compileDynFloat32(v.percentWidthCond)
 	}
 	if v.flexGrowCond != nil {
-		f.flexGrowPtr = t.compileCondFloat32(v.flexGrowCond)
+		f.flexGrowPtr = t.compileDynFloat32(v.flexGrowCond)
 	}
 	idx := t.compileContainer(
 		v.children,
@@ -1606,7 +1808,7 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Gap = t.compileCondInt8(v.gapCond)
+		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	}
 	return idx
 }
@@ -1642,7 +1844,7 @@ func (t *Template) compileTextC(v TextC, parent int16, depth int, elemBase unsaf
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+		t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 	} else if v.widthPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -1673,17 +1875,17 @@ func (t *Template) compileSpacerC(v SpacerC, parent int16, depth int) int16 {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
 		if v.widthCond != nil {
-			t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+			t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 		} else if v.widthPtr != nil {
 			t.ops[idx].Dyn.Width = v.widthPtr
 		}
 		if v.heightCond != nil {
-			t.ops[idx].Dyn.Height = t.compileCondInt16(v.heightCond)
+			t.ops[idx].Dyn.Height = t.compileDynInt16(v.heightCond)
 		} else if v.heightPtr != nil {
 			t.ops[idx].Dyn.Height = v.heightPtr
 		}
 		if v.flexGrowCond != nil {
-			t.ops[idx].Dyn.FlexGrow = t.compileCondFloat32(v.flexGrowCond)
+			t.ops[idx].Dyn.FlexGrow = t.compileDynFloat32(v.flexGrowCond)
 		} else if v.flexGrowPtr != nil {
 			t.ops[idx].Dyn.FlexGrow = v.flexGrowPtr
 		}
@@ -1722,7 +1924,7 @@ func (t *Template) compileVRuleC(v VRuleC, parent int16, depth int) int16 {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Height = t.compileCondInt16(v.heightCond)
+		t.ops[idx].Dyn.Height = t.compileDynInt16(v.heightCond)
 	} else if v.heightPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -1765,7 +1967,7 @@ func (t *Template) compileProgressC(v ProgressC, parent int16, depth int, elemBa
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+		t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 	} else if v.widthPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -1839,7 +2041,7 @@ func (t *Template) compileLeaderC(v LeaderC, parent int16, depth int) int16 {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+		t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 	} else if v.widthPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -1890,12 +2092,12 @@ func (t *Template) compileSparklineC(v SparklineC, parent int16, depth int) int1
 			t.ops[idx].Dyn = &OpDyn{}
 		}
 		if v.widthCond != nil {
-			t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+			t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 		} else if v.widthPtr != nil {
 			t.ops[idx].Dyn.Width = v.widthPtr
 		}
 		if v.heightCond != nil {
-			t.ops[idx].Dyn.Height = t.compileCondInt16(v.heightCond)
+			t.ops[idx].Dyn.Height = t.compileDynInt16(v.heightCond)
 		} else if v.heightPtr != nil {
 			t.ops[idx].Dyn.Height = v.heightPtr
 		}
@@ -1934,7 +2136,7 @@ func (t *Template) compileLayerViewC(v LayerViewC, parent int16, depth int) int1
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.FlexGrow = t.compileCondFloat32(v.flexGrowCond)
+		t.ops[idx].Dyn.FlexGrow = t.compileDynFloat32(v.flexGrowCond)
 	} else if v.flexGrowPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -1998,7 +2200,7 @@ func (t *Template) compileTabsC(v TabsC, parent int16, depth int) int16 {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Gap = t.compileCondInt8(v.gapCond)
+		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	} else if v.gapPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -2143,7 +2345,7 @@ func (t *Template) compileAutoTableReactive(v AutoTableC, rv reflect.Value, pare
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Gap = t.compileCondInt8(v.gapCond)
+		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	} else if v.gapPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -2414,7 +2616,7 @@ func (t *Template) compileInputC(v *InputC, parent int16, depth int) int16 {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
 		}
-		t.ops[idx].Dyn.Width = t.compileCondInt16(v.widthCond)
+		t.ops[idx].Dyn.Width = t.compileDynInt16(v.widthCond)
 	} else if v.widthPtr != nil {
 		if t.ops[idx].Dyn == nil {
 			t.ops[idx].Dyn = &OpDyn{}
@@ -2431,8 +2633,23 @@ func (t *Template) Execute(buf *Buffer, screenW, screenH int16) {
 	t.pendingScreenEffects = t.pendingScreenEffects[:0]
 
 	// Phase 0: Evaluate reactive bindings (conditions, animations)
+	t.frameTime = time.Now()
+	t.animating = false
 	for _, eval := range t.evals {
 		eval()
+	}
+
+	// manage animation ticker — start at ~60fps when animating, stop when settled
+	if t.animating && t.animTicker == nil && t.requestRender != nil {
+		t.animTicker = time.NewTicker(16 * time.Millisecond)
+		go func() {
+			for range t.animTicker.C {
+				t.requestRender()
+			}
+		}()
+	} else if !t.animating && t.animTicker != nil {
+		t.animTicker.Stop()
+		t.animTicker = nil
 	}
 
 	// Phase 1: Width distribution (top → down)

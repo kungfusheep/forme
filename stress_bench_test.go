@@ -1,6 +1,9 @@
 package glyph
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Stress test data
 var stressData = struct {
@@ -775,6 +778,161 @@ func BenchmarkConditionalDashboard(b *testing.B) {
 					return HBox(
 						Text(&item.Name),
 						Progress(&item.CPU).Width(If(&detailed).Then(int16(30)).Else(int16(15))),
+					)
+				}),
+			),
+			VBox.Grow(1).Border(BorderSingle).Title("RIGHT")(
+				Text(&content),
+			),
+		),
+		VBox.Grow(1).Border(BorderSingle).Title("BOTTOM")(
+			Text(&content),
+		),
+	)
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 120, 60)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		detailed = i%2 == 0
+		buf.ClearDirty()
+		serial.Execute(buf, 120, 60)
+	}
+}
+
+// BenchmarkAnimateIdle - animation evaluators present but not actively animating
+func BenchmarkAnimateIdle(b *testing.B) {
+	buf := NewBuffer(80, 50)
+	content := "content"
+	target := int16(20)
+
+	ui := VBox.Height(50)(
+		Text("Header"),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("A").Grow(1)(
+			Text(&content),
+		),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("B").Grow(2)(
+			Text(&content),
+		),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("C").Grow(1)(
+			Text(&content),
+		),
+		Text("Footer"),
+	)
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 80, 50)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.ClearDirty()
+		serial.Execute(buf, 80, 50)
+	}
+}
+
+// BenchmarkAnimateActive - animation evaluators actively interpolating each frame
+func BenchmarkAnimateActive(b *testing.B) {
+	buf := NewBuffer(80, 50)
+	content := "content"
+	target := int16(20)
+
+	ui := VBox.Height(50)(
+		Text("Header"),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("A").Grow(1)(
+			Text(&content),
+		),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("B").Grow(2)(
+			Text(&content),
+		),
+		VBox.Height(Animate.Duration(200 * time.Millisecond)(&target)).Border(BorderSingle).Title("C").Grow(1)(
+			Text(&content),
+		),
+		Text("Footer"),
+	)
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 80, 50)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// flip target each iteration to keep animations active
+		if i%2 == 0 {
+			target = 30
+		} else {
+			target = 20
+		}
+		buf.ClearDirty()
+		serial.Execute(buf, 80, 50)
+	}
+}
+
+// BenchmarkAnimateComposed - Animate wrapping If conditions
+func BenchmarkAnimateComposed(b *testing.B) {
+	buf := NewBuffer(80, 50)
+	content := "content"
+	expanded := true
+
+	smooth := Animate.Duration(200 * time.Millisecond).Ease(EaseOutCubic)
+
+	ui := VBox.Height(50)(
+		Text("Header"),
+		VBox.Height(smooth(If(&expanded).Then(int16(30)).Else(int16(10)))).Border(BorderSingle).Title("A").Grow(1)(
+			Text(&content),
+		),
+		VBox.Height(smooth(If(&expanded).Then(int16(30)).Else(int16(10)))).Border(BorderSingle).Title("B").Grow(2)(
+			Text(&content),
+		),
+		VBox.Height(smooth(If(&expanded).Then(int16(30)).Else(int16(10)))).Border(BorderSingle).Title("C").Grow(1)(
+			Text(&content),
+		),
+		Text("Footer"),
+	)
+
+	serial := Build(ui)
+	buf.Clear()
+	serial.Execute(buf, 80, 50)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		expanded = i%2 == 0
+		buf.ClearDirty()
+		serial.Execute(buf, 80, 50)
+	}
+}
+
+// BenchmarkAnimateDashboard - full dashboard with multiple animated properties
+func BenchmarkAnimateDashboard(b *testing.B) {
+	buf := NewBuffer(120, 60)
+	content := "status: ok"
+	detailed := true
+
+	items := make([]StressItem, 20)
+	for i := range items {
+		items[i] = StressItem{
+			Name: "svc-" + string(rune('A'+i)),
+			CPU:  float32(i) / 20.0,
+		}
+	}
+
+	smooth := Animate.Duration(200 * time.Millisecond).Ease(EaseOutCubic)
+
+	ui := VBox.Height(60)(
+		Text("Dashboard"),
+		HBox.Height(smooth(If(&detailed).Then(int16(30)).Else(int16(10))))(
+			VBox.Width(smooth(If(&detailed).Then(int16(50)).Else(int16(30)))).Border(BorderSingle).Title("LEFT")(
+				Text(&content),
+				ForEach(&items, func(item *StressItem) any {
+					return HBox(
+						Text(&item.Name),
+						Progress(&item.CPU).Width(smooth(If(&detailed).Then(int16(30)).Else(int16(15)))),
 					)
 				}),
 			),

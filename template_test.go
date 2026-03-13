@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestV2BasicCol(t *testing.T) {
@@ -4773,4 +4774,182 @@ func TestNestedForEach(t *testing.T) {
 	if progressChars < 70 {
 		t.Errorf("Expected ~80 progress bar characters on row 1, got %d", progressChars)
 	}
+}
+
+func TestAnimate(t *testing.T) {
+	t.Run("basic tween height", func(t *testing.T) {
+		target := int16(10)
+		tmpl := Build(VBox.Height(Animate.Duration(100 * time.Millisecond)(&target))(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 40)
+
+		// initial frame: height should be 10
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 10 {
+			t.Fatalf("initial height: got %d, want 10", h)
+		}
+		if tmpl.Animating() {
+			t.Fatal("should not be animating before target changes")
+		}
+
+		// change target
+		target = 20
+
+		// immediately after change: should start animating, height still near 10
+		tmpl.Execute(buf, 40, 40)
+		h := tmpl.geom[0].H
+		if h == 20 {
+			t.Fatal("should not have reached target immediately")
+		}
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after target change")
+		}
+
+		// wait for animation to complete
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 20 {
+			t.Fatalf("after duration: got %d, want 20", h)
+		}
+		if tmpl.Animating() {
+			t.Fatal("should not be animating after completion")
+		}
+	})
+
+	t.Run("mid-animation retarget", func(t *testing.T) {
+		target := int16(10)
+		tmpl := Build(VBox.Height(Animate.Duration(100 * time.Millisecond)(&target))(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 40)
+
+		tmpl.Execute(buf, 40, 40)
+
+		// start animating toward 20
+		target = 20
+		tmpl.Execute(buf, 40, 40)
+		time.Sleep(50 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		mid := tmpl.geom[0].H
+		if mid <= 10 || mid >= 20 {
+			t.Fatalf("mid-animation height should be between 10 and 20, got %d", mid)
+		}
+
+		// retarget back to 10 mid-animation
+		target = 10
+		tmpl.Execute(buf, 40, 40)
+		if !tmpl.Animating() {
+			t.Fatal("should still be animating after retarget")
+		}
+
+		// wait for completion
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 10 {
+			t.Fatalf("after retarget completion: got %d, want 10", h)
+		}
+	})
+
+	t.Run("compose with If", func(t *testing.T) {
+		expanded := true
+		tmpl := Build(VBox.Height(
+			Animate.Duration(100 * time.Millisecond)(
+				If(&expanded).Then(int16(20)).Else(int16(5)),
+			),
+		)(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 40)
+
+		// initial: expanded=true → target=20, no animation yet
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 20 {
+			t.Fatalf("initial height: got %d, want 20", h)
+		}
+
+		// flip condition
+		expanded = false
+		tmpl.Execute(buf, 40, 40)
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after condition flip")
+		}
+
+		// wait for completion
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 5 {
+			t.Fatalf("after animation: got %d, want 5", h)
+		}
+	})
+
+	t.Run("easing applied", func(t *testing.T) {
+		target := int16(0)
+		tmpl := Build(VBox.Height(
+			Animate.Duration(100 * time.Millisecond).Ease(EaseInQuad)(&target),
+		)(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 40)
+		tmpl.Execute(buf, 40, 40)
+
+		// animate to 100
+		target = 100
+		tmpl.Execute(buf, 40, 40)
+
+		// at ~25% through with EaseInQuad, progress should be ~6.25% (0.25^2)
+		// so height should be closer to 0 than linear would give
+		time.Sleep(25 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		h := tmpl.geom[0].H
+		// with linear at 25%: height ≈ 25. with EaseInQuad: height ≈ 6
+		if h > 15 {
+			t.Fatalf("eased value at ~25%%: got %d, expected < 15 (easeInQuad)", h)
+		}
+
+		// complete
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 40)
+		if h := tmpl.geom[0].H; h != 100 {
+			t.Fatalf("final: got %d, want 100", h)
+		}
+	})
+
+	t.Run("static target no animation", func(t *testing.T) {
+		target := int16(15)
+		tmpl := Build(VBox.Height(Animate.Duration(100 * time.Millisecond)(&target))(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 40)
+
+		// should not animate when target hasn't changed
+		tmpl.Execute(buf, 40, 40)
+		if tmpl.Animating() {
+			t.Fatal("should not be animating with static target")
+		}
+		if h := tmpl.geom[0].H; h != 15 {
+			t.Fatalf("got %d, want 15", h)
+		}
+	})
+
+	t.Run("width animation", func(t *testing.T) {
+		target := int16(20)
+		tmpl := Build(VBox.Width(Animate.Duration(100 * time.Millisecond)(&target))(
+			Text("A"),
+		))
+		buf := NewBuffer(80, 10)
+
+		tmpl.Execute(buf, 80, 10)
+		if w := tmpl.geom[0].W; w != 20 {
+			t.Fatalf("initial width: got %d, want 20", w)
+		}
+
+		target = 40
+		tmpl.Execute(buf, 80, 10) // detect change, start animation
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 80, 10)
+		if w := tmpl.geom[0].W; w != 40 {
+			t.Fatalf("after animation: got %d, want 40", w)
+		}
+	})
 }

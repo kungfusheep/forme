@@ -89,9 +89,9 @@ func main() {
 	metricPanel := func(title string, data *[]float64, label *string, col Color) any {
 		return VBox.Grow(1).Border(BorderRounded).BorderFG(rpOverlay).Title(title)(
 			Sparkline(data).FG(col).Height(
-				If(&sparkExpanded).
-					Then(26).
-					Else(1),
+				Animate.Duration(200 * time.Millisecond).Ease(EaseOutCubic)(
+					If(&sparkExpanded).Then(26).Else(1),
+				),
 			),
 			Text(label).FG(rpMuted),
 		)
@@ -108,9 +108,11 @@ func main() {
 				Space(),
 				Text(&svc.CPUStr).FG(rpSubtle).Width(6).Align(AlignRight),
 				Text(&svc.Mem).FG(rpSubtle).Width(8).Align(AlignRight),
-				VBox.Width(11)(Switch(&svc.Status).
-					Case("warn", Text("degraded").FG(rpGold)).
-					Default(Text("healthy").FG(rpMuted))),
+				VBox.Width(11)(
+					Switch(&svc.Status).
+						Case("warn", Text("degraded").FG(rpGold)).
+						Default(Text("healthy").FG(rpMuted)),
+				),
 			)
 		}).
 		Handle("<Enter>", func(svc *service) {
