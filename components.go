@@ -78,16 +78,49 @@ type VBoxC struct {
 	gapCond          any
 	percentWidthCond any
 	flexGrowCond     any
+	fillPtr          *Color
+	fillCond         any
+	localStyle       *Style
+	localStylePtr    *Style
+	localStyleCond   any
 	children        []any
 }
 
 type VBoxFn func(children ...any) VBoxC
 
-// Fill sets the background fill color.
-func (f VBoxFn) Fill(c Color) VBoxFn {
+// Fill sets the background fill color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (f VBoxFn) Fill(c any) VBoxFn {
 	return func(children ...any) VBoxC {
 		v := f(children...)
-		v.fill = c
+		switch val := c.(type) {
+		case Color:
+			v.fill = val
+		case *Color:
+			v.fillPtr = val
+		case conditionNode:
+			v.fillCond = val
+		case tweenNode:
+			v.fillCond = val
+		}
+		return v
+	}
+}
+
+// Style sets a local style for this container (does not cascade to children).
+// Accepts Style, *Style, conditionNode, or tweenNode.
+func (f VBoxFn) Style(s any) VBoxFn {
+	return func(children ...any) VBoxC {
+		v := f(children...)
+		switch val := s.(type) {
+		case Style:
+			v.localStyle = &val
+		case *Style:
+			v.localStylePtr = val
+		case conditionNode:
+			v.localStyleCond = val
+		case tweenNode:
+			v.localStyleCond = val
+		}
 		return v
 	}
 }
@@ -333,16 +366,49 @@ type HBoxC struct {
 	gapCond          any
 	percentWidthCond any
 	flexGrowCond     any
+	fillPtr          *Color
+	fillCond         any
+	localStyle       *Style
+	localStylePtr    *Style
+	localStyleCond   any
 	children        []any
 }
 
 type HBoxFn func(children ...any) HBoxC
 
-// Fill sets the background fill color.
-func (f HBoxFn) Fill(c Color) HBoxFn {
+// Fill sets the background fill color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (f HBoxFn) Fill(c any) HBoxFn {
 	return func(children ...any) HBoxC {
 		h := f(children...)
-		h.fill = c
+		switch val := c.(type) {
+		case Color:
+			h.fill = val
+		case *Color:
+			h.fillPtr = val
+		case conditionNode:
+			h.fillCond = val
+		case tweenNode:
+			h.fillCond = val
+		}
+		return h
+	}
+}
+
+// Style sets a local style for this container (does not cascade to children).
+// Accepts Style, *Style, conditionNode, or tweenNode.
+func (f HBoxFn) Style(s any) HBoxFn {
+	return func(children ...any) HBoxC {
+		h := f(children...)
+		switch val := s.(type) {
+		case Style:
+			h.localStyle = &val
+		case *Style:
+			h.localStylePtr = val
+		case conditionNode:
+			h.localStyleCond = val
+		case tweenNode:
+			h.localStyleCond = val
+		}
 		return h
 	}
 }
@@ -606,6 +672,9 @@ type TextC struct {
 	width     int16 // explicit width (0 = content-sized)
 	widthPtr  *int16
 	widthCond any
+	styleDyn  any // *Style, conditionNode, or tweenNode for whole style
+	fgDyn     any // *Color, conditionNode, or tweenNode for FG
+	bgDyn     any // *Color, conditionNode, or tweenNode for BG
 }
 
 // Text creates a text display component.
@@ -613,21 +682,48 @@ func Text(content any) TextC {
 	return TextC{content: content}
 }
 
-// Style sets the component style.
-func (t TextC) Style(s Style) TextC {
-	t.style = s
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (t TextC) Style(s any) TextC {
+	switch val := s.(type) {
+	case Style:
+		t.style = val
+	case *Style:
+		t.styleDyn = val
+	case conditionNode:
+		t.styleDyn = val
+	case tweenNode:
+		t.styleDyn = val
+	}
 	return t
 }
 
-// FG sets the foreground color.
-func (t TextC) FG(c Color) TextC {
-	t.style.FG = c
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (t TextC) FG(c any) TextC {
+	switch val := c.(type) {
+	case Color:
+		t.style.FG = val
+	case *Color:
+		t.fgDyn = val
+	case conditionNode:
+		t.fgDyn = val
+	case tweenNode:
+		t.fgDyn = val
+	}
 	return t
 }
 
-// BG sets the background color.
-func (t TextC) BG(c Color) TextC {
-	t.style.BG = c
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (t TextC) BG(c any) TextC {
+	switch val := c.(type) {
+	case Color:
+		t.style.BG = val
+	case *Color:
+		t.bgDyn = val
+	case conditionNode:
+		t.bgDyn = val
+	case tweenNode:
+		t.bgDyn = val
+	}
 	return t
 }
 
@@ -861,9 +957,12 @@ func (s SpacerC) MarginTRBL(a, b, c, d int16) SpacerC {
 // ============================================================================
 
 type HRuleC struct {
-	char   rune
-	style  Style
-	extend bool
+	char     rune
+	style    Style
+	extend   bool
+	styleDyn any
+	fgDyn    any
+	bgDyn    any
 }
 
 // HRule creates a horizontal rule.
@@ -880,17 +979,50 @@ func (h HRuleC) Char(c rune) HRuleC {
 	return h
 }
 
-// Style sets the component style.
-func (h HRuleC) Style(s Style) HRuleC {
-	h.style = s
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (h HRuleC) Style(s any) HRuleC {
+	switch val := s.(type) {
+	case Style:
+		h.style = val
+	case *Style:
+		h.styleDyn = val
+	case conditionNode:
+		h.styleDyn = val
+	case tweenNode:
+		h.styleDyn = val
+	}
 	return h
 }
 
-// FG sets the foreground color.
-func (h HRuleC) FG(c Color) HRuleC { h.style.FG = c; return h }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (h HRuleC) FG(c any) HRuleC {
+	switch val := c.(type) {
+	case Color:
+		h.style.FG = val
+	case *Color:
+		h.fgDyn = val
+	case conditionNode:
+		h.fgDyn = val
+	case tweenNode:
+		h.fgDyn = val
+	}
+	return h
+}
 
-// BG sets the background color.
-func (h HRuleC) BG(c Color) HRuleC { h.style.BG = c; return h }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (h HRuleC) BG(c any) HRuleC {
+	switch val := c.(type) {
+	case Color:
+		h.style.BG = val
+	case *Color:
+		h.bgDyn = val
+	case conditionNode:
+		h.bgDyn = val
+	case tweenNode:
+		h.bgDyn = val
+	}
+	return h
+}
 
 // Bold enables bold text.
 func (h HRuleC) Bold() HRuleC { h.style.Attr |= AttrBold; return h }
@@ -915,6 +1047,9 @@ type VRuleC struct {
 	extend     bool
 	heightPtr  *int16
 	heightCond any
+	styleDyn   any
+	fgDyn      any
+	bgDyn      any
 }
 
 // VRule creates a vertical rule.
@@ -928,17 +1063,50 @@ func (v VRuleC) Char(c rune) VRuleC {
 	return v
 }
 
-// Style sets the component style.
-func (v VRuleC) Style(s Style) VRuleC {
-	v.style = s
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (v VRuleC) Style(s any) VRuleC {
+	switch val := s.(type) {
+	case Style:
+		v.style = val
+	case *Style:
+		v.styleDyn = val
+	case conditionNode:
+		v.styleDyn = val
+	case tweenNode:
+		v.styleDyn = val
+	}
 	return v
 }
 
-// FG sets the foreground color.
-func (v VRuleC) FG(c Color) VRuleC { v.style.FG = c; return v }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (v VRuleC) FG(c any) VRuleC {
+	switch val := c.(type) {
+	case Color:
+		v.style.FG = val
+	case *Color:
+		v.fgDyn = val
+	case conditionNode:
+		v.fgDyn = val
+	case tweenNode:
+		v.fgDyn = val
+	}
+	return v
+}
 
-// BG sets the background color.
-func (v VRuleC) BG(c Color) VRuleC { v.style.BG = c; return v }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (v VRuleC) BG(c any) VRuleC {
+	switch val := c.(type) {
+	case Color:
+		v.style.BG = val
+	case *Color:
+		v.bgDyn = val
+	case conditionNode:
+		v.bgDyn = val
+	case tweenNode:
+		v.bgDyn = val
+	}
+	return v
+}
 
 // Bold enables bold text.
 func (v VRuleC) Bold() VRuleC { v.style.Attr |= AttrBold; return v }
@@ -982,6 +1150,9 @@ type ProgressC struct {
 	style     Style
 	widthPtr  *int16
 	widthCond any
+	styleDyn  any
+	fgDyn     any
+	bgDyn     any
 }
 
 // Progress creates a progress bar bound to an int pointer (0-100).
@@ -1006,17 +1177,50 @@ func (p ProgressC) Width(w any) ProgressC {
 	return p
 }
 
-// Style sets the component style.
-func (p ProgressC) Style(s Style) ProgressC {
-	p.style = s
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (p ProgressC) Style(s any) ProgressC {
+	switch val := s.(type) {
+	case Style:
+		p.style = val
+	case *Style:
+		p.styleDyn = val
+	case conditionNode:
+		p.styleDyn = val
+	case tweenNode:
+		p.styleDyn = val
+	}
 	return p
 }
 
-// FG sets the foreground color.
-func (p ProgressC) FG(c Color) ProgressC { p.style.FG = c; return p }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (p ProgressC) FG(c any) ProgressC {
+	switch val := c.(type) {
+	case Color:
+		p.style.FG = val
+	case *Color:
+		p.fgDyn = val
+	case conditionNode:
+		p.fgDyn = val
+	case tweenNode:
+		p.fgDyn = val
+	}
+	return p
+}
 
-// BG sets the background color.
-func (p ProgressC) BG(c Color) ProgressC { p.style.BG = c; return p }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (p ProgressC) BG(c any) ProgressC {
+	switch val := c.(type) {
+	case Color:
+		p.style.BG = val
+	case *Color:
+		p.bgDyn = val
+	case conditionNode:
+		p.bgDyn = val
+	case tweenNode:
+		p.bgDyn = val
+	}
+	return p
+}
 
 // Bold enables bold text.
 func (p ProgressC) Bold() ProgressC { p.style.Attr |= AttrBold; return p }
@@ -1041,9 +1245,12 @@ func (p ProgressC) MarginTRBL(a, b, c, d int16) ProgressC {
 // ============================================================================
 
 type SpinnerC struct {
-	frame  *int
-	frames []string
-	style  Style
+	frame    *int
+	frames   []string
+	style    Style
+	styleDyn any
+	fgDyn    any
+	bgDyn    any
 }
 
 // Spinner creates an animated spinner bound to a frame counter.
@@ -1058,17 +1265,50 @@ func (s SpinnerC) Frames(f []string) SpinnerC {
 	return s
 }
 
-// Style sets the component style.
-func (s SpinnerC) Style(st Style) SpinnerC {
-	s.style = st
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (s SpinnerC) Style(st any) SpinnerC {
+	switch val := st.(type) {
+	case Style:
+		s.style = val
+	case *Style:
+		s.styleDyn = val
+	case conditionNode:
+		s.styleDyn = val
+	case tweenNode:
+		s.styleDyn = val
+	}
 	return s
 }
 
-// FG sets the foreground color.
-func (s SpinnerC) FG(c Color) SpinnerC { s.style.FG = c; return s }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (s SpinnerC) FG(c any) SpinnerC {
+	switch val := c.(type) {
+	case Color:
+		s.style.FG = val
+	case *Color:
+		s.fgDyn = val
+	case conditionNode:
+		s.fgDyn = val
+	case tweenNode:
+		s.fgDyn = val
+	}
+	return s
+}
 
-// BG sets the background color.
-func (s SpinnerC) BG(c Color) SpinnerC { s.style.BG = c; return s }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (s SpinnerC) BG(c any) SpinnerC {
+	switch val := c.(type) {
+	case Color:
+		s.style.BG = val
+	case *Color:
+		s.bgDyn = val
+	case conditionNode:
+		s.bgDyn = val
+	case tweenNode:
+		s.bgDyn = val
+	}
+	return s
+}
 
 // Bold enables bold text.
 func (s SpinnerC) Bold() SpinnerC { s.style.Attr |= AttrBold; return s }
@@ -1097,6 +1337,9 @@ type LeaderC struct {
 	style     Style
 	widthPtr  *int16
 	widthCond any
+	styleDyn  any
+	fgDyn     any
+	bgDyn     any
 }
 
 // Leader creates a label.....value display with fill characters.
@@ -1128,17 +1371,50 @@ func (l LeaderC) Fill(r rune) LeaderC {
 	return l
 }
 
-// Style sets the component style.
-func (l LeaderC) Style(s Style) LeaderC {
-	l.style = s
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (l LeaderC) Style(s any) LeaderC {
+	switch val := s.(type) {
+	case Style:
+		l.style = val
+	case *Style:
+		l.styleDyn = val
+	case conditionNode:
+		l.styleDyn = val
+	case tweenNode:
+		l.styleDyn = val
+	}
 	return l
 }
 
-// FG sets the foreground color.
-func (l LeaderC) FG(c Color) LeaderC { l.style.FG = c; return l }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (l LeaderC) FG(c any) LeaderC {
+	switch val := c.(type) {
+	case Color:
+		l.style.FG = val
+	case *Color:
+		l.fgDyn = val
+	case conditionNode:
+		l.fgDyn = val
+	case tweenNode:
+		l.fgDyn = val
+	}
+	return l
+}
 
-// BG sets the background color.
-func (l LeaderC) BG(c Color) LeaderC { l.style.BG = c; return l }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (l LeaderC) BG(c any) LeaderC {
+	switch val := c.(type) {
+	case Color:
+		l.style.BG = val
+	case *Color:
+		l.bgDyn = val
+	case conditionNode:
+		l.bgDyn = val
+	case tweenNode:
+		l.bgDyn = val
+	}
+	return l
+}
 
 // Bold enables bold text.
 func (l LeaderC) Bold() LeaderC { l.style.Attr |= AttrBold; return l }
@@ -1194,6 +1470,9 @@ type SparklineC struct {
 	heightPtr  *int16
 	widthCond  any
 	heightCond any
+	styleDyn   any
+	fgDyn      any
+	bgDyn      any
 }
 
 // Sparkline creates a mini bar chart using Unicode block characters (▁▂▃▄▅▆▇█).
@@ -1245,17 +1524,50 @@ func (s SparklineC) Range(min, max float64) SparklineC {
 	return s
 }
 
-// Style sets the component style.
-func (s SparklineC) Style(st Style) SparklineC {
-	s.style = st
+// Style sets the component style. Accepts Style, *Style, conditionNode, or tweenNode.
+func (s SparklineC) Style(st any) SparklineC {
+	switch val := st.(type) {
+	case Style:
+		s.style = val
+	case *Style:
+		s.styleDyn = val
+	case conditionNode:
+		s.styleDyn = val
+	case tweenNode:
+		s.styleDyn = val
+	}
 	return s
 }
 
-// FG sets the foreground color.
-func (s SparklineC) FG(c Color) SparklineC { s.style.FG = c; return s }
+// FG sets the foreground color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (s SparklineC) FG(c any) SparklineC {
+	switch val := c.(type) {
+	case Color:
+		s.style.FG = val
+	case *Color:
+		s.fgDyn = val
+	case conditionNode:
+		s.fgDyn = val
+	case tweenNode:
+		s.fgDyn = val
+	}
+	return s
+}
 
-// BG sets the background color.
-func (s SparklineC) BG(c Color) SparklineC { s.style.BG = c; return s }
+// BG sets the background color. Accepts Color, *Color, conditionNode, or tweenNode.
+func (s SparklineC) BG(c any) SparklineC {
+	switch val := c.(type) {
+	case Color:
+		s.style.BG = val
+	case *Color:
+		s.bgDyn = val
+	case conditionNode:
+		s.bgDyn = val
+	case tweenNode:
+		s.bgDyn = val
+	}
+	return s
+}
 
 // Bold enables bold text.
 func (s SparklineC) Bold() SparklineC { s.style.Attr |= AttrBold; return s }

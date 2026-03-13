@@ -89,7 +89,7 @@ func main() {
 	metricPanel := func(title string, data *[]float64, label *string, col Color) any {
 		return VBox.Grow(1).Border(BorderRounded).BorderFG(rpOverlay).Title(title)(
 			Sparkline(data).FG(col).Height(
-				Animate.Duration(200 * time.Millisecond).Ease(EaseOutCubic)(
+				Animate.Duration(200*time.Millisecond).Ease(EaseOutCubic)(
 					If(&sparkExpanded).Then(26).Else(1),
 				),
 			),
@@ -122,6 +122,8 @@ func main() {
 			app.Push(modalRouter)
 		}).
 		HandleClear("<Esc>", nil)
+
+	anim := Animate.Duration(1 * time.Second).From(0.0)
 
 	var popupRef NodeRef
 	app.SetView(
@@ -208,7 +210,8 @@ func main() {
 							),
 						SpaceH(1),
 						ScreenEffect(
-							SEVignette().Dodge(&popupRef).Smooth(),
+							SEVignette().Dodge(&popupRef).Smooth().
+								Strength(anim(0.88)),
 							// SEDropShadow().Focus(&popupRef),
 							SEGlow().Focus(&popupRef).Brightness(1.1),
 						),

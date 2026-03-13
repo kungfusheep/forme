@@ -33,6 +33,13 @@ type Effect interface {
 	Apply(buf *Buffer, ctx PostContext)
 }
 
+// effectCompilable is implemented by effects that have dynamic properties (e.g. animated strength).
+// The template compiler calls this during ScreenEffectNode compilation to wire tween evaluators.
+// Returns a new Effect with dynamic pointers wired in (effects are value types).
+type effectCompilable interface {
+	compileEffect(t *Template) Effect
+}
+
 // funcEffect adapts a bare function to the Effect interface.
 // Returned by EachCell and used internally by blend/quantize wrappers.
 type funcEffect func(*Buffer, PostContext)

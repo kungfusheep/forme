@@ -4952,4 +4952,320 @@ func TestAnimate(t *testing.T) {
 			t.Fatalf("after animation: got %d, want 40", w)
 		}
 	})
+
+	t.Run("text FG color animation", func(t *testing.T) {
+		fg := Red
+		tmpl := Build(VBox(
+			Text("hello").FG(Animate.Duration(100 * time.Millisecond)(&fg)),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+		cell := buf.Get(0, 0)
+		if cell.Style.FG != Red {
+			t.Fatalf("initial FG: got %+v, want Red", cell.Style.FG)
+		}
+
+		fg = Blue
+		tmpl.Execute(buf, 40, 10)
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after FG change")
+		}
+
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 10)
+		cell = buf.Get(0, 0)
+		if cell.Style.FG != Blue {
+			t.Fatalf("after animation FG: got %+v, want Blue", cell.Style.FG)
+		}
+	})
+
+	t.Run("text style animation", func(t *testing.T) {
+		s := Style{FG: Red, BG: White}
+		tmpl := Build(VBox(
+			Text("hello").Style(Animate.Duration(100 * time.Millisecond)(&s)),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+		cell := buf.Get(0, 0)
+		if cell.Style.FG != Red {
+			t.Fatalf("initial FG: got %+v, want Red", cell.Style.FG)
+		}
+
+		s = Style{FG: Blue, BG: Green}
+		tmpl.Execute(buf, 40, 10)
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after style change")
+		}
+
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 10)
+		cell = buf.Get(0, 0)
+		if cell.Style.FG != Blue {
+			t.Fatalf("after animation FG: got %+v, want Blue", cell.Style.FG)
+		}
+		if cell.Style.BG != Green {
+			t.Fatalf("after animation BG: got %+v, want Green", cell.Style.BG)
+		}
+	})
+
+	t.Run("container fill animation", func(t *testing.T) {
+		fillColor := Red
+		tmpl := Build(VBox.Fill(Animate.Duration(100 * time.Millisecond)(&fillColor))(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+		// fill paints background of empty cells
+		cell := buf.Get(5, 0)
+		if cell.Style.BG != Red {
+			t.Fatalf("initial fill BG: got %+v, want Red", cell.Style.BG)
+		}
+
+		fillColor = Blue
+		tmpl.Execute(buf, 40, 10)
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after fill change")
+		}
+
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 10)
+		cell = buf.Get(5, 0)
+		if cell.Style.BG != Blue {
+			t.Fatalf("after animation fill BG: got %+v, want Blue", cell.Style.BG)
+		}
+	})
+
+	t.Run("container local style", func(t *testing.T) {
+		s := Style{FG: Red}
+		tmpl := Build(VBox.Style(&s).Border(BorderSingle)(
+			Text("A"),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+		// border should use local style FG
+		corner := buf.Get(0, 0)
+		if corner.Style.FG != Red {
+			t.Fatalf("border FG: got %+v, want Red", corner.Style.FG)
+		}
+
+		// change to blue
+		s.FG = Blue
+		tmpl.Execute(buf, 40, 10)
+		corner = buf.Get(0, 0)
+		if corner.Style.FG != Blue {
+			t.Fatalf("updated border FG: got %+v, want Blue", corner.Style.FG)
+		}
+	})
+
+	t.Run("sparkline FG animation", func(t *testing.T) {
+		fg := Red
+		data := []float64{1, 2, 3, 4, 5}
+		tmpl := Build(VBox(
+			Sparkline(data).FG(Animate.Duration(100 * time.Millisecond)(&fg)),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+		cell := buf.Get(0, 0)
+		if cell.Style.FG != Red {
+			t.Fatalf("initial sparkline FG: got %+v, want Red", cell.Style.FG)
+		}
+
+		fg = Blue
+		tmpl.Execute(buf, 40, 10)
+		if !tmpl.Animating() {
+			t.Fatal("should be animating after sparkline FG change")
+		}
+
+		time.Sleep(150 * time.Millisecond)
+		tmpl.Execute(buf, 40, 10)
+		cell = buf.Get(0, 0)
+		if cell.Style.FG != Blue {
+			t.Fatalf("after animation sparkline FG: got %+v, want Blue", cell.Style.FG)
+		}
+	})
+
+	t.Run("mid-animation color lerp", func(t *testing.T) {
+		fg := RGB(0, 0, 0)
+		tmpl := Build(VBox(
+			Text("X").FG(Animate.Duration(200 * time.Millisecond)(&fg)),
+		))
+		buf := NewBuffer(40, 10)
+
+		tmpl.Execute(buf, 40, 10)
+
+		fg = RGB(200, 200, 200)
+		tmpl.Execute(buf, 40, 10)
+		time.Sleep(50 * time.Millisecond)
+		tmpl.Execute(buf, 40, 10)
+
+		cell := buf.Get(0, 0)
+		// mid-lerp: should be somewhere between (0,0,0) and (200,200,200)
+		if cell.Style.FG.R == 0 && cell.Style.FG.G == 0 && cell.Style.FG.B == 0 {
+			t.Fatal("FG should have started interpolating")
+		}
+		if cell.Style.FG.R == 200 && cell.Style.FG.G == 200 && cell.Style.FG.B == 200 {
+			t.Fatal("FG should not have reached target yet")
+		}
+	})
+
+	t.Run("From float64 tween node", func(t *testing.T) {
+		tw := Animate.Duration(200 * time.Millisecond).From(0.0)(0.88)
+		if tw.getTarget() == nil {
+			t.Fatal("tween target should not be nil")
+		}
+		if tw.getTweenFrom() == nil {
+			t.Fatal("tween From should be set")
+		}
+		from, ok := tw.getTweenFrom().(float64)
+		if !ok || from != 0.0 {
+			t.Fatalf("expected From=0.0, got %v", tw.getTweenFrom())
+		}
+		if tw.getTweenDuration() != 200*time.Millisecond {
+			t.Fatalf("expected 200ms, got %v", tw.getTweenDuration())
+		}
+	})
+
+	t.Run("From int16 intro animation", func(t *testing.T) {
+		tmpl := Build(VBox(
+			VBox.Height(Animate.Duration(200 * time.Millisecond).From(int16(1))(int16(5)))(Text("hi")),
+			Text("Z"),
+		))
+		buf := NewBuffer(40, 20)
+
+		// first frame: evaluator sees From, starts animation from 1→5
+		tmpl.Execute(buf, 40, 20)
+		time.Sleep(50 * time.Millisecond)
+		tmpl.Execute(buf, 40, 20)
+
+		// the Z marker tells us where the animated box ended
+		// find which row has 'Z'
+		zRow := -1
+		for y := 0; y < 20; y++ {
+			c := buf.Get(0, y)
+			if c.Rune == 'Z' {
+				zRow = y
+				break
+			}
+		}
+		// at ~50ms of 200ms, height should be between 1 and 5
+		if zRow < 1 {
+			t.Fatal("expected animated box height >= 1")
+		}
+		if zRow >= 5 {
+			t.Fatalf("expected mid-animation height < 5, Z at row %d", zRow)
+		}
+	})
+
+	t.Run("SE strength From animation", func(t *testing.T) {
+		// exact user scenario: SEVignette with animated strength from 0 to 0.88
+		tmpl := Build(VBox(
+			Text("X").FG(RGB(200, 200, 200)),
+			ScreenEffect(
+				SEVignette().Smooth().
+					Strength(Animate.Duration(200 * time.Millisecond).From(0.0)(0.88)),
+			),
+		))
+		buf := NewBuffer(10, 10)
+		pctx := PostContext{Width: 10, Height: 10}
+
+		applyEffects := func() {
+			for _, eff := range tmpl.ScreenEffects() {
+				eff.Apply(buf, pctx)
+			}
+		}
+
+		// frame 1: From sets storage=0.0, kicks off animation
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		corner1 := buf.Get(0, 0)
+		fg1 := corner1.Style.FG
+
+		// wait and render mid-animation
+		time.Sleep(100 * time.Millisecond)
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		corner2 := buf.Get(0, 0)
+		fg2 := corner2.Style.FG
+
+		// wait past duration and render
+		time.Sleep(200 * time.Millisecond)
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		corner3 := buf.Get(0, 0)
+		fg3 := corner3.Style.FG
+
+		// frame 1 (strength~0): corner should be near original (200,200,200)
+		if fg1.R < 180 {
+			t.Fatalf("frame 1: expected minimal dimming (strength~0), got FG.R=%d", fg1.R)
+		}
+
+		// mid-animation: should have SOME dimming (strength climbing)
+		// but less than final
+		if fg2.R >= fg1.R {
+			t.Fatalf("mid-animation: expected more dimming than frame 1, got FG.R=%d vs %d", fg2.R, fg1.R)
+		}
+
+		// final: should have most dimming (strength=0.88, corner = max distance)
+		if fg3.R >= fg2.R {
+			t.Fatalf("final: expected most dimming, got FG.R=%d vs mid=%d", fg3.R, fg2.R)
+		}
+
+		t.Logf("strength animation: frame1 FG.R=%d, mid FG.R=%d, final FG.R=%d", fg1.R, fg2.R, fg3.R)
+	})
+
+	t.Run("SE strength inside If branch", func(t *testing.T) {
+		// the actual bug: ScreenEffect inside If().Then(Overlay(...)) — evaluators
+		// must propagate to root template via evalRoot()
+		active := true
+		tmpl := Build(VBox(
+			Text("X").FG(RGB(200, 200, 200)),
+			If(&active).Then(
+				ScreenEffect(
+					SEVignette().Smooth().
+						Strength(Animate.Duration(200 * time.Millisecond).From(0.0)(0.88)),
+				),
+			),
+		))
+		buf := NewBuffer(10, 10)
+		pctx := PostContext{Width: 10, Height: 10}
+
+		applyEffects := func() {
+			for _, eff := range tmpl.ScreenEffects() {
+				eff.Apply(buf, pctx)
+			}
+		}
+
+		// frame 1
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		fg1 := buf.Get(0, 0).Style.FG
+
+		// mid-animation
+		time.Sleep(100 * time.Millisecond)
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		fg2 := buf.Get(0, 0).Style.FG
+
+		// completed
+		time.Sleep(200 * time.Millisecond)
+		tmpl.Execute(buf, 10, 10)
+		applyEffects()
+		fg3 := buf.Get(0, 0).Style.FG
+
+		if fg1.R < 180 {
+			t.Fatalf("frame 1: expected minimal dimming, got FG.R=%d", fg1.R)
+		}
+		if fg2.R >= fg1.R {
+			t.Fatalf("mid: expected more dimming than frame 1, got FG.R=%d vs %d", fg2.R, fg1.R)
+		}
+		if fg3.R >= fg2.R {
+			t.Fatalf("final: expected most dimming, got FG.R=%d vs mid=%d", fg3.R, fg2.R)
+		}
+		t.Logf("If-branch SE animation: frame1=%d, mid=%d, final=%d", fg1.R, fg2.R, fg3.R)
+	})
 }

@@ -140,6 +140,19 @@ type Template struct {
 	// animation ticker — runs at ~60fps only while animations are active
 	animTicker    *time.Ticker
 	requestRender func()
+
+	// root points to the outermost template so sub-templates (If branches,
+	// Overlays, ForEach) register evaluators where Execute actually runs them.
+	root *Template
+}
+
+// evalRoot returns the root template where evaluators should be registered.
+// for top-level templates root is nil and we return self.
+func (t *Template) evalRoot() *Template {
+	if t.root != nil {
+		return t.root
+	}
+	return t
 }
 
 // pendingOverlay stores info needed to render an overlay after main content
@@ -211,6 +224,7 @@ type Op struct {
 	ChildStart   int16       // first child op index
 	ChildEnd     int16       // last child op index (exclusive)
 	CascadeStyle *Style      // style inherited by children (pointer for dynamic themes)
+	LocalStyle   *Style      // style for this container only (not inherited)
 	Fill         Color       // container fill color (fills entire area)
 	Margin       [4]int16    // outer margin: top, right, bottom, left
 	NodeRef      *NodeRef    // if set, populated with rendered screen bounds each frame
@@ -233,6 +247,7 @@ type OpDyn struct {
 	FlexGrow     *float32
 	PercentWidth *float32
 	Gap          *int8
+	Fill         *Color
 }
 
 // resolver methods — inlinable nil-check + deref, zero cost when Dyn is nil
@@ -282,10 +297,20 @@ func (op *Op) gap() int8 {
 	return op.Gap
 }
 
+func (op *Op) fill() Color {
+	if op.Dyn != nil {
+		if p := op.Dyn.Fill; p != nil {
+			return *p
+		}
+	}
+	return op.Fill
+}
+
 // compileCond registers a conditional evaluator and returns a pointer to its storage.
 // the evaluator runs each frame, resolving the condition and writing the active value.
 
 func (t *Template) compileCondInt16(cond conditionNode) *int16 {
+	root := t.evalRoot()
 	storage := new(int16)
 	thenVal := cond.getThen()
 	elseVal := cond.getElse()
@@ -297,11 +322,12 @@ func (t *Template) compileCondInt16(cond conditionNode) *int16 {
 		}
 	}
 	eval() // set initial value
-	t.evals = append(t.evals, eval)
+	root.evals = append(root.evals, eval)
 	return storage
 }
 
 func (t *Template) compileCondFloat32(cond conditionNode) *float32 {
+	root := t.evalRoot()
 	storage := new(float32)
 	thenVal := cond.getThen()
 	elseVal := cond.getElse()
@@ -313,11 +339,29 @@ func (t *Template) compileCondFloat32(cond conditionNode) *float32 {
 		}
 	}
 	eval()
-	t.evals = append(t.evals, eval)
+	root.evals = append(root.evals, eval)
+	return storage
+}
+
+func (t *Template) compileCondFloat64(cond conditionNode) *float64 {
+	root := t.evalRoot()
+	storage := new(float64)
+	thenVal := cond.getThen()
+	elseVal := cond.getElse()
+	eval := func() {
+		if cond.evaluate() {
+			*storage = anyToFloat64(thenVal)
+		} else {
+			*storage = anyToFloat64(elseVal)
+		}
+	}
+	eval()
+	root.evals = append(root.evals, eval)
 	return storage
 }
 
 func (t *Template) compileCondInt8(cond conditionNode) *int8 {
+	root := t.evalRoot()
 	storage := new(int8)
 	thenVal := cond.getThen()
 	elseVal := cond.getElse()
@@ -329,7 +373,7 @@ func (t *Template) compileCondInt8(cond conditionNode) *int8 {
 		}
 	}
 	eval()
-	t.evals = append(t.evals, eval)
+	root.evals = append(root.evals, eval)
 	return storage
 }
 
@@ -340,6 +384,20 @@ func anyToInt16(v any) int16 {
 	case int:
 		return int16(val)
 	case *int16:
+		return *val
+	}
+	return 0
+}
+
+func anyToFloat64(v any) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case float32:
+		return float64(val)
+	case int:
+		return float64(val)
+	case *float64:
 		return *val
 	}
 	return 0
@@ -394,6 +452,18 @@ func (t *Template) compileDynFloat32(v any) *float32 {
 	return nil
 }
 
+func (t *Template) compileDynFloat64(v any) *float64 {
+	switch c := v.(type) {
+	case *float64:
+		return c
+	case conditionNode:
+		return t.compileCondFloat64(c)
+	case tweenNode:
+		return t.compileTweenFloat64(c)
+	}
+	return nil
+}
+
 func (t *Template) compileDynInt8(v any) *int8 {
 	switch c := v.(type) {
 	case conditionNode:
@@ -402,6 +472,116 @@ func (t *Template) compileDynInt8(v any) *int8 {
 		return t.compileTweenInt8(c)
 	}
 	return nil
+}
+
+func (t *Template) compileDynColor(v any) *Color {
+	switch c := v.(type) {
+	case conditionNode:
+		return t.compileCondColor(c)
+	case tweenNode:
+		return t.compileTweenColor(c)
+	}
+	return nil
+}
+
+func (t *Template) compileDynStyle(v any) *Style {
+	switch c := v.(type) {
+	case *Style:
+		return c
+	case conditionNode:
+		return t.compileCondStyle(c)
+	case tweenNode:
+		return t.compileTweenStyle(c)
+	}
+	return nil
+}
+
+// compileStyleDyn wires styleDyn/fgDyn/bgDyn into a *Style for any leaf component.
+// returns nil if no dynamic styling is needed.
+func (t *Template) compileStyleDyn(baseStyle Style, styleDyn, fgDyn, bgDyn any) *Style {
+	if styleDyn != nil {
+		return t.compileDynStyle(styleDyn)
+	}
+	if fgDyn == nil && bgDyn == nil {
+		return nil
+	}
+	storage := new(Style)
+	*storage = baseStyle
+	var fgPtr *Color
+	var bgPtr *Color
+	if fgDyn != nil {
+		fgPtr = t.compileDynColor(fgDyn)
+	}
+	if bgDyn != nil {
+		bgPtr = t.compileDynColor(bgDyn)
+	}
+	root := t.evalRoot()
+	base := baseStyle
+	root.evals = append(root.evals, func() {
+		s := base
+		if fgPtr != nil {
+			s.FG = *fgPtr
+		}
+		if bgPtr != nil {
+			s.BG = *bgPtr
+		}
+		*storage = s
+	})
+	return storage
+}
+
+func (t *Template) compileCondColor(cond conditionNode) *Color {
+	root := t.evalRoot()
+	storage := new(Color)
+	thenVal := cond.getThen()
+	elseVal := cond.getElse()
+	eval := func() {
+		if cond.evaluate() {
+			*storage = anyToColor(thenVal)
+		} else {
+			*storage = anyToColor(elseVal)
+		}
+	}
+	eval()
+	root.evals = append(root.evals, eval)
+	return storage
+}
+
+func (t *Template) compileCondStyle(cond conditionNode) *Style {
+	root := t.evalRoot()
+	storage := new(Style)
+	thenVal := cond.getThen()
+	elseVal := cond.getElse()
+	eval := func() {
+		if cond.evaluate() {
+			*storage = anyToStyle(thenVal)
+		} else {
+			*storage = anyToStyle(elseVal)
+		}
+	}
+	eval()
+	root.evals = append(root.evals, eval)
+	return storage
+}
+
+func anyToColor(v any) Color {
+	switch val := v.(type) {
+	case Color:
+		return val
+	case *Color:
+		return *val
+	}
+	return Color{}
+}
+
+func anyToStyle(v any) Style {
+	switch val := v.(type) {
+	case Style:
+		return val
+	case *Style:
+		return *val
+	}
+	return Style{}
 }
 
 // Animating returns true if any tween is currently in progress.
@@ -413,6 +593,7 @@ func (t *Template) Animating() bool { return t.animating }
 // target and lerps toward it. all tweens in a frame share t.frameTime.
 
 func (t *Template) compileTweenInt16(tw tweenNode) *int16 {
+	root := t.evalRoot()
 	watchPtr := t.resolveTweenTargetInt16(tw.getTarget())
 	storage := new(int16)
 	*storage = *watchPtr
@@ -423,10 +604,22 @@ func (t *Template) compileTweenInt16(tw tweenNode) *int16 {
 	startVal := float64(*watchPtr)
 	var startTime time.Time
 
-	t.evals = append(t.evals, func() {
+	needsFirstFrame := false
+	if from := tw.getTweenFrom(); from != nil {
+		*storage = anyToInt16(from)
+		startVal = float64(*storage)
+		needsFirstFrame = true
+	}
+
+	root.evals = append(root.evals, func() {
 		target := *watchPtr
-		now := t.frameTime
-		if target != lastTarget {
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
 			startVal = float64(*storage)
 			lastTarget = target
 			startTime = now
@@ -445,12 +638,13 @@ func (t *Template) compileTweenInt16(tw tweenNode) *int16 {
 			progress = ease(progress)
 		}
 		*storage = int16(startVal + progress*(float64(target)-startVal))
-		t.animating = true
+		root.animating = true
 	})
 	return storage
 }
 
 func (t *Template) compileTweenFloat32(tw tweenNode) *float32 {
+	root := t.evalRoot()
 	watchPtr := t.resolveTweenTargetFloat32(tw.getTarget())
 	storage := new(float32)
 	*storage = *watchPtr
@@ -460,11 +654,23 @@ func (t *Template) compileTweenFloat32(tw tweenNode) *float32 {
 	lastTarget := *watchPtr
 	startVal := float64(*watchPtr)
 	var startTime time.Time
+	needsFirstFrame := false
 
-	t.evals = append(t.evals, func() {
+	if from := tw.getTweenFrom(); from != nil {
+		*storage = anyToFloat32(from)
+		startVal = float64(*storage)
+		needsFirstFrame = true
+	}
+
+	root.evals = append(root.evals, func() {
 		target := *watchPtr
-		now := t.frameTime
-		if target != lastTarget {
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
 			startVal = float64(*storage)
 			lastTarget = target
 			startTime = now
@@ -483,12 +689,64 @@ func (t *Template) compileTweenFloat32(tw tweenNode) *float32 {
 			progress = ease(progress)
 		}
 		*storage = float32(startVal + progress*(float64(target)-startVal))
-		t.animating = true
+		root.animating = true
+	})
+	return storage
+}
+
+func (t *Template) compileTweenFloat64(tw tweenNode) *float64 {
+	root := t.evalRoot()
+	watchPtr := t.resolveTweenTargetFloat64(tw.getTarget())
+	storage := new(float64)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := *watchPtr
+	var startTime time.Time
+	needsFirstFrame := false
+
+	if from := tw.getTweenFrom(); from != nil {
+		*storage = anyToFloat64(from)
+		startVal = *storage
+		needsFirstFrame = true
+	}
+
+	root.evals = append(root.evals, func() {
+		target := *watchPtr
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = startVal + progress*(target-startVal)
+		root.animating = true
 	})
 	return storage
 }
 
 func (t *Template) compileTweenInt8(tw tweenNode) *int8 {
+	root := t.evalRoot()
 	watchPtr := t.resolveTweenTargetInt8(tw.getTarget())
 	storage := new(int8)
 	*storage = *watchPtr
@@ -499,10 +757,22 @@ func (t *Template) compileTweenInt8(tw tweenNode) *int8 {
 	startVal := float64(*watchPtr)
 	var startTime time.Time
 
-	t.evals = append(t.evals, func() {
+	needsFirstFrame := false
+	if from := tw.getTweenFrom(); from != nil {
+		*storage = anyToInt8(from)
+		startVal = float64(*storage)
+		needsFirstFrame = true
+	}
+
+	root.evals = append(root.evals, func() {
 		target := *watchPtr
-		now := t.frameTime
-		if target != lastTarget {
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = float64(*storage)
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
 			startVal = float64(*storage)
 			lastTarget = target
 			startTime = now
@@ -521,7 +791,7 @@ func (t *Template) compileTweenInt8(tw tweenNode) *int8 {
 			progress = ease(progress)
 		}
 		*storage = int8(startVal + progress*(float64(target)-startVal))
-		t.animating = true
+		root.animating = true
 	})
 	return storage
 }
@@ -552,6 +822,18 @@ func (t *Template) resolveTweenTargetFloat32(target any) *float32 {
 	return storage
 }
 
+func (t *Template) resolveTweenTargetFloat64(target any) *float64 {
+	switch v := target.(type) {
+	case *float64:
+		return v
+	case conditionNode:
+		return t.compileCondFloat64(v)
+	}
+	storage := new(float64)
+	*storage = anyToFloat64(target)
+	return storage
+}
+
 func (t *Template) resolveTweenTargetInt8(target any) *int8 {
 	switch v := target.(type) {
 	case *int8:
@@ -564,6 +846,136 @@ func (t *Template) resolveTweenTargetInt8(target any) *int8 {
 	return storage
 }
 
+func (t *Template) compileTweenColor(tw tweenNode) *Color {
+	root := t.evalRoot()
+	watchPtr := t.resolveTweenTargetColor(tw.getTarget())
+	storage := new(Color)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := *watchPtr
+	var startTime time.Time
+
+	needsFirstFrame := false
+	if from := tw.getTweenFrom(); from != nil {
+		if c, ok := from.(Color); ok {
+			*storage = c
+			startVal = c
+			needsFirstFrame = true
+		}
+	}
+
+	root.evals = append(root.evals, func() {
+		target := *watchPtr
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = lerpColor(startVal, target, progress)
+		root.animating = true
+	})
+	return storage
+}
+
+func (t *Template) compileTweenStyle(tw tweenNode) *Style {
+	root := t.evalRoot()
+	watchPtr := t.resolveTweenTargetStyle(tw.getTarget())
+	storage := new(Style)
+	*storage = *watchPtr
+	dur := tw.getTweenDuration()
+	ease := tw.getTweenEasing()
+
+	lastTarget := *watchPtr
+	startVal := *watchPtr
+	var startTime time.Time
+
+	needsFirstFrame := false
+	if from := tw.getTweenFrom(); from != nil {
+		if s, ok := from.(Style); ok {
+			*storage = s
+			startVal = s
+			needsFirstFrame = true
+		}
+	}
+
+	root.evals = append(root.evals, func() {
+		target := *watchPtr
+		now := root.frameTime
+		if needsFirstFrame {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+			needsFirstFrame = false
+		} else if target != lastTarget {
+			startVal = *storage
+			lastTarget = target
+			startTime = now
+		}
+		if startTime.IsZero() {
+			return
+		}
+		elapsed := now.Sub(startTime)
+		if elapsed >= dur {
+			*storage = target
+			startTime = time.Time{}
+			return
+		}
+		progress := float64(elapsed) / float64(dur)
+		if ease != nil {
+			progress = ease(progress)
+		}
+		*storage = lerpStyle(startVal, target, progress)
+		root.animating = true
+	})
+	return storage
+}
+
+func (t *Template) resolveTweenTargetColor(target any) *Color {
+	switch v := target.(type) {
+	case *Color:
+		return v
+	case conditionNode:
+		return t.compileCondColor(v)
+	}
+	storage := new(Color)
+	*storage = anyToColor(target)
+	return storage
+}
+
+func (t *Template) resolveTweenTargetStyle(target any) *Style {
+	switch v := target.(type) {
+	case *Style:
+		return v
+	case conditionNode:
+		return t.compileCondStyle(v)
+	}
+	storage := new(Style)
+	*storage = anyToStyle(target)
+	return storage
+}
+
 // opSparkline holds sparkline-specific data.
 type opSparkline struct {
 	values    []float64
@@ -571,6 +983,7 @@ type opSparkline struct {
 	min       float64
 	max       float64
 	style     Style
+	stylePtr  *Style
 }
 
 func (s *opSparkline) resolveValues() []float64 {
@@ -581,7 +994,11 @@ func (s *opSparkline) resolveValues() []float64 {
 }
 
 func (s *opSparkline) render(t *Template, buf *Buffer, x, y, w, h int16) {
-	style := t.effectiveStyle(s.style)
+	baseStyle := s.style
+	if s.stylePtr != nil {
+		baseStyle = *s.stylePtr
+	}
+	style := t.effectiveStyle(baseStyle)
 	vals := s.resolveValues()
 	if len(vals) == 0 {
 		return
@@ -647,12 +1064,13 @@ type opCustomLayout struct {
 }
 
 type opText struct {
-	mode   uint8
-	static string
-	ptr    *string
-	off    uintptr
-	fn     func() string
-	style  Style
+	mode     uint8
+	static   string
+	ptr      *string
+	off      uintptr
+	fn       func() string
+	style    Style
+	stylePtr *Style // dynamic style override (nil = use static)
 }
 
 func (tx *opText) resolve(elemBase unsafe.Pointer) string {
@@ -693,11 +1111,12 @@ const (
 )
 
 type opProgress struct {
-	mode  uint8
-	static int
-	ptr    *int
-	off    uintptr
-	style  Style
+	mode     uint8
+	static   int
+	ptr      *int
+	off      uintptr
+	style    Style
+	stylePtr *Style
 }
 
 func (p *opProgress) resolve(elemBase unsafe.Pointer) int {
@@ -762,6 +1181,7 @@ type opLeader struct {
 	floatPtr *float64
 	fill     rune
 	style    Style
+	stylePtr *Style
 }
 
 type opCounter struct {
@@ -777,11 +1197,13 @@ type opSpinner struct {
 	framePtr *int
 	frames   []string
 	style    Style
+	stylePtr *Style
 }
 
 type opRule struct {
 	char        rune
 	style       Style
+	stylePtr    *Style
 	extend      bool
 	vruleX      int16
 	vruleX2     int16
@@ -964,6 +1386,29 @@ func Build(ui any) *Template {
 	return t
 }
 
+// buildWithRoot compiles a child UI tree into a sub-template that shares
+// evaluators with this template's root. used by overlays and other sites
+// that need an independent template but shared animation/condition state.
+func (t *Template) buildWithRoot(ui any) *Template {
+	child := &Template{
+		ops:     make([]Op, 0, 32),
+		byDepth: make([][]int16, 16),
+		root:    t.evalRoot(),
+	}
+	for i := range child.byDepth {
+		child.byDepth[i] = make([]int16, 0, 8)
+	}
+	child.compile(ui, -1, 0, nil, 0)
+	for child.maxDepth >= 0 && len(child.byDepth[child.maxDepth]) == 0 {
+		child.maxDepth--
+	}
+	if child.maxDepth >= 0 {
+		child.byDepth = child.byDepth[:child.maxDepth+1]
+	}
+	child.geom = make([]Geom, len(child.ops))
+	return child
+}
+
 func (t *Template) addOp(op Op, depth int) int16 {
 	idx := int16(len(t.ops))
 	op.Depth = int8(depth)
@@ -1014,6 +1459,11 @@ func (t *Template) compile(node any, parent int16, depth int, elemBase unsafe.Po
 	case OverlayNode:
 		return t.compileOverlay(v, parent, depth)
 	case ScreenEffectNode:
+		for i, eff := range v.Effects {
+			if ec, ok := eff.(effectCompilable); ok {
+				v.Effects[i] = ec.compileEffect(t)
+			}
+		}
 		ext := &opScreenEffect{fns: v.Effects}
 		return t.addOp(Op{Kind: OpScreenEffect, Parent: parent, Ext: ext}, depth)
 	case Component:
@@ -1300,6 +1750,7 @@ func (t *Template) compileSelectionList(v *SelectionList, parent int16, depth in
 		iterTmpl = &Template{
 			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
+			root:    t.evalRoot(),
 		}
 		for i := range iterTmpl.byDepth {
 			iterTmpl.byDepth[i] = make([]int16, 0, 4)
@@ -1447,7 +1898,7 @@ func (t *Template) compileTextInput(v TextInput, parent int16, depth int) int16 
 func (t *Template) compileOverlay(v OverlayNode, parent int16, depth int) int16 {
 	var childTmpl *Template
 	if v.Child != nil {
-		childTmpl = Build(v.Child)
+		childTmpl = t.buildWithRoot(v.Child)
 	}
 
 	centered := v.Centered || (v.X == 0 && v.Y == 0)
@@ -1554,6 +2005,7 @@ func (t *Template) compileCondition(cond conditionNode, parent int16, depth int,
 		thenTmpl := &Template{
 			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
+			root:    t.evalRoot(),
 		}
 		for i := range thenTmpl.byDepth {
 			thenTmpl.byDepth[i] = make([]int16, 0, 4)
@@ -1572,6 +2024,7 @@ func (t *Template) compileCondition(cond conditionNode, parent int16, depth int,
 		elseTmpl := &Template{
 			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
+			root:    t.evalRoot(),
 		}
 		for i := range elseTmpl.byDepth {
 			elseTmpl.byDepth[i] = make([]int16, 0, 4)
@@ -1614,6 +2067,7 @@ func (t *Template) compileSwitch(sw switchNodeInterface, parent int16, depth int
 			caseTmpl := &Template{
 				ops:     make([]Op, 0, 16),
 				byDepth: make([][]int16, 8),
+				root:    t.evalRoot(),
 			}
 			for j := range caseTmpl.byDepth {
 				caseTmpl.byDepth[j] = make([]int16, 0, 4)
@@ -1633,6 +2087,7 @@ func (t *Template) compileSwitch(sw switchNodeInterface, parent int16, depth int
 		defTmpl := &Template{
 			ops:     make([]Op, 0, 16),
 			byDepth: make([][]int16, 8),
+			root:    t.evalRoot(),
 		}
 		for i := range defTmpl.byDepth {
 			defTmpl.byDepth[i] = make([]int16, 0, 4)
@@ -1688,6 +2143,7 @@ func (t *Template) compileForEach(items any, render any, parent int16, depth int
 	iterTmpl := &Template{
 		ops:     make([]Op, 0, 16),
 		byDepth: make([][]int16, 8),
+		root:    t.evalRoot(),
 	}
 	for i := range iterTmpl.byDepth {
 		iterTmpl.byDepth[i] = make([]int16, 0, 4)
@@ -1761,6 +2217,24 @@ func (t *Template) compileVBoxC(v VBoxC, parent int16, depth int, elemBase unsaf
 		}
 		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	}
+	if v.fillCond != nil {
+		if t.ops[idx].Dyn == nil {
+			t.ops[idx].Dyn = &OpDyn{}
+		}
+		t.ops[idx].Dyn.Fill = t.compileDynColor(v.fillCond)
+	} else if v.fillPtr != nil {
+		if t.ops[idx].Dyn == nil {
+			t.ops[idx].Dyn = &OpDyn{}
+		}
+		t.ops[idx].Dyn.Fill = v.fillPtr
+	}
+	if v.localStyleCond != nil {
+		t.ops[idx].LocalStyle = t.compileDynStyle(v.localStyleCond)
+	} else if v.localStylePtr != nil {
+		t.ops[idx].LocalStyle = v.localStylePtr
+	} else if v.localStyle != nil {
+		t.ops[idx].LocalStyle = v.localStyle
+	}
 	return idx
 }
 
@@ -1810,6 +2284,24 @@ func (t *Template) compileHBoxC(v HBoxC, parent int16, depth int, elemBase unsaf
 		}
 		t.ops[idx].Dyn.Gap = t.compileDynInt8(v.gapCond)
 	}
+	if v.fillCond != nil {
+		if t.ops[idx].Dyn == nil {
+			t.ops[idx].Dyn = &OpDyn{}
+		}
+		t.ops[idx].Dyn.Fill = t.compileDynColor(v.fillCond)
+	} else if v.fillPtr != nil {
+		if t.ops[idx].Dyn == nil {
+			t.ops[idx].Dyn = &OpDyn{}
+		}
+		t.ops[idx].Dyn.Fill = v.fillPtr
+	}
+	if v.localStyleCond != nil {
+		t.ops[idx].LocalStyle = t.compileDynStyle(v.localStyleCond)
+	} else if v.localStylePtr != nil {
+		t.ops[idx].LocalStyle = v.localStylePtr
+	} else if v.localStyle != nil {
+		t.ops[idx].LocalStyle = v.localStyle
+	}
 	return idx
 }
 
@@ -1832,6 +2324,9 @@ func (t *Template) compileTextC(v TextC, parent int16, depth int, elemBase unsaf
 		ext.mode = textFn
 		ext.fn = val
 	}
+
+	// compile dynamic style: whole style > individual FG/BG
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 
 	idx := t.addOp(Op{
 		Kind:   OpText,
@@ -1899,6 +2394,7 @@ func (t *Template) compileHRuleC(v HRuleC, parent int16, depth int) int16 {
 		char = '─'
 	}
 	ext := &opRule{char: char, style: v.style, extend: v.extend}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 	return t.addOp(Op{
 		Kind:   OpHRule,
 		Parent: parent,
@@ -1913,6 +2409,7 @@ func (t *Template) compileVRuleC(v VRuleC, parent int16, depth int) int16 {
 		char = '│'
 	}
 	ext := &opRule{char: char, style: v.style, extend: v.extend}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 	idx := t.addOp(Op{
 		Kind:   OpVRule,
 		Parent: parent,
@@ -1941,6 +2438,7 @@ func (t *Template) compileProgressC(v ProgressC, parent int16, depth int, elemBa
 	}
 
 	ext := &opProgress{style: v.style}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 
 	switch val := v.value.(type) {
 	case int:
@@ -1983,6 +2481,7 @@ func (t *Template) compileSpinnerC(v SpinnerC, parent int16, depth int) int16 {
 		frames = SpinnerBraille
 	}
 	ext := &opSpinner{framePtr: v.frame, frames: frames, style: v.style}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 	return t.addOp(Op{
 		Kind:   OpSpinner,
 		Parent: parent,
@@ -1998,6 +2497,7 @@ func (t *Template) compileLeaderC(v LeaderC, parent int16, depth int) int16 {
 	}
 
 	ext := &opLeader{fill: fill, style: v.style}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 
 	switch label := v.label.(type) {
 	case string:
@@ -2070,6 +2570,7 @@ func (t *Template) compileCounterC(v counterC, parent int16, depth int) int16 {
 
 func (t *Template) compileSparklineC(v SparklineC, parent int16, depth int) int16 {
 	ext := &opSparkline{min: v.min, max: v.max, style: v.style}
+	ext.stylePtr = t.compileStyleDyn(v.style, v.styleDyn, v.fgDyn, v.bgDyn)
 	switch vals := v.values.(type) {
 	case []float64:
 		ext.values = vals
@@ -2149,9 +2650,9 @@ func (t *Template) compileLayerViewC(v LayerViewC, parent int16, depth int) int1
 func (t *Template) compileOverlayC(v OverlayC, parent int16, depth int) int16 {
 	var childTmpl *Template
 	if len(v.children) == 1 {
-		childTmpl = Build(v.children[0])
+		childTmpl = t.buildWithRoot(v.children[0])
 	} else if len(v.children) > 1 {
-		childTmpl = Build(VBox(v.children...))
+		childTmpl = t.buildWithRoot(VBox(v.children...))
 	}
 
 	centered := v.centered || (v.x == 0 && v.y == 0)
@@ -4334,7 +4835,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 	switch op.Kind {
 	case OpText:
 		ext := op.Ext.(*opText)
-		style := t.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := t.effectiveStyle(baseStyle)
 		var raw string
 		if ext.mode == textFn {
 			raw = ext.fn()
@@ -4355,7 +4860,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 	case OpProgress:
 		ext := op.Ext.(*opProgress)
 		ratio := float32(ext.resolve(t.elemBase)) / 100.0
-		style := t.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := t.effectiveStyle(baseStyle)
 		buf.WriteProgressBar(int(absX), int(absY), int(op.width()), ratio, style)
 
 	case OpRichText:
@@ -4371,7 +4880,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if width == 0 {
 			width = int(maxW)
 		}
-		style := t.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := t.effectiveStyle(baseStyle)
 		label := applyTransform(ext.label, style.Transform)
 		var value string
 		switch ext.mode {
@@ -4424,7 +4937,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if contentW > 0 {
 			width = int(contentW)
 		}
-		ruleStyle := t.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		ruleStyle := t.effectiveStyle(baseStyle)
 		for i := 0; i < width; i++ {
 			buf.Set(int(absX)+i, int(absY), Cell{Rune: ext.char, Style: ruleStyle})
 		}
@@ -4485,7 +5002,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpVRule:
 		ext := op.Ext.(*opRule)
-		ruleStyle := t.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		ruleStyle := t.effectiveStyle(baseStyle)
 		for i := 0; i < int(contentH); i++ {
 			buf.Set(int(absX), int(absY)+i, Cell{Rune: ext.char, Style: ruleStyle})
 		}
@@ -4498,9 +5019,13 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 	case OpSpacer:
 		ext := op.Ext.(*opRule)
+		spacerStyle := ext.style
+		if ext.stylePtr != nil {
+			spacerStyle = *ext.stylePtr
+		}
 		if ext.char != 0 {
 			for x := int16(0); x < contentW; x++ {
-				buf.Set(int(absX+x), int(absY), Cell{Rune: ext.char, Style: ext.style})
+				buf.Set(int(absX+x), int(absY), Cell{Rune: ext.char, Style: spacerStyle})
 			}
 		}
 
@@ -4509,7 +5034,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 		if ext.framePtr != nil && len(ext.frames) > 0 {
 			frameIdx := *ext.framePtr % len(ext.frames)
 			frame := ext.frames[frameIdx]
-			style := t.effectiveStyle(ext.style)
+			baseStyle := ext.style
+			if ext.stylePtr != nil {
+				baseStyle = *ext.stylePtr
+			}
+			style := t.effectiveStyle(baseStyle)
 			buf.WriteStringFast(int(absX), int(absY), frame, style, 1)
 		}
 
@@ -4587,10 +5116,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := t.inheritedFill
+		opFill := op.fill()
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
 			t.inheritedFill = op.CascadeStyle.Fill
-		} else if op.Fill.Mode != ColorDefault {
-			t.inheritedFill = op.Fill
+		} else if opFill.Mode != ColorDefault {
+			t.inheritedFill = opFill
 		}
 
 		// Update inherited style if this container sets one (before title rendering)
@@ -4601,8 +5131,11 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := t.inheritedFill
-		if op.Fill.Mode != ColorDefault {
-			fillColor = op.Fill
+		if opFill.Mode != ColorDefault {
+			fillColor = opFill
+		}
+		if op.LocalStyle != nil && op.LocalStyle.Fill.Mode != ColorDefault {
+			fillColor = op.LocalStyle.Fill
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
@@ -4615,8 +5148,13 @@ func (t *Template) renderOp(buf *Buffer, idx int16, globalX, globalY, maxW int16
 			if op.BorderFG != nil {
 				style.FG = *op.BorderFG
 			}
+			if op.LocalStyle != nil && op.LocalStyle.FG.Mode != ColorDefault {
+				style.FG = op.LocalStyle.FG
+			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
+			} else if op.LocalStyle != nil && op.LocalStyle.BG.Mode != ColorDefault {
+				style.BG = op.LocalStyle.BG
 			} else if fillColor.Mode != ColorDefault {
 				style.BG = fillColor
 			}
@@ -4792,7 +5330,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	switch op.Kind {
 	case OpText:
 		ext := op.Ext.(*opText)
-		style := mergeStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := mergeStyle(baseStyle)
 		var raw string
 		if ext.mode == textFn {
 			raw = ext.fn()
@@ -4805,7 +5347,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 	case OpProgress:
 		ext := op.Ext.(*opProgress)
 		ratio := float32(ext.resolve(elemBase)) / 100.0
-		style := sub.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := sub.effectiveStyle(baseStyle)
 		buf.WriteProgressBar(int(absX), int(absY), int(op.width()), ratio, style)
 
 	case OpRichText:
@@ -4821,7 +5367,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if width == 0 {
 			width = int(maxW)
 		}
-		style := sub.effectiveStyle(ext.style)
+		baseStyle := ext.style
+		if ext.stylePtr != nil {
+			baseStyle = *ext.stylePtr
+		}
+		style := sub.effectiveStyle(baseStyle)
 		label := applyTransform(ext.label, style.Transform)
 		var value string
 		switch ext.mode {
@@ -4871,21 +5421,33 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if contentW > 0 {
 			width = int(contentW)
 		}
-		ruleStyle := sub.effectiveStyle(ext.style)
+		hBaseStyle := ext.style
+		if ext.stylePtr != nil {
+			hBaseStyle = *ext.stylePtr
+		}
+		ruleStyle := sub.effectiveStyle(hBaseStyle)
 		for i := 0; i < width; i++ {
 			buf.Set(int(absX)+i, int(absY), Cell{Rune: ext.char, Style: ruleStyle})
 		}
 
 	case OpVRule:
 		ext := op.Ext.(*opRule)
-		ruleStyle := sub.effectiveStyle(ext.style)
+		vBaseStyle := ext.style
+		if ext.stylePtr != nil {
+			vBaseStyle = *ext.stylePtr
+		}
+		ruleStyle := sub.effectiveStyle(vBaseStyle)
 		for i := 0; i < int(contentH); i++ {
 			buf.Set(int(absX), int(absY)+i, Cell{Rune: ext.char, Style: ruleStyle})
 		}
 
 	case OpSpacer:
 		ext := op.Ext.(*opRule)
-		spacerStyle := mergeStyle(ext.style)
+		sBaseStyle := ext.style
+		if ext.stylePtr != nil {
+			sBaseStyle = *ext.stylePtr
+		}
+		spacerStyle := mergeStyle(sBaseStyle)
 		if ext.char != 0 {
 			for x := int16(0); x < contentW; x++ {
 				buf.Set(int(absX+x), int(absY), Cell{Rune: ext.char, Style: spacerStyle})
@@ -4901,7 +5463,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 		if ext.framePtr != nil && len(ext.frames) > 0 {
 			frameIdx := *ext.framePtr % len(ext.frames)
 			frame := ext.frames[frameIdx]
-			style := sub.effectiveStyle(ext.style)
+			spinBaseStyle := ext.style
+			if ext.stylePtr != nil {
+				spinBaseStyle = *ext.stylePtr
+			}
+			style := sub.effectiveStyle(spinBaseStyle)
 			buf.WriteStringFast(int(absX), int(absY), frame, style, 1)
 		}
 
@@ -4972,10 +5538,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 		// Update inherited Fill - cascades through nested containers
 		oldInheritedFill := sub.inheritedFill
+		opFill := op.fill()
 		if op.CascadeStyle != nil && op.CascadeStyle.Fill.Mode != ColorDefault {
 			sub.inheritedFill = op.CascadeStyle.Fill
-		} else if op.Fill.Mode != ColorDefault {
-			sub.inheritedFill = op.Fill
+		} else if opFill.Mode != ColorDefault {
+			sub.inheritedFill = opFill
 		}
 
 		// Update inherited style if this container sets one (before title rendering)
@@ -4986,8 +5553,11 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 
 		// Fill container area - direct Fill takes precedence over inherited
 		fillColor := sub.inheritedFill
-		if op.Fill.Mode != ColorDefault {
-			fillColor = op.Fill
+		if opFill.Mode != ColorDefault {
+			fillColor = opFill
+		}
+		if op.LocalStyle != nil && op.LocalStyle.Fill.Mode != ColorDefault {
+			fillColor = op.LocalStyle.Fill
 		}
 		if fillColor.Mode != ColorDefault {
 			fillCell := Cell{Rune: ' ', Style: Style{BG: fillColor}}
@@ -5000,8 +5570,13 @@ func (sub *Template) renderSubOp(buf *Buffer, idx int16, globalX, globalY, maxW 
 			if op.BorderFG != nil {
 				style.FG = *op.BorderFG
 			}
+			if op.LocalStyle != nil && op.LocalStyle.FG.Mode != ColorDefault {
+				style.FG = op.LocalStyle.FG
+			}
 			if op.BorderBG != nil {
 				style.BG = *op.BorderBG
+			} else if op.LocalStyle != nil && op.LocalStyle.BG.Mode != ColorDefault {
+				style.BG = op.LocalStyle.BG
 			} else if fillColor.Mode != ColorDefault {
 				style.BG = fillColor
 			}
@@ -5236,6 +5811,9 @@ func (t *Template) renderSelectionList(buf *Buffer, op *Op, geom *Geom, absX, ab
 				case OpText:
 					ext := iterOp.Ext.(*opText)
 					textStyle := ext.style
+					if ext.stylePtr != nil {
+						textStyle = *ext.stylePtr
+					}
 					if textStyle.BG.Mode == 0 {
 						if isSelected && selectedStyle.BG.Mode != 0 {
 							textStyle.BG = selectedStyle.BG

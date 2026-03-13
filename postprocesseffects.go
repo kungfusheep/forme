@@ -2,6 +2,112 @@ package glyph
 
 import "math"
 
+// dynFloat64 bundles a static float64 with optional dynamic source (pointer,
+// condition, or tween). replaces the repeated 3-field pattern across effects.
+type dynFloat64 struct {
+	val float64
+	dyn any
+	ptr *float64
+}
+
+func (d *dynFloat64) set(v any) {
+	switch val := v.(type) {
+	case float64:
+		d.val = val
+	case float32:
+		d.val = float64(val)
+	case int:
+		d.val = float64(val)
+	case *float64:
+		d.dyn = val
+	case conditionNode:
+		d.dyn = val
+	case tweenNode:
+		d.dyn = val
+	}
+}
+
+func (d *dynFloat64) compile(tmpl *Template) {
+	if d.dyn != nil {
+		d.ptr = tmpl.compileDynFloat64(d.dyn)
+	}
+}
+
+func (d dynFloat64) resolve() float64 {
+	if d.ptr != nil {
+		return *d.ptr
+	}
+	return d.val
+}
+
+// dynInt bundles a static int with optional dynamic source.
+type dynInt struct {
+	val int
+	dyn any
+	ptr *int16
+}
+
+func (d *dynInt) set(v any) {
+	switch val := v.(type) {
+	case int:
+		d.val = val
+	case int16:
+		d.val = int(val)
+	case *int16:
+		d.dyn = val
+	case conditionNode:
+		d.dyn = val
+	case tweenNode:
+		d.dyn = val
+	}
+}
+
+func (d *dynInt) compile(tmpl *Template) {
+	if d.dyn != nil {
+		d.ptr = tmpl.compileDynInt16(d.dyn)
+	}
+}
+
+func (d dynInt) resolve() int {
+	if d.ptr != nil {
+		return int(*d.ptr)
+	}
+	return d.val
+}
+
+// dynColor bundles a static Color with optional dynamic source.
+type dynColor struct {
+	val Color
+	dyn any
+	ptr *Color
+}
+
+func (d *dynColor) set(v any) {
+	switch val := v.(type) {
+	case Color:
+		d.val = val
+	case *Color:
+		d.dyn = val
+	case conditionNode:
+		d.dyn = val
+	case tweenNode:
+		d.dyn = val
+	}
+}
+
+func (d *dynColor) compile(tmpl *Template) {
+	if d.dyn != nil {
+		d.ptr = tmpl.compileDynColor(d.dyn)
+	}
+}
+
+func (d dynColor) resolve() Color {
+	if d.ptr != nil {
+		return *d.ptr
+	}
+	return d.val
+}
+
 // ---------------------------------------------------------------------------
 // Subtle: one-liner polish for real apps
 // ---------------------------------------------------------------------------
@@ -18,7 +124,7 @@ func SEDimAll() Effect {
 // tintEffect shifts all RGB colours toward a target colour.
 type tintEffect struct {
 	target   Color
-	strength float64
+	strength dynFloat64
 	dodge    *NodeRef
 }
 
@@ -26,29 +132,35 @@ type tintEffect struct {
 // Think colour grading: warm/cool/moody tones in one line.
 // Default strength 0.15 — tasteful tint out of the box.
 func SETint(color Color) tintEffect {
-	return tintEffect{target: color, strength: 0.15}
+	return tintEffect{target: color, strength: dynFloat64{val: 0.15}}
 }
 
 // Strength sets how strongly the tint blends in (0.0 = none, 1.0 = full).
-func (t tintEffect) Strength(s float64) tintEffect { t.strength = s; return t }
+func (t tintEffect) Strength(s any) tintEffect { t.strength.set(s); return t }
 
 // Dodge exempts the given node from tinting — useful for preserving a focused panel.
 func (t tintEffect) Dodge(ref *NodeRef) tintEffect { t.dodge = ref; return t }
 
+func (t tintEffect) compileEffect(tmpl *Template) Effect {
+	t.strength.compile(tmpl)
+	return t
+}
+
 func (t tintEffect) Apply(buf *Buffer, ctx PostContext) {
+	s := t.strength.resolve()
 	EachCell(func(x, y int, c Cell, ectx PostContext) Cell {
 		if t.dodge != nil && inRect(x, y, t.dodge) {
 			return c
 		}
-		c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ectx), t.target, t.strength)
-		c.Style.BG = lerpIfRGB(resolveBG(c.Style.BG, ectx), t.target, t.strength)
+		c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ectx), t.target, s)
+		c.Style.BG = lerpIfRGB(resolveBG(c.Style.BG, ectx), t.target, s)
 		return c
 	}).Apply(buf, ctx)
 }
 
 // vignetteEffect darkens cells toward the screen edges.
 type vignetteEffect struct {
-	strength float64
+	strength dynFloat64
 	focus    *NodeRef
 	dodge    *NodeRef
 	quantize bool
@@ -57,11 +169,16 @@ type vignetteEffect struct {
 // SEVignette darkens cells near the screen edges.
 // Quadratic falloff for a natural cinematic feel. Default strength 0.8.
 func SEVignette() vignetteEffect {
-	return vignetteEffect{strength: 0.8, quantize: true}
+	return vignetteEffect{strength: dynFloat64{val: 0.8}, quantize: true}
 }
 
 // Strength sets edge darkening intensity (0.0 = no effect, 1.0 = full black at edges).
-func (v vignetteEffect) Strength(s float64) vignetteEffect { v.strength = s; return v }
+func (v vignetteEffect) Strength(s any) vignetteEffect { v.strength.set(s); return v }
+
+func (v vignetteEffect) compileEffect(tmpl *Template) Effect {
+	v.strength.compile(tmpl)
+	return v
+}
 
 // Focus centres the vignette on the given node.
 func (v vignetteEffect) Focus(ref *NodeRef) vignetteEffect { v.focus = ref; return v }
@@ -97,7 +214,7 @@ func (v vignetteEffect) Apply(buf *Buffer, ctx PostContext) {
 			}
 			dx := float64(x) - cx
 			dist := math.Sqrt(dx*dx+dy*dy) / maxDist
-			dim := dist * dist * v.strength
+			dim := dist * dist * v.strength.resolve()
 			if dim > 1 {
 				dim = 1
 			}
@@ -115,54 +232,66 @@ func (v vignetteEffect) Apply(buf *Buffer, ctx PostContext) {
 
 // desaturateEffect removes colour saturation from all RGB cells.
 type desaturateEffect struct {
-	strength float64
+	strength dynFloat64
 	dodge    *NodeRef
 }
 
 // SEDesaturate removes colour saturation from all RGB cells.
 // Uses perceptual luminance weights (BT.601). Default strength 0.7.
-func SEDesaturate() desaturateEffect { return desaturateEffect{strength: 0.7} }
+func SEDesaturate() desaturateEffect { return desaturateEffect{strength: dynFloat64{val: 0.7}} }
 
 // Strength sets how much to desaturate (0.0 = full colour, 1.0 = fully grey).
-func (d desaturateEffect) Strength(s float64) desaturateEffect { d.strength = s; return d }
+func (d desaturateEffect) Strength(s any) desaturateEffect { d.strength.set(s); return d }
+
+func (d desaturateEffect) compileEffect(tmpl *Template) Effect {
+	d.strength.compile(tmpl)
+	return d
+}
 
 // Dodge exempts the given node — the classic "colour spotlight" on a grey world.
 func (d desaturateEffect) Dodge(ref *NodeRef) desaturateEffect { d.dodge = ref; return d }
 
 func (d desaturateEffect) Apply(buf *Buffer, ctx PostContext) {
+	s := d.strength.resolve()
 	EachCell(func(x, y int, c Cell, ectx PostContext) Cell {
 		if d.dodge != nil && inRect(x, y, d.dodge) {
 			return c
 		}
-		c.Style.FG = desaturateColor(resolveFG(c.Style.FG, ectx), d.strength)
-		c.Style.BG = desaturateColor(resolveBG(c.Style.BG, ectx), d.strength)
+		c.Style.FG = desaturateColor(resolveFG(c.Style.FG, ectx), s)
+		c.Style.BG = desaturateColor(resolveBG(c.Style.BG, ectx), s)
 		return c
 	}).Apply(buf, ctx)
 }
 
 // contrastEffect boosts contrast by pushing colour channels toward extremes.
 type contrastEffect struct {
-	strength float64
+	strength dynFloat64
 	dodge    *NodeRef
 }
 
 // SEContrast boosts contrast by pushing colour channels toward extremes.
 // Default strength 1.5 — noticeable punch without going stark.
-func SEContrast() contrastEffect { return contrastEffect{strength: 1.5} }
+func SEContrast() contrastEffect { return contrastEffect{strength: dynFloat64{val: 1.5}} }
 
 // Strength sets the contrast boost factor (1.0 = noticeable, 3.0+ = stark black/white).
-func (h contrastEffect) Strength(s float64) contrastEffect { h.strength = s; return h }
+func (h contrastEffect) Strength(s any) contrastEffect { h.strength.set(s); return h }
+
+func (h contrastEffect) compileEffect(tmpl *Template) Effect {
+	h.strength.compile(tmpl)
+	return h
+}
 
 // Dodge exempts the given node from contrast adjustment.
 func (h contrastEffect) Dodge(ref *NodeRef) contrastEffect { h.dodge = ref; return h }
 
 func (h contrastEffect) Apply(buf *Buffer, ctx PostContext) {
+	s := h.strength.resolve()
 	EachCell(func(x, y int, c Cell, ectx PostContext) Cell {
 		if h.dodge != nil && inRect(x, y, h.dodge) {
 			return c
 		}
-		c.Style.FG = boostContrast(resolveFG(c.Style.FG, ectx), h.strength)
-		c.Style.BG = boostContrast(resolveBG(c.Style.BG, ectx), h.strength)
+		c.Style.FG = boostContrast(resolveFG(c.Style.FG, ectx), s)
+		c.Style.BG = boostContrast(resolveBG(c.Style.BG, ectx), s)
 		return c
 	}).Apply(buf, ctx)
 }
@@ -195,23 +324,30 @@ func (f focusDimEffect) Apply(buf *Buffer, ctx PostContext) {
 }
 
 type pulseEffect struct {
-	speed    float64
-	strength float64
+	speed    dynFloat64
+	strength dynFloat64
 }
 
-func SEPulse() pulseEffect { return pulseEffect{speed: 1.0, strength: 0.3} }
+func SEPulse() pulseEffect {
+	return pulseEffect{speed: dynFloat64{val: 1.0}, strength: dynFloat64{val: 0.3}}
+}
 
 // Speed sets oscillation frequency in cycles per second.
-func (p pulseEffect) Speed(s float64) pulseEffect { p.speed = s; return p }
+func (p pulseEffect) Speed(s any) pulseEffect { p.speed.set(s); return p }
 
 // Strength sets how much brightness dims at the trough (0.3 = subtle, 0.8 = dramatic).
-func (p pulseEffect) Strength(s float64) pulseEffect { p.strength = s; return p }
+func (p pulseEffect) Strength(s any) pulseEffect { p.strength.set(s); return p }
+
+func (p pulseEffect) compileEffect(tmpl *Template) Effect {
+	p.speed.compile(tmpl)
+	p.strength.compile(tmpl)
+	return p
+}
 
 func (p pulseEffect) Apply(buf *Buffer, ctx PostContext) {
 	black := Color{Mode: ColorRGB}
-	// sine 0..1
-	t := (math.Sin(ctx.Time.Seconds()*p.speed*math.Pi*2) + 1) * 0.5
-	dim := t * p.strength
+	t := (math.Sin(ctx.Time.Seconds()*p.speed.resolve()*math.Pi*2) + 1) * 0.5
+	dim := t * p.strength.resolve()
 
 	for y := range ctx.Height {
 		base := y * buf.width
@@ -250,11 +386,11 @@ func (g gradientMapEffect) Apply(buf *Buffer, ctx PostContext) {
 // from a focus node's perimeter. At offset (0,0) it's a symmetric glow.
 // Any offset displaces the shadow source, giving a directional drop shadow.
 type dropShadowEffect struct {
-	strength float64
-	radius   int
+	strength dynFloat64
+	radius   dynInt
 	offsetX  int
 	offsetY  int
-	tint     Color
+	tint     dynColor
 	focus    *NodeRef
 }
 
@@ -262,20 +398,32 @@ type dropShadowEffect struct {
 // Default: radius 8, strength 0.2, offset (-1,-1) for a subtle directional shadow.
 // Chain .Focus(&ref) to set the source node, .Offset(x,y) to adjust direction.
 func SEDropShadow() dropShadowEffect {
-	return dropShadowEffect{strength: 0.2, radius: 8, offsetX: -1, offsetY: -1, tint: Color{Mode: ColorRGB}}
+	return dropShadowEffect{
+		strength: dynFloat64{val: 0.2},
+		radius:   dynInt{val: 8},
+		offsetX:  -1, offsetY: -1,
+		tint: dynColor{val: Color{Mode: ColorRGB}},
+	}
 }
 
 // Strength sets shadow darkness (0.0 = none, 1.0 = full black at source edge).
-func (d dropShadowEffect) Strength(s float64) dropShadowEffect { d.strength = s; return d }
+func (d dropShadowEffect) Strength(s any) dropShadowEffect { d.strength.set(s); return d }
+
+func (d dropShadowEffect) compileEffect(tmpl *Template) Effect {
+	d.strength.compile(tmpl)
+	d.radius.compile(tmpl)
+	d.tint.compile(tmpl)
+	return d
+}
 
 // Radius sets how far the shadow spreads in cells.
-func (d dropShadowEffect) Radius(r int) dropShadowEffect { d.radius = r; return d }
+func (d dropShadowEffect) Radius(r any) dropShadowEffect { d.radius.set(r); return d }
 
 // Offset displaces the shadow source — turns the symmetric glow into a directional drop shadow.
 func (d dropShadowEffect) Offset(x, y int) dropShadowEffect { d.offsetX = x; d.offsetY = y; return d }
 
 // Tint sets the shadow colour (default black).
-func (d dropShadowEffect) Tint(c Color) dropShadowEffect { d.tint = c; return d }
+func (d dropShadowEffect) Tint(c any) dropShadowEffect { d.tint.set(c); return d }
 
 // Focus sets the node the shadow emanates from.
 func (d dropShadowEffect) Focus(ref *NodeRef) dropShadowEffect { d.focus = ref; return d }
@@ -286,36 +434,33 @@ func (d dropShadowEffect) Apply(buf *Buffer, ctx PostContext) {
 	}
 
 	ref := d.focus
-	radius := float64(d.radius)
-	// shadow source rect — the focus ref displaced by offset
+	radius := float64(d.radius.resolve())
 	sx, sy := ref.X+d.offsetX, ref.Y+d.offsetY
 
 	for y := range ctx.Height {
 		base := y * buf.width
 		for x := range ctx.Width {
-			// protect the original focus content
 			if inRect(x, y, ref) {
 				continue
 			}
 
-			// distance from this cell to the nearest point on the shadow source rect
 			cx := max(sx, min(x, sx+ref.W-1))
 			cy := max(sy, min(y, sy+ref.H-1))
 			dx := float64(x - cx)
-			dy := float64(y-cy) * 2 // aspect-ratio compensation
+			dy := float64(y-cy) * 2
 			dist := math.Sqrt(dx*dx + dy*dy)
 
 			if dist >= radius {
 				continue
 			}
 
-			// quadratic falloff: darkest at source edge, zero at radius
 			t := 1.0 - dist/radius
-			dim := t * t * d.strength
+			dim := t * t * d.strength.resolve()
 
+			tintColor := d.tint.resolve()
 			c := &buf.cells[base+x]
-			c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ctx), d.tint, dim)
-			c.Style.BG = lerpIfRGB(resolveBG(c.Style.BG, ctx), d.tint, dim)
+			c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ctx), tintColor, dim)
+			c.Style.BG = lerpIfRGB(resolveBG(c.Style.BG, ctx), tintColor, dim)
 		}
 	}
 }
@@ -323,9 +468,9 @@ func (d dropShadowEffect) Apply(buf *Buffer, ctx PostContext) {
 // glowEffect emanates light outward from a focus node, sampling the node's
 // edge colours and boosting them — the glow takes on the colour of the content.
 type glowEffect struct {
-	strength   float64
-	radius     int
-	brightness float64
+	strength   dynFloat64
+	radius     dynInt
+	brightness dynFloat64
 	focus      *NodeRef
 }
 
@@ -333,17 +478,28 @@ type glowEffect struct {
 // and spills a brightened version of those colours into the surrounding area.
 // Default: radius 8, strength 0.5, brightness 1.4.
 func SEGlow() glowEffect {
-	return glowEffect{strength: 0.5, radius: 8, brightness: 1.4}
+	return glowEffect{
+		strength:   dynFloat64{val: 0.5},
+		radius:     dynInt{val: 8},
+		brightness: dynFloat64{val: 1.4},
+	}
 }
 
 // Strength sets how strongly the glow blends into surrounding cells.
-func (g glowEffect) Strength(s float64) glowEffect { g.strength = s; return g }
+func (g glowEffect) Strength(s any) glowEffect { g.strength.set(s); return g }
+
+func (g glowEffect) compileEffect(tmpl *Template) Effect {
+	g.strength.compile(tmpl)
+	g.radius.compile(tmpl)
+	g.brightness.compile(tmpl)
+	return g
+}
 
 // Radius sets how far the glow spreads in cells.
-func (g glowEffect) Radius(r int) glowEffect { g.radius = r; return g }
+func (g glowEffect) Radius(r any) glowEffect { g.radius.set(r); return g }
 
 // Brightness sets the boost applied to sampled edge colours (1.0 = no boost).
-func (g glowEffect) Brightness(b float64) glowEffect { g.brightness = b; return g }
+func (g glowEffect) Brightness(b any) glowEffect { g.brightness.set(b); return g }
 
 // Focus sets the node the glow emanates from.
 func (g glowEffect) Focus(ref *NodeRef) glowEffect { g.focus = ref; return g }
@@ -354,7 +510,7 @@ func (g glowEffect) Apply(buf *Buffer, ctx PostContext) {
 	}
 
 	ref := g.focus
-	radius := float64(g.radius)
+	radius := float64(g.radius.resolve())
 
 	for y := range ctx.Height {
 		base := y * buf.width
@@ -363,35 +519,32 @@ func (g glowEffect) Apply(buf *Buffer, ctx PostContext) {
 				continue
 			}
 
-			// nearest point on the focus rect perimeter
 			ex := max(ref.X, min(x, ref.X+ref.W-1))
 			ey := max(ref.Y, min(y, ref.Y+ref.H-1))
 
 			dx := float64(x - ex)
-			dy := float64(y-ey) * 2 // aspect-ratio compensation
+			dy := float64(y-ey) * 2
 			dist := math.Sqrt(dx*dx + dy*dy)
 			if dist >= radius {
 				continue
 			}
 
-			// sample the edge cell's BG colour — that's what "leaks" outward
 			edge := buf.Get(ex, ey)
 			sample := resolveBG(edge.Style.BG, ctx)
 			if sample.Mode != ColorRGB {
 				continue
 			}
 
-			// boost the sampled colour toward white
+			bright := g.brightness.resolve()
 			boosted := Color{
 				Mode: ColorRGB,
-				R:    uint8(min(int(float64(sample.R)*g.brightness), 255)),
-				G:    uint8(min(int(float64(sample.G)*g.brightness), 255)),
-				B:    uint8(min(int(float64(sample.B)*g.brightness), 255)),
+				R:    uint8(min(int(float64(sample.R)*bright), 255)),
+				G:    uint8(min(int(float64(sample.G)*bright), 255)),
+				B:    uint8(min(int(float64(sample.B)*bright), 255)),
 			}
 
-			// quadratic falloff: brightest at source edge, zero at radius
 			t := 1.0 - dist/radius
-			blend := t * t * g.strength
+			blend := t * t * g.strength.resolve()
 
 			c := &buf.cells[base+x]
 			c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ctx), boosted, blend)
@@ -402,9 +555,9 @@ func (g glowEffect) Apply(buf *Buffer, ctx PostContext) {
 
 // bloomEffect creates a coloured glow around bright cells.
 type bloomEffect struct {
-	radius    int
-	threshold float64
-	strength  float64
+	radius    dynInt
+	threshold dynFloat64
+	strength  dynFloat64
 	focus     *NodeRef
 }
 
@@ -412,17 +565,28 @@ type bloomEffect struct {
 // Bleeds bright colours into both FG and BG of surrounding cells.
 // Default: radius 2, threshold 0.6, strength 0.3.
 func SEBloom() bloomEffect {
-	return bloomEffect{radius: 2, threshold: 0.6, strength: 0.3}
+	return bloomEffect{
+		radius:    dynInt{val: 2},
+		threshold: dynFloat64{val: 0.6},
+		strength:  dynFloat64{val: 0.3},
+	}
 }
 
 // Radius sets the spread in cells (2-4 recommended).
-func (b bloomEffect) Radius(r int) bloomEffect { b.radius = r; return b }
+func (b bloomEffect) Radius(r any) bloomEffect { b.radius.set(r); return b }
 
 // Threshold sets the minimum brightness that blooms (0.0–1.0).
-func (b bloomEffect) Threshold(t float64) bloomEffect { b.threshold = t; return b }
+func (b bloomEffect) Threshold(t any) bloomEffect { b.threshold.set(t); return b }
 
 // Strength sets glow intensity (0.3 = subtle, 1.0 = vivid).
-func (b bloomEffect) Strength(s float64) bloomEffect { b.strength = s; return b }
+func (b bloomEffect) Strength(s any) bloomEffect { b.strength.set(s); return b }
+
+func (b bloomEffect) compileEffect(tmpl *Template) Effect {
+	b.radius.compile(tmpl)
+	b.threshold.compile(tmpl)
+	b.strength.compile(tmpl)
+	return b
+}
 
 // Focus constrains bloom output to the given node — only cells within the rect receive glow.
 func (b bloomEffect) Focus(ref *NodeRef) bloomEffect { b.focus = ref; return b }
@@ -440,8 +604,10 @@ func (b bloomEffect) Apply(buf *Buffer, ctx PostContext) {
 		}
 	}
 
-	thresh256 := b.threshold * 255
-	maxDist := math.Sqrt(float64(b.radius*b.radius) + float64(b.radius*b.radius)*4)
+	radius := b.radius.resolve()
+	thresh := b.threshold.resolve()
+	thresh256 := thresh * 255
+	maxDist := math.Sqrt(float64(radius*radius) + float64(radius*radius)*4)
 
 	// constrain output to focus rect if set
 	x0, y0, x1, y1 := 0, 0, bw, bh
@@ -457,12 +623,12 @@ func (b bloomEffect) Apply(buf *Buffer, ctx PostContext) {
 		for x := x0; x < x1; x++ {
 			var sumR, sumG, sumB, sumWt float64
 
-			for dy := -b.radius; dy <= b.radius; dy++ {
+			for dy := -radius; dy <= radius; dy++ {
 				ny := y + dy
 				if ny < 0 || ny >= bh {
 					continue
 				}
-				for dx := -b.radius; dx <= b.radius; dx++ {
+				for dx := -radius; dx <= radius; dx++ {
 					if dx == 0 && dy == 0 {
 						continue
 					}
@@ -499,7 +665,7 @@ func (b bloomEffect) Apply(buf *Buffer, ctx PostContext) {
 					uint8(min(255, sumG/sumWt)),
 					uint8(min(255, sumB/sumWt)),
 				)
-				blend := (sumWt / (sumWt + 1)) * b.strength
+				blend := (sumWt / (sumWt + 1)) * b.strength.resolve()
 				c := &buf.cells[base+x]
 				c.Style.FG = lerpIfRGB(resolveFG(c.Style.FG, ctx), bloom, blend)
 				c.Style.BG = lerpIfRGB(resolveBG(c.Style.BG, ctx), bloom, blend*0.3)

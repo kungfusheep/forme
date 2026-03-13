@@ -11,6 +11,7 @@ type tween struct {
 	target   any
 	duration time.Duration
 	ease     func(float64) float64
+	from     any // initial value — if set, animation starts immediately
 }
 
 // AnimateFn configures and creates tweens. Methods return new AnimateFn values,
@@ -57,18 +58,56 @@ func (f AnimateFn) Ease(fn func(float64) float64) AnimateFn {
 	}
 }
 
+// From sets the initial value before animation starts.
+// The tween immediately begins interpolating from this value toward the target.
+// Returns a new AnimateFn.
+//
+//	SEVignette().Strength(Animate.Duration(1*time.Second).From(0.0)(0.88))
+func (f AnimateFn) From(v any) AnimateFn {
+	return func(target any) *tween {
+		tw := f(target)
+		tw.from = v
+		return tw
+	}
+}
+
 // tweenNode interface for the compiler to detect tween nodes
 type tweenNode interface {
 	getTarget() any
 	getTweenDuration() time.Duration
 	getTweenEasing() func(float64) float64
+	getTweenFrom() any
 }
 
 func (tw *tween) getTarget() any                        { return tw.target }
 func (tw *tween) getTweenDuration() time.Duration       { return tw.duration }
 func (tw *tween) getTweenEasing() func(float64) float64 { return tw.ease }
+func (tw *tween) getTweenFrom() any                     { return tw.from }
 
 var _ tweenNode = (*tween)(nil)
+
+// --- color and style interpolation ---
+
+func lerpColor(from, to Color, t float64) Color {
+	r := uint8(float64(from.R) + t*float64(int16(to.R)-int16(from.R)))
+	g := uint8(float64(from.G) + t*float64(int16(to.G)-int16(from.G)))
+	b := uint8(float64(from.B) + t*float64(int16(to.B)-int16(from.B)))
+	return RGB(r, g, b)
+}
+
+func lerpStyle(from, to Style, t float64) Style {
+	s := to // snap non-interpolatable fields (attrs, transform, align) to target
+	if from.FG.Mode != ColorDefault && to.FG.Mode != ColorDefault {
+		s.FG = lerpColor(from.FG, to.FG, t)
+	}
+	if from.BG.Mode != ColorDefault && to.BG.Mode != ColorDefault {
+		s.BG = lerpColor(from.BG, to.BG, t)
+	}
+	if from.Fill.Mode != ColorDefault && to.Fill.Mode != ColorDefault {
+		s.Fill = lerpColor(from.Fill, to.Fill, t)
+	}
+	return s
+}
 
 // --- easing functions ---
 // all take t in [0,1] and return eased value in [0,1]
