@@ -96,7 +96,7 @@ func main() {
 	}
 	app.JumpKey("g")
 
-	colorAnim := Animate.Duration(2 * time.Second).Ease(EaseOutCubic)
+	colorAnim := Animate.Duration(4 * time.Second).Ease(EaseOutCubic)
 
 	metricPanel := func(title string, data *[]float64, label *string, col any) any {
 		return VBox.Grow(1).Border(BorderRounded).BorderFG(rpOverlay).Title(title)(

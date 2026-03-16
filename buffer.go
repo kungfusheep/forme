@@ -341,11 +341,24 @@ func (b *Buffer) WriteSparkline(x, y int, values []float64, width int, min, max 
 	base := y * b.width
 	dataLen := len(values)
 
+	// render right-aligned: newest data at right edge, old data scrolls off left
+	start := 0
+	if dataLen > width {
+		start = dataLen - width
+	}
+	cols := dataLen - start
+	if cols > width {
+		cols = width
+	}
+	offset := width - cols
+
 	for i := 0; i < width && x+i < b.width; i++ {
-		// Map position to data index (handles width != len(values))
-		dataIdx := i * dataLen / width
-		if dataIdx >= dataLen {
-			dataIdx = dataLen - 1
+		dataIdx := start + (i - offset)
+		if dataIdx < 0 || dataIdx >= dataLen {
+			if x+i >= 0 {
+				b.cells[base+x+i] = Cell{Rune: ' ', Style: style}
+			}
+			continue
 		}
 
 		// Normalize value to 0-7 range
@@ -395,14 +408,31 @@ func (b *Buffer) WriteSparklineMulti(x, y int, values []float64, width, height i
 	totalLevels := height * 8
 	dataLen := len(values)
 
+	// right-aligned: newest data at right edge, 1:1 mapping
+	startData := 0
+	if dataLen > width {
+		startData = dataLen - width
+	}
+	cols := dataLen - startData
+	if cols > width {
+		cols = width
+	}
+	colOffset := width - cols
+
 	for i := 0; i < width && x+i < b.width; i++ {
 		if x+i < 0 {
 			continue
 		}
 
-		dataIdx := i * dataLen / width
-		if dataIdx >= dataLen {
-			dataIdx = dataLen - 1
+		dataIdx := startData + (i - colOffset)
+		if dataIdx < 0 || dataIdx >= dataLen {
+			for row := 0; row < height; row++ {
+				ry := y + height - 1 - row
+				if ry >= 0 && ry < b.height {
+					b.cells[ry*b.width+x+i] = Cell{Rune: ' ', Style: style}
+				}
+			}
+			continue
 		}
 
 		normalized := (values[dataIdx] - min) / valRange
